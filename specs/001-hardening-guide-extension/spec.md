@@ -348,12 +348,12 @@ remediate it.
   guide section it corresponds to so the operator can find remediation
   steps. Controls MUST be classified as either **critical** (FAIL
   when missing) or **recommended** (WARN when missing):
-  * **Critical (FAIL):** Controls whose absence exposes the system to
+  - **Critical (FAIL):** Controls whose absence exposes the system to
     immediate, high-severity risk — FileVault, firewall, SIP,
     Gatekeeper, guest account disabled, automatic login disabled, n8n
     authentication, n8n localhost binding, screen lock enabled,
     sharing services disabled.
-  * **Recommended (WARN):** Controls that add defense in depth but
+  - **Recommended (WARN):** Controls that add defense in depth but
     whose absence does not create an immediately exploitable gap —
     Bluetooth disabled, antivirus installed, IDS running, outbound
     filtering, USB restrictions, logging configured, DNS security,
@@ -387,13 +387,13 @@ remediate it.
 
 - **FR-009**: The guide MUST include a prioritized quick-start
   checklist separating actions into three tiers:
-  * **Immediate (do first):** Controls that close critical attack
+  - **Immediate (do first):** Controls that close critical attack
     vectors with minimal effort and no tool installation — enable
     FileVault, enable firewall + stealth mode, verify SIP, disable
     guest account, disable automatic login, disable sharing services,
     enable screen lock, change SSH defaults, enable software updates,
     physical security basics.
-  * **Follow-up (do next):** Controls that require tool installation
+  - **Follow-up (do next):** Controls that require tool installation
     or more complex configuration — install antivirus, set up IDS,
     configure outbound filtering, deploy n8n in a container, set up
     credential management, configure DNS security, harden Bluetooth,
@@ -402,7 +402,7 @@ remediate it.
     workflows for injection vulnerabilities (Execute Command nodes,
     Code nodes processing scraped data, LLM nodes without input
     validation).
-  * **Ongoing (maintain):** Controls that require periodic action —
+  - **Ongoing (maintain):** Controls that require periodic action —
     re-run audit script, update security tool signatures, review
     logs, run post-update checklist after macOS updates, rotate
     credentials, re-audit launch daemons after software changes.
@@ -476,13 +476,13 @@ remediate it.
 
 - **FR-018**: The guide MUST cover backup and recovery for BOTH
   deployment paths, since each path has different backup targets:
-  * **Containerized path:** Docker volume export, credential secret
+  - **Containerized path:** Docker volume export, credential secret
     backup, container image versioning, Colima VM snapshot (if
     applicable), and `docker compose` configuration backup.
-  * **Bare-metal path:** n8n workflow export (`n8n export:workflow`),
+  - **Bare-metal path:** n8n workflow export (`n8n export:workflow`),
     credential file backup, Time Machine configuration for the n8n
     data directory, and service account configuration backup.
-  * **Both paths:** Backup encryption, offsite/remote copy strategy,
+  - **Both paths:** Backup encryption, offsite/remote copy strategy,
     and a tested restore procedure so the operator can verify backups
     actually work.
   *Source: NIST SP 800-123 Section 5.3 (Backup Procedures); CIS
@@ -510,11 +510,11 @@ remediate it.
   curated list of settings known to be reset by macOS updates, that
   the operator runs after every macOS update. The post-update
   checklist complements (does not replace) the full audit script:
-  * **Post-update checklist:** Quick, targeted — checks only the
+  - **Post-update checklist:** Quick, targeted — checks only the
     specific settings Apple is known to reset (firewall rules,
     sharing services, privacy permissions, Gatekeeper). Designed to
     be run immediately after every macOS update.
-  * **Full audit script (FR-007):** Comprehensive — checks all 25
+  - **Full audit script (FR-007):** Comprehensive — checks all 25
     control areas. Designed for periodic re-audit (monthly or after
     significant system changes).
   The post-update checklist MAY be implemented as a flag or mode of
@@ -529,29 +529,29 @@ remediate it.
   Since Apify actors scrape LinkedIn profiles and web pages that
   anyone can edit, ALL data entering n8n from external sources MUST
   be treated as adversarial. The section MUST cover:
-  * **Prompt injection:** If any LLM or AI node processes scraped
+  - **Prompt injection:** If any LLM or AI node processes scraped
     content (e.g., for lead enrichment or summarization), adversarial
     prompts embedded in profile fields (job title, summary, company
     name) can hijack the model into executing unintended actions.
     The guide MUST explain the attack, show examples, and recommend
     controls (system prompts that resist injection, output validation,
     never allowing LLM output to drive code execution directly).
-  * **Command injection:** The n8n Execute Command node runs shell
+  - **Command injection:** The n8n Execute Command node runs shell
     commands on the host (bare-metal) or inside the container. If
     scraped data reaches this node unsanitized, it is arbitrary code
     execution. The guide MUST recommend disabling Execute Command
     unless strictly needed, and if needed, showing how to sanitize
     inputs and restrict what commands can run.
-  * **Code injection:** The n8n Code node executes JavaScript or
+  - **Code injection:** The n8n Code node executes JavaScript or
     Python. If scraped data is interpolated into code strings, it is
     code injection. The guide MUST recommend treating all scraped
     fields as data (never code), using parameterized operations, and
     auditing workflows for string interpolation of external data.
-  * **Node restriction policy:** The guide MUST list which n8n nodes
+  - **Node restriction policy:** The guide MUST list which n8n nodes
     can execute arbitrary code (Execute Command, Code, SSH, HTTP
     Request with scripting) and recommend a policy for when each is
     acceptable in a workflow that processes untrusted data.
-  * **Defense in depth with containerization:** Even with input
+  - **Defense in depth with containerization:** Even with input
     sanitization, injection defenses can be bypassed. Container
     isolation (FR-016) limits blast radius if injection succeeds —
     the attacker gets a container shell, not a host shell. The guide
