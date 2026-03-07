@@ -1,3 +1,20 @@
+<!--
+Sync Impact Report
+- Version change: 1.0.0 → 1.1.0
+- Modified principles: none
+- Added sections:
+  - Article X: CLI-First Infrastructure, UI for Business Logic
+  - Deployment Context: Container runtime row added to Target System table
+- Removed sections: none
+- Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ no changes needed (generic template)
+  - .specify/templates/spec-template.md: ✅ no changes needed (generic template)
+  - .specify/templates/tasks-template.md: ✅ no changes needed (generic template)
+  - .specify/templates/constitution-template.md: ✅ no changes needed (source template)
+  - README.md: ✅ no changes needed
+- Follow-up TODOs: none
+-->
+
 # OpenClaw-Mac Constitution
 
 ## Core Principles
@@ -57,10 +74,11 @@ Every security recommendation must reference at least one of:
 
 * **Standards bodies:** CIS Apple macOS Benchmarks, NIST SP 800-179
   (Guide to Securing Apple macOS Systems), NIST SP 800-123 (Guide
-  to General Server Security)
+  to General Server Security), NIST SP 800-190 (Application Container
+  Security Guide), CIS Docker Benchmark
 * **Vendor documentation:** Apple Platform Security Guide
   (support.apple.com/guide/security), Apple's Manage Login Items
-  documentation
+  documentation, Docker security documentation
 * **Established security tooling repos:** Objective-See
   (objective-see.org), Google Santa
   (github.com/google/santa), ClamAV (github.com/Cisco-Talos/clamav)
@@ -148,6 +166,55 @@ all other rules are enforced.
 Write clean markdown on the first pass. Do not rely on CI to catch
 formatting issues.
 
+### X. CLI-First Infrastructure, UI for Business Logic
+
+All infrastructure setup, configuration, hardening, deployment, and
+system administration MUST be done via CLI commands. Never instruct
+the operator to use a GUI application for infrastructure tasks.
+
+**Rationale:** GUI tools hide what commands are actually being run.
+When something breaks, the operator cannot reproduce or debug the
+issue. CLI commands are auditable, scriptable, version-controllable,
+and can be managed by tools like Claude Code. A GUI is an extra
+layer of abstraction that creates opacity in exactly the places where
+transparency matters most — security infrastructure.
+
+**Infrastructure (CLI only):**
+
+* Docker/container management: `docker`, `docker compose`, `colima`
+* System hardening: `defaults write`, `socketfilterfw`, `csrutil`
+* Service configuration: `launchctl`, `sshd_config`, environment
+  variables
+* Package management: `brew`, `npm`
+* Secrets management: `security` (Keychain CLI), `docker secret`
+* Monitoring setup: CLI-based log queries, `santa`, `lulu`
+* Backup and recovery: `n8n export:workflow`, `docker volume`,
+  `tmutil`
+
+**Business logic (UI preferred):**
+
+* **n8n workflow composition:** The n8n web UI is the right tool for
+  visually designing and understanding automation pipelines. Use the
+  UI to compose workflows, inspect execution state, and understand
+  data flow. Fall back to CLI (`n8n export:workflow`,
+  `n8n import:workflow`) for bulk changes, migrations, or precise
+  one-off modifications.
+* **n8n monitoring and debugging:** The n8n web UI execution log is
+  the right tool for visually identifying where workflow failures
+  occur, inspecting input/output at each node, and tracing data
+  through the pipeline. Fall back to CLI for log aggregation,
+  alerting rules, and automated health checks.
+* **Dashboards and observability:** If monitoring tools provide a
+  web UI (Grafana, etc.), use it for visual analysis. Configure the
+  dashboards and data sources via CLI or config files.
+
+**The line between infrastructure and business logic:**
+If the action changes how the system is deployed, secured, or
+configured, it is infrastructure — use CLI. If the action changes
+what the system does (workflow logic, data transformations, alert
+thresholds), it is business logic — UI is preferred for visual
+understanding, with CLI available for precision and bulk operations.
+
 ## Deployment Context
 
 ### Target System
@@ -157,7 +224,8 @@ formatting issues.
 | Hardware | Mac Mini (Apple Silicon or Intel) |
 | Role | Always-on automation server |
 | OS | macOS Tahoe (26) or Sonoma (14) |
-| Workload | n8n, Node.js, Apify CLI/SDK |
+| Container runtime | Colima + Docker CLI (primary); Docker Desktop also supported |
+| Workload | n8n (containerized), Node.js, Apify CLI/SDK |
 | Data sensitivity | PII (lead data), API credentials, session tokens |
 | Network posture | LAN-connected, possible webhook ingress |
 | Physical posture | Office/home, not a data center |
@@ -170,6 +238,7 @@ formatting issues.
   from Tahoe or Sonoma
 * Application development guidance (this repo does not ship software
   to end users)
+* GUI-based infrastructure management tools
 
 ## Development Workflow
 
@@ -204,4 +273,4 @@ documentation and scripting repository. Amendments require:
 2. Review by the repository maintainer
 3. Update to this document in the same PR as the change it enables
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
+**Version**: 1.1.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
