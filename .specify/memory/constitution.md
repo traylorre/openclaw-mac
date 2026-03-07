@@ -1,10 +1,10 @@
 <!--
 Sync Impact Report
-- Version change: 1.0.0 → 1.1.0
+- Version change: 1.2.0 → 1.2.1
 - Modified principles: none
-- Added sections:
-  - Article X: CLI-First Infrastructure, UI for Business Logic
-  - Deployment Context: Container runtime row added to Target System table
+- Modified sections:
+  - Development Workflow > Iterative Specification (Context Carryover):
+    added 20% context threshold hard-floor rule to preempt compaction
 - Removed sections: none
 - Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ no changes needed (generic template)
@@ -255,6 +255,44 @@ understanding, with CLI available for precision and bulk operations.
    merging (or document that verification is pending)
 5. **CI must pass:** Markdownlint and link checker must be green
 
+### Iterative Specification (Context Carryover)
+
+Run `/speckit.specify` multiple times per feature. Each iteration
+uncovers improvements the previous round missed — like progressively
+finer grits of sandpaper. Investing many iterations during the specify
+phase dramatically reduces issues that would otherwise surface during
+planning or implementation.
+
+**Context threshold rule:** When remaining conversation context drops
+to 20% or lower, STOP current work immediately — do not attempt to
+finish the current task. Seal all progress into a context carryover
+file before compaction can occur. Compaction loses nuance and
+decision rationale that cannot be recovered; a clean carryover
+preserves it. Treat 20% as a hard floor, not a target to optimize
+toward.
+
+When the conversation context approaches the 20% threshold or fills
+up during iterative specification:
+
+1. **Create a carryover file:** Save a
+   `CONTEXT-CARRYOVER-XX.md` (where XX is an incrementing integer,
+   e.g., 01, 02, 03) inside the feature's spec folder
+   (e.g., `specs/001-feature-name/CONTEXT-CARRYOVER-01.md`).
+   The carryover file must capture:
+   * Current spec revision and constitution version
+   * Key files and their purpose
+   * Key decisions made and their rationale
+   * Work completed so far
+   * What's next
+   * How to resume (which files to read)
+2. **Clear context:** Use `/clear` to free the conversation window.
+3. **Resume:** Read the carryover file to absorb prior context, then
+   continue with the next `/speckit.specify` round.
+
+The carryover file lives in the spec folder (not the repo root) so
+that context is organized per feature and does not clutter the
+top-level directory.
+
 ### Pull Request Standards
 
 * PR title under 70 characters
@@ -269,8 +307,9 @@ This constitution supersedes default Spec-Kit principles (library-
 first, CLI mandate, TDD imperative) which do not apply to a
 documentation and scripting repository. Amendments require:
 
-1. A rationale tied to a change in the deployment's threat model
+1. A rationale tied to a change in the deployment's threat model or
+   development workflow
 2. Review by the repository maintainer
 3. Update to this document in the same PR as the change it enables
 
-**Version**: 1.1.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
+**Version**: 1.2.1 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
