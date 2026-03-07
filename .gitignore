@@ -1,0 +1,23 @@
+# .gitignore for macOS Hardening Project
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Thumbnails and Metadata
+.Spotlight-V100
+.Trashes
+
+# Sensitive Local Data (Don't leak your own logs/backups)
+*.log
+*.swp
+.env
+local_audit_results.txt
+
+# Terminal / Shell History (if you store scripts locally)
+.bash_history
+.zsh_history
+
