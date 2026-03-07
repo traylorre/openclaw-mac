@@ -1,0 +1,33 @@
+#!/bin/bash
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+# Resolve the repo root (where package.json lives)
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "Running pre-push markdown lint..."
+
+# Prefer the local node_modules binary installed by npm install
+LOCAL_BIN="${REPO_ROOT}/node_modules/.bin/markdownlint-cli2"
+
+if [[ -x "$LOCAL_BIN" ]]; then
+    LINT_CMD="$LOCAL_BIN"
+elif command -v markdownlint-cli2 > /dev/null 2>&1; then
+    LINT_CMD="markdownlint-cli2"
+else
+    echo -e "${RED}markdownlint-cli2 not found.${NC}"
+    echo "Run: npm install   (from ${REPO_ROOT})"
+    exit 1
+fi
+
+cd "$REPO_ROOT"
+
+if $LINT_CMD "**/*.md"; then
+    echo -e "${GREEN}Markdown lint passed.${NC}"
+else
+    echo -e "${RED}Markdown lint failed. Fix errors before pushing.${NC}"
+    exit 1
+fi
