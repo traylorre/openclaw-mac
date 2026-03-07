@@ -1,3 +1,21 @@
+<!--
+Sync Impact Report
+- Version change: 1.2.1 → 1.3.0
+- Modified principles:
+  - Article II (Threat-Model Driven): added adversary — adversarial
+    content in scraped web data (prompt injection, command injection,
+    code injection via n8n automation nodes)
+- Modified sections: none
+- Removed sections: none
+- Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ no changes needed (generic template)
+  - .specify/templates/spec-template.md: ✅ no changes needed (generic template)
+  - .specify/templates/tasks-template.md: ✅ no changes needed (generic template)
+  - .specify/templates/constitution-template.md: ✅ no changes needed (source template)
+  - README.md: ✅ no changes needed
+- Follow-up TODOs: none
+-->
+
 # OpenClaw-Mac Constitution
 
 ## Core Principles
@@ -25,7 +43,10 @@ named threat to this deployment:
   Apify API keys, PII lead data, n8n workflow IP, system integrity
 * **Adversaries:** opportunistic network scanners, credential-stuffing
   bots, malicious npm/community-node supply chain, physical theft,
-  LAN-adjacent attackers
+  LAN-adjacent attackers, adversarial content in scraped web data
+  (prompt injection, command injection, code injection via n8n
+  automation nodes processing untrusted input from LinkedIn profiles
+  and web pages)
 
 Do not add controls that cannot be traced back to a plausible attack
 path against this deployment. Defense in depth is required — no
@@ -57,10 +78,11 @@ Every security recommendation must reference at least one of:
 
 * **Standards bodies:** CIS Apple macOS Benchmarks, NIST SP 800-179
   (Guide to Securing Apple macOS Systems), NIST SP 800-123 (Guide
-  to General Server Security)
+  to General Server Security), NIST SP 800-190 (Application Container
+  Security Guide), CIS Docker Benchmark
 * **Vendor documentation:** Apple Platform Security Guide
   (support.apple.com/guide/security), Apple's Manage Login Items
-  documentation
+  documentation, Docker security documentation
 * **Established security tooling repos:** Objective-See
   (objective-see.org), Google Santa
   (github.com/google/santa), ClamAV (github.com/Cisco-Talos/clamav)
@@ -148,6 +170,55 @@ all other rules are enforced.
 Write clean markdown on the first pass. Do not rely on CI to catch
 formatting issues.
 
+### X. CLI-First Infrastructure, UI for Business Logic
+
+All infrastructure setup, configuration, hardening, deployment, and
+system administration MUST be done via CLI commands. Never instruct
+the operator to use a GUI application for infrastructure tasks.
+
+**Rationale:** GUI tools hide what commands are actually being run.
+When something breaks, the operator cannot reproduce or debug the
+issue. CLI commands are auditable, scriptable, version-controllable,
+and can be managed by tools like Claude Code. A GUI is an extra
+layer of abstraction that creates opacity in exactly the places where
+transparency matters most — security infrastructure.
+
+**Infrastructure (CLI only):**
+
+* Docker/container management: `docker`, `docker compose`, `colima`
+* System hardening: `defaults write`, `socketfilterfw`, `csrutil`
+* Service configuration: `launchctl`, `sshd_config`, environment
+  variables
+* Package management: `brew`, `npm`
+* Secrets management: `security` (Keychain CLI), `docker secret`
+* Monitoring setup: CLI-based log queries, `santa`, `lulu`
+* Backup and recovery: `n8n export:workflow`, `docker volume`,
+  `tmutil`
+
+**Business logic (UI preferred):**
+
+* **n8n workflow composition:** The n8n web UI is the right tool for
+  visually designing and understanding automation pipelines. Use the
+  UI to compose workflows, inspect execution state, and understand
+  data flow. Fall back to CLI (`n8n export:workflow`,
+  `n8n import:workflow`) for bulk changes, migrations, or precise
+  one-off modifications.
+* **n8n monitoring and debugging:** The n8n web UI execution log is
+  the right tool for visually identifying where workflow failures
+  occur, inspecting input/output at each node, and tracing data
+  through the pipeline. Fall back to CLI for log aggregation,
+  alerting rules, and automated health checks.
+* **Dashboards and observability:** If monitoring tools provide a
+  web UI (Grafana, etc.), use it for visual analysis. Configure the
+  dashboards and data sources via CLI or config files.
+
+**The line between infrastructure and business logic:**
+If the action changes how the system is deployed, secured, or
+configured, it is infrastructure — use CLI. If the action changes
+what the system does (workflow logic, data transformations, alert
+thresholds), it is business logic — UI is preferred for visual
+understanding, with CLI available for precision and bulk operations.
+
 ## Deployment Context
 
 ### Target System
@@ -157,7 +228,8 @@ formatting issues.
 | Hardware | Mac Mini (Apple Silicon or Intel) |
 | Role | Always-on automation server |
 | OS | macOS Tahoe (26) or Sonoma (14) |
-| Workload | n8n, Node.js, Apify CLI/SDK |
+| Container runtime | Colima + Docker CLI (primary); Docker Desktop also supported |
+| Workload | n8n (containerized), Node.js, Apify CLI/SDK |
 | Data sensitivity | PII (lead data), API credentials, session tokens |
 | Network posture | LAN-connected, possible webhook ingress |
 | Physical posture | Office/home, not a data center |
@@ -170,6 +242,7 @@ formatting issues.
   from Tahoe or Sonoma
 * Application development guidance (this repo does not ship software
   to end users)
+* GUI-based infrastructure management tools
 
 ## Development Workflow
 
@@ -186,6 +259,44 @@ formatting issues.
    merging (or document that verification is pending)
 5. **CI must pass:** Markdownlint and link checker must be green
 
+### Iterative Specification (Context Carryover)
+
+Run `/speckit.specify` multiple times per feature. Each iteration
+uncovers improvements the previous round missed — like progressively
+finer grits of sandpaper. Investing many iterations during the specify
+phase dramatically reduces issues that would otherwise surface during
+planning or implementation.
+
+**Context threshold rule:** When remaining conversation context drops
+to 20% or lower, STOP current work immediately — do not attempt to
+finish the current task. Seal all progress into a context carryover
+file before compaction can occur. Compaction loses nuance and
+decision rationale that cannot be recovered; a clean carryover
+preserves it. Treat 20% as a hard floor, not a target to optimize
+toward.
+
+When the conversation context approaches the 20% threshold or fills
+up during iterative specification:
+
+1. **Create a carryover file:** Save a
+   `CONTEXT-CARRYOVER-XX.md` (where XX is an incrementing integer,
+   e.g., 01, 02, 03) inside the feature's spec folder
+   (e.g., `specs/001-feature-name/CONTEXT-CARRYOVER-01.md`).
+   The carryover file must capture:
+   * Current spec revision and constitution version
+   * Key files and their purpose
+   * Key decisions made and their rationale
+   * Work completed so far
+   * What's next
+   * How to resume (which files to read)
+2. **Clear context:** Use `/clear` to free the conversation window.
+3. **Resume:** Read the carryover file to absorb prior context, then
+   continue with the next `/speckit.specify` round.
+
+The carryover file lives in the spec folder (not the repo root) so
+that context is organized per feature and does not clutter the
+top-level directory.
+
 ### Pull Request Standards
 
 * PR title under 70 characters
@@ -200,8 +311,9 @@ This constitution supersedes default Spec-Kit principles (library-
 first, CLI mandate, TDD imperative) which do not apply to a
 documentation and scripting repository. Amendments require:
 
-1. A rationale tied to a change in the deployment's threat model
+1. A rationale tied to a change in the deployment's threat model or
+   development workflow
 2. Review by the repository maintainer
 3. Update to this document in the same PR as the change it enables
 
-**Version**: 1.0.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
+**Version**: 1.3.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
