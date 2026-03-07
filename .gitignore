@@ -11,6 +11,9 @@ Icon?
 .Spotlight-V100
 .Trashes
 
+# Local audit working files
+audit/
+
 # Sensitive Local Data (Don't leak your own logs/backups)
 *.log
 *.swp
