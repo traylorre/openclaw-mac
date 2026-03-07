@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-hardening-guide-extension`
 **Created**: 2026-03-07
-**Status**: Draft (Rev 8)
+**Status**: Draft (Rev 11)
 **Input**: User description: "Extend HARDENING.md with comprehensive threat-modeled security guidance for Mac Mini running n8n plus Apify for LinkedIn lead generation. Focus on free options, call out paid with cost/liability tradeoffs, cite canonical sources, think like a principal engineer. Include Docker-based workload isolation via Colima (CLI-only, free). All infrastructure setup via CLI per Constitution Article X."
 
 ## User Scenarios & Testing *(mandatory)*
@@ -219,6 +219,56 @@ remediate it.
 
 ---
 
+### User Story 7 - Operator Secures Workflows Against Injection (Priority: P1)
+
+An operator who has n8n workflows processing scraped LinkedIn data
+needs to audit those workflows for injection vulnerabilities and
+apply controls to prevent adversarial content from reaching code
+execution paths. They follow the scraped data input security section
+to map the data flow through their workflows, identify dangerous
+nodes, apply n8n's built-in restrictions, and set up monitoring to
+detect injection attempts.
+
+**Why this priority**: This deployment's core function is scraping
+untrusted web content and processing it through an automation engine
+that can execute arbitrary code. Every LinkedIn profile is attacker-
+controlled input. A single unvalidated field flowing into a Code or
+Execute Command node is arbitrary code execution. This is not a
+theoretical risk — it is the most likely attack vector for this
+specific deployment.
+
+**Independent Test**: Create a test n8n workflow that processes
+scraped data through a Code node and an LLM node. Inject a known-
+benign test payload (e.g., a job title containing shell metacharacters
+or a prompt injection string). Verify that the controls recommended
+by the guide prevent the payload from executing or influencing
+behavior, and that the attempt is logged.
+
+**Acceptance Scenarios**:
+
+1. **Given** an n8n workflow that passes scraped LinkedIn job titles
+   to a Code node via string interpolation, **When** the operator
+   follows the injection defense section, **Then** they identify the
+   vulnerable pattern and refactor it to treat the field as data
+   (not code).
+2. **Given** an n8n workflow that sends scraped profile summaries to
+   an LLM node for enrichment, **When** the operator applies the
+   recommended prompt injection controls, **Then** a test injection
+   payload in the summary field does not alter the LLM's behavior
+   beyond processing the field as text content.
+3. **Given** a hardened n8n deployment, **When** an injection attempt
+   is made via scraped data, **Then** the attempt is logged with
+   enough detail for the operator to identify the source profile and
+   the node that was targeted.
+4. **Given** the operator uses the bare-metal deployment path,
+   **When** they read the injection defense section, **Then** they
+   understand that injection on bare-metal means full host compromise
+   (home directory, Keychain, SSH keys) and are strongly advised to
+   containerize or at minimum restrict n8n's service account
+   permissions.
+
+---
+
 ### Edge Cases
 
 - What happens when the operator uses macOS Sonoma instead of Tahoe?
@@ -272,6 +322,17 @@ remediate it.
   "disable it" — it must show how to use these nodes safely with
   untrusted data (input validation, allowlisted commands, no string
   interpolation of scraped fields).
+- What happens when injection is subtle — not obvious shell commands
+  but data exfiltration via outbound HTTP? For example, a scraped
+  field containing a URL that an HTTP Request node follows, leaking
+  internal data to an attacker-controlled server. The guide must
+  cover outbound request restrictions, not just code execution nodes.
+- What happens when an LLM node is used with tool-calling or function-
+  calling capabilities? A prompt injection could cause the LLM to
+  invoke tools it has access to in unintended ways. The guide must
+  recommend minimizing the tools available to LLM agents and never
+  granting file system, shell, or network tools to agents that
+  process scraped data.
 
 ## Requirements *(mandatory)*
 
@@ -358,8 +419,10 @@ remediate it.
     Bluetooth disabled, antivirus installed, IDS running, outbound
     filtering, USB restrictions, logging configured, DNS security,
     software updates current, launch daemons audited, IPv6
-    disabled/hardened, Execute Command node disabled or restricted
-    in n8n workflows.
+    disabled/hardened. Injection defense checks: Execute Command node
+    disabled or restricted, `N8N_BLOCK_ENV_ACCESS_IN_NODE` set,
+    `N8N_RESTRICT_FILE_ACCESS_TO` configured, n8n execution logging
+    enabled.
   Every control area in FR-002 MUST be classified as either critical
   or recommended. Areas not explicitly named above default to
   recommended. Physical security controls that cannot be verified
@@ -405,7 +468,11 @@ remediate it.
   - **Ongoing (maintain):** Controls that require periodic action —
     re-run audit script, update security tool signatures, review
     logs, run post-update checklist after macOS updates, rotate
-    credentials, re-audit launch daemons after software changes.
+    credentials, re-audit launch daemons after software changes,
+    review n8n execution logs for injection indicators (unexpected
+    commands, anomalous outbound connections, LLM behavior changes),
+    re-audit workflows after adding or modifying nodes that process
+    scraped data.
   Every control area in FR-002 MUST appear in exactly one tier.
   Control area #26 (injection defense) MUST appear in the follow-up
   tier as a workflow audit action.
@@ -514,7 +581,7 @@ remediate it.
     specific settings Apple is known to reset (firewall rules,
     sharing services, privacy permissions, Gatekeeper). Designed to
     be run immediately after every macOS update.
-  - **Full audit script (FR-007):** Comprehensive — checks all 25
+  - **Full audit script (FR-007):** Comprehensive — checks all 26
     control areas. Designed for periodic re-audit (monthly or after
     significant system changes).
   The post-update checklist MAY be implemented as a flag or mode of
@@ -529,34 +596,121 @@ remediate it.
   Since Apify actors scrape LinkedIn profiles and web pages that
   anyone can edit, ALL data entering n8n from external sources MUST
   be treated as adversarial. The section MUST cover:
-  - **Prompt injection:** If any LLM or AI node processes scraped
-    content (e.g., for lead enrichment or summarization), adversarial
-    prompts embedded in profile fields (job title, summary, company
-    name) can hijack the model into executing unintended actions.
-    The guide MUST explain the attack, show examples, and recommend
-    controls (system prompts that resist injection, output validation,
-    never allowing LLM output to drive code execution directly).
-  - **Command injection:** The n8n Execute Command node runs shell
-    commands on the host (bare-metal) or inside the container. If
-    scraped data reaches this node unsanitized, it is arbitrary code
-    execution. The guide MUST recommend disabling Execute Command
-    unless strictly needed, and if needed, showing how to sanitize
-    inputs and restrict what commands can run.
-  - **Code injection:** The n8n Code node executes JavaScript or
-    Python. If scraped data is interpolated into code strings, it is
-    code injection. The guide MUST recommend treating all scraped
-    fields as data (never code), using parameterized operations, and
-    auditing workflows for string interpolation of external data.
-  - **Node restriction policy:** The guide MUST list which n8n nodes
-    can execute arbitrary code (Execute Command, Code, SSH, HTTP
-    Request with scripting) and recommend a policy for when each is
-    acceptable in a workflow that processes untrusted data.
-  - **Defense in depth with containerization:** Even with input
-    sanitization, injection defenses can be bypassed. Container
-    isolation (FR-016) limits blast radius if injection succeeds —
-    the attacker gets a container shell, not a host shell. The guide
-    MUST cross-reference the container isolation section as the
-    fallback when input validation fails.
+
+  **Data flow mapping (Prevent):** The section MUST open with a
+  concrete description of the data flow through this deployment so
+  the operator understands where untrusted data enters and where it
+  can reach code execution:
+  1. Apify actor scrapes LinkedIn → returns structured data via API
+  2. n8n trigger/webhook receives Apify response
+  3. n8n transformation nodes process the data (Set, IF, Switch,
+     Merge, etc. — these are safe as they don't execute arbitrary
+     code)
+  4. **Danger zone:** data reaches a node that CAN execute code
+     (Code, Execute Command, SSH, Function, AI/LLM nodes) — this is
+     where injection becomes code execution
+  5. Output: data is stored, sent via email/webhook, or written to a
+     database
+  The guide MUST make clear that the attack surface is step 4: the
+  boundary where data crosses from "being processed" to "influencing
+  code execution."
+
+  **Prompt injection (Prevent):** If any LLM or AI node processes
+  scraped content (e.g., for lead enrichment or summarization),
+  adversarial prompts embedded in profile fields (job title, summary,
+  company name) can hijack the model into executing unintended
+  actions. The guide MUST explain the attack, show concrete examples
+  using LinkedIn profile fields, and recommend layered controls:
+  - Structural separation: pass scraped data as clearly delimited
+    data fields, never concatenated directly into the prompt text
+  - Output schema validation: validate LLM output against an
+    expected structure before acting on it
+  - Never chain LLM output to code execution: LLM output MUST NOT
+    flow into Execute Command, Code, or SSH nodes without human
+    review
+  - Never allow LLM output to modify workflows: if n8n's API is
+    accessible, a hijacked LLM could create or modify workflows to
+    establish persistence. The guide MUST recommend restricting n8n
+    API access and never granting AI nodes permission to call the
+    n8n API
+  - System prompt hardening: include instructions to ignore embedded
+    directives, but treat this as a weak control (it can be bypassed
+    by sufficiently adversarial input — it is a speed bump, not a
+    wall)
+  The guide MUST name the specific n8n nodes that process LLM/AI
+  content and are vulnerable to prompt injection: OpenAI node,
+  AI Agent node, LangChain nodes (LLM Chain, Retrieval QA, etc.),
+  Anthropic node, and any community AI nodes. Each MUST be flagged
+  as high-risk when processing scraped data.
+
+  **Command injection (Prevent):** The n8n Execute Command node runs
+  shell commands on the host (bare-metal) or inside the container. If
+  scraped data reaches this node unsanitized, it is arbitrary code
+  execution. The guide MUST recommend disabling Execute Command
+  unless strictly needed, and if needed, showing how to sanitize
+  inputs and restrict what commands can run.
+
+  **Code injection (Prevent):** The n8n Code node executes JavaScript
+  or Python. If scraped data is interpolated into code strings, it is
+  code injection. The guide MUST recommend treating all scraped
+  fields as data (never code), using parameterized operations, and
+  auditing workflows for string interpolation of external data.
+
+  **n8n built-in security controls (Prevent):** The guide MUST
+  document n8n's own security environment variables that restrict
+  what nodes can do:
+  - `N8N_BLOCK_ENV_ACCESS_IN_NODE`: prevents Code/Function nodes
+    from reading environment variables (blocks credential leakage)
+  - `N8N_RESTRICT_FILE_ACCESS_TO`: restricts filesystem access from
+    Code nodes to a specific directory
+  - Community node restrictions: disable untrusted community nodes
+    that may introduce additional code execution paths
+  - Node type restrictions: if n8n supports disabling specific node
+    types, document how to remove Execute Command and SSH nodes from
+    the available palette entirely
+
+  **Node restriction policy (Prevent):** The guide MUST list which
+  n8n nodes can execute arbitrary code (Execute Command, Code,
+  Function, SSH, HTTP Request with scripting, AI Agent, LangChain
+  nodes) and recommend a policy for when each is acceptable in a
+  workflow that processes untrusted data.
+
+  **Detection and logging (Detect):** The guide MUST cover how to
+  detect injection attempts after they happen:
+  - Enable n8n execution logging so every workflow run records input
+    data and node outputs
+  - Monitor for anomalous patterns: unexpected outbound connections
+    from the container/host, unusual process execution, file system
+    changes outside expected paths
+  - Log scraped data that contains shell metacharacters, prompt
+    injection keywords, or other suspicious patterns before it
+    reaches processing nodes
+  - For containerized deployments, use Docker logging to capture
+    container stdout/stderr for forensic review
+
+  **Defense in depth with containerization (Respond):** Even with
+  input sanitization, injection defenses can be bypassed. Container
+  isolation (FR-016) limits blast radius if injection succeeds —
+  the attacker gets a container shell, not a host shell. The guide
+  MUST cross-reference the container isolation section as the
+  fallback when input validation fails. For bare-metal deployments,
+  the guide MUST include a prominent warning box explaining the
+  concrete consequences of successful injection without
+  containerization:
+  - Full access to the operator's home directory (SSH keys, browser
+    profiles, credentials files)
+  - macOS Keychain access (if the n8n process runs as the user)
+  - Ability to install persistence mechanisms (launch agents/daemons)
+  - Lateral movement to other devices on the LAN
+  - Exfiltration of all PII lead data, LinkedIn credentials, and
+    Apify API keys
+  The guide MUST recommend containerization as the single most
+  important control for any deployment that processes scraped web
+  data. If the operator chooses bare-metal despite this warning,
+  the guide MUST recommend at minimum: running n8n under a dedicated
+  service account with no login shell, restricted filesystem
+  permissions, and no Keychain access.
+
   *Source: OWASP Top 10 (A03 Injection); OWASP LLM Top 10
   (LLM01 Prompt Injection); MITRE ATT&CK T1059 (Command and
   Scripting Interpreter); n8n security documentation.*
@@ -613,6 +767,11 @@ remediate it.
   of contents and uses a consistent heading structure so an operator
   can locate any specific control area within 30 seconds without
   reading unrelated sections.
+- **SC-012**: The injection defense section enables an operator to
+  audit any n8n workflow that processes scraped data and identify
+  all nodes where untrusted input could reach code execution, within
+  one pass through the workflow. The section provides a concrete
+  checklist of node types to flag and patterns to fix.
 
 ## Assumptions
 
@@ -641,3 +800,9 @@ remediate it.
   (free for personal use and businesses <250 employees / <$10M
   revenue). Both provide a Linux VM that exposes the same Docker CLI
   socket, so all `docker` commands are identical on either.
+- The operator's n8n workflows MAY include LLM/AI nodes (OpenAI,
+  Anthropic, AI Agent, LangChain) for lead enrichment or
+  classification. The injection defense section MUST be useful
+  whether or not AI nodes are currently in use, since they may be
+  added later. Code-level injection (Code node, Execute Command) is
+  a risk regardless of whether AI is used.
