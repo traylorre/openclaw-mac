@@ -1,10 +1,11 @@
 <!--
 Sync Impact Report
-- Version change: 1.2.0 → 1.2.1
-- Modified principles: none
-- Modified sections:
-  - Development Workflow > Iterative Specification (Context Carryover):
-    added 20% context threshold hard-floor rule to preempt compaction
+- Version change: 1.2.1 → 1.3.0
+- Modified principles:
+  - Article II (Threat-Model Driven): added adversary — adversarial
+    content in scraped web data (prompt injection, command injection,
+    code injection via n8n automation nodes)
+- Modified sections: none
 - Removed sections: none
 - Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ no changes needed (generic template)
@@ -42,7 +43,10 @@ named threat to this deployment:
   Apify API keys, PII lead data, n8n workflow IP, system integrity
 * **Adversaries:** opportunistic network scanners, credential-stuffing
   bots, malicious npm/community-node supply chain, physical theft,
-  LAN-adjacent attackers
+  LAN-adjacent attackers, adversarial content in scraped web data
+  (prompt injection, command injection, code injection via n8n
+  automation nodes processing untrusted input from LinkedIn profiles
+  and web pages)
 
 Do not add controls that cannot be traced back to a plausible attack
 path against this deployment. Defense in depth is required — no
@@ -312,4 +316,4 @@ documentation and scripting repository. Amendments require:
 2. Review by the repository maintainer
 3. Update to this document in the same PR as the change it enables
 
-**Version**: 1.2.1 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
+**Version**: 1.3.0 | **Ratified**: 2026-03-07 | **Last Amended**: 2026-03-07
