@@ -1,5 +1,19 @@
 # openclaw-mac
 
+macOS hardening guides and audit tooling for a Mac Mini running n8n
+orchestration with Apify integrations.
+
+## Setup
+
+```bash
+git clone https://github.com/traylorre/openclaw-mac.git
+cd openclaw-mac
+npm install
+```
+
+`npm install` installs the markdown linter and configures a pre-push
+git hook that runs it automatically before every push.
+
 ## Disclaimer
 
 **Use at your own risk.** Hardening involves modifying system-level settings.
