@@ -1,0 +1,18 @@
+{
+  "name": "openclaw-mac",
+  "version": "1.0.0",
+  "private": true,
+  "description": "macOS hardening guides and audit tooling for OpenClaw",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/traylorre/openclaw-mac.git"
+  },
+  "scripts": {
+    "lint": "markdownlint-cli2 '**/*.md'",
+    "prepare": "git config core.hooksPath .githooks"
+  },
+  "devDependencies": {
+    "markdownlint-cli2": "^0.17.0"
+  }
+}

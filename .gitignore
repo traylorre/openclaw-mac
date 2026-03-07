@@ -11,6 +11,9 @@ Icon?
 .Spotlight-V100
 .Trashes
 
+# Dependencies
+node_modules/
+
 # Local audit working files
 audit/
 
