@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-hardening-guide-extension`
 **Created**: 2026-03-07
-**Status**: Draft (Rev 23)
+**Status**: Draft (Rev 29)
 **Input**: User description: "Extend HARDENING.md with comprehensive threat-modeled security guidance for Mac Mini running n8n plus Apify for LinkedIn lead generation. Focus on free options, call out paid with cost/liability tradeoffs, cite canonical sources, think like a principal engineer. Include Docker-based workload isolation via Colima (CLI-only, free). All infrastructure setup via CLI per Constitution Article X."
 
 **Modular structure**: This spec is split across multiple files to stay within
@@ -12,10 +12,10 @@ and assumptions. Domain-specific FRs are in the module files below.
 
 | Module | File | FRs | Scope |
 |--------|------|-----|-------|
-| macOS Platform | [spec-macos-platform.md](spec-macos-platform.md) | FR-016, 017, 028-030, 032-036, 041-042, 048, 050-053, 058, 061-062 | OS hardening, containers, network |
+| macOS Platform | [spec-macos-platform.md](spec-macos-platform.md) | FR-016, 017, 028-030, 032-036, 041-042, 048, 050-053, 058, 061-062, 068-070, 073, 076, 079-080, 082, 084-086, 089 | OS hardening, containers, network |
 | n8n Platform | [spec-n8n-platform.md](spec-n8n-platform.md) | FR-011, 038-039, 044, 054-055, 059, 064, 066-067 | n8n config, API, webhooks, nodes |
-| Data Security | [spec-data-security.md](spec-data-security.md) | FR-012-013, 021, 040, 043, 047, 049, 057, 060 | Injection, PII, credentials, SSRF |
-| Audit & Ops | [spec-audit-ops.md](spec-audit-ops.md) | FR-007, 018, 020, 022-027, 031, 037, 045-046, 056, 063, 065 | Audit script, monitoring, IR, backups |
+| Data Security | [spec-data-security.md](spec-data-security.md) | FR-012-013, 021, 040, 043, 047, 049, 057, 060, 071, 083, 087, 090 | Injection, PII, credentials, SSRF, cloud services |
+| Audit & Ops | [spec-audit-ops.md](spec-audit-ops.md) | FR-007, 018, 020, 022-027, 031, 037, 045-046, 056, 063, 065, 072, 074-075, 077-078, 081, 088 | Audit script, monitoring, IR, backups, validation |
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -714,6 +714,139 @@ confirm the system is re-hardened.
   Sharing after applying hardening controls? The guide must include
   physical access recovery procedures and warn the operator about
   ordering dependencies before potentially destructive steps.
+- What if the n8n process crashes and generates a core dump containing
+  the N8N_ENCRYPTION_KEY, API keys, and PII in memory? An attacker
+  who gains filesystem access can read core dumps in `/cores/`. The
+  guide must disable core dumps for the n8n process and verify no
+  existing dumps are present.
+- What if the operator has Screen Sharing enabled with a legacy VNC
+  password (limited to 8 characters, weak encryption) instead of
+  macOS account authentication? An attacker on the LAN can brute
+  force the VNC password. The guide must require macOS account auth
+  or SSH tunneling for Screen Sharing.
+- What if the operator has cron jobs, login hooks, or authorization
+  plugins that are not detected by the launch daemon audit? The
+  attacker uses an alternative persistence mechanism that the audit
+  script doesn't check. The guide must audit ALL persistence types.
+- What if iCloud Keychain is enabled and syncs the n8n-related
+  passwords to the operator's iPhone, which is later stolen or
+  compromised? The credential is now exposed on a less-secured
+  device. The guide must disable iCloud Keychain on the Mac Mini.
+- What if iCloud Drive Desktop & Documents sync is enabled and
+  uploads n8n backup files or exported credentials to Apple's
+  servers? PII and secrets are now in the cloud without the
+  operator's awareness. The guide must disable iCloud Drive.
+- What if XProtect signatures are outdated because automatic software
+  updates are disabled? Apple's built-in malware detection becomes
+  ineffective. The guide must verify XProtect update freshness.
+- What if an attacker with physical access boots the Intel Mac Mini
+  into Target Disk Mode (hold T) and reads the disk as an external
+  drive? FileVault protects the data, but the guide must verify
+  firmware password is set to prevent Target Disk Mode access.
+- What if the system clock is manipulated (NTP spoofing) to make
+  audit logs show incorrect timestamps, masking the true time of an
+  attack? Or to make expired TLS certificates appear valid? The
+  guide must verify NTP is enabled with trusted servers.
+- What if a new listening service appears after a macOS update or
+  software installation that the operator doesn't notice? The
+  service adds attack surface. The guide must include a listening
+  service baseline and drift detection.
+- What if the operator rotates the N8N_ENCRYPTION_KEY during an
+  emergency but fails to re-encrypt the credential database first,
+  making all stored credentials unrecoverable? The emergency rotation
+  runbook must include clear ordering with warnings.
+- What if the operator skips hardening validation testing and assumes
+  controls work because the audit script passes? The audit script
+  checks configuration, not enforcement. A firewall rule might be
+  loaded but not actually blocking traffic. The guide must include
+  active validation tests.
+- What if File Sharing (SMB) is enabled on the Mac Mini and an
+  attacker on the LAN uses SMB relay attacks to capture credentials?
+  The guide must disable File Sharing and recommend SCP/rsync over
+  SSH instead.
+- What if Remote Apple Events is enabled and an attacker sends Apple
+  Events from another compromised LAN device to execute actions on
+  the Mac Mini? The guide must disable Remote Apple Events.
+- What if the operator's Apple ID (used for Find My Mac) is
+  compromised via phishing and the attacker remotely erases the Mac
+  Mini? The guide must recommend 2FA on the Apple ID and explain the
+  risk tradeoff of Find My Mac.
+- What if an attacker exfiltrates data via DNS subdomain queries
+  (encoding stolen credentials or PII in subdomain labels sent to
+  an attacker-controlled nameserver)? Standard outbound filtering
+  (pf, LuLu) does not block DNS traffic. The guide must address DNS
+  as a covert exfiltration channel with query logging and anomalous
+  pattern detection.
+- What if an attacker who gains root access clears or truncates audit
+  logs to hide evidence of compromise? All detection capabilities
+  depend on log integrity. The guide must address log file permissions,
+  append-only flags, hash chains, and external forwarding to make
+  log tampering detectable.
+- What if PII from scraped LinkedIn profiles persists in temporary
+  files under `/var/folders/` or in n8n's temp directory after workflow
+  execution completes? A separate attacker or process could read this
+  residual data. The guide must address temp file cleanup and isolation.
+- What if the operator attempts to securely delete PII from the n8n
+  database using `rm -P` or expects `srm` to work? Secure deletion
+  does not work on APFS-formatted SSDs due to copy-on-write and
+  TRIM. The guide must explain that FileVault encryption is the
+  actual data-at-rest deletion defense and that crypto-shredding is
+  the only reliable destruction method.
+- What if a Time Machine snapshot retains a copy of PII data that was
+  deleted from n8n's database? The snapshot preserves the old state,
+  and local snapshots are accessible to any admin user while the system
+  is running. The guide must address snapshot lifecycle management for
+  PII compliance.
+- What if an attacker who gains admin access installs a rogue root CA
+  certificate in the System Keychain? All HTTPS connections (Apify API,
+  LinkedIn auth, SMTP, Docker registry) can be silently intercepted via
+  MITM without triggering certificate warnings. The guide must audit
+  the certificate trust store against a baseline.
+- What if a malicious macOS configuration profile is installed via a
+  phishing email or compromised website? The profile could disable
+  FileVault, install root CA certificates, configure a rogue VPN, or
+  modify DNS settings — all persisting across reboots. The guide must
+  audit installed profiles and document removal procedures.
+- What if Spotlight indexes the n8n database directory and an attacker
+  uses `mdfind` to instantly locate PII, credentials, or configuration
+  files? Spotlight provides a rapid data discovery mechanism that
+  bypasses the need for manual filesystem traversal. The guide must
+  exclude sensitive directories from Spotlight indexing.
+- What if the operator copies the N8N_ENCRYPTION_KEY to the clipboard
+  while n8n is running on bare-metal, and a compromised Code node reads
+  it via `pbpaste`? All stored credentials can then be decrypted
+  offline. The guide must address clipboard security and recommend
+  avoiding clipboard for credential management.
+- What if a macOS update adds new root CA certificates that the
+  operator didn't expect? The trust store baseline comparison must
+  distinguish between Apple-added certificates (legitimate updates) and
+  attacker-installed certificates, requiring re-baselining after macOS
+  updates.
+- What if an attacker accesses a canary file but then deletes the
+  OpenBSM audit log or kills the monitoring process before the next
+  audit cycle? The canary detection depends on the monitoring
+  infrastructure remaining intact. The guide must cross-reference log
+  integrity (FR-081) and external forwarding as defenses against
+  evidence destruction.
+- What if a custom Docker image contains secrets (API keys, passwords)
+  in intermediate build layers? Even if the final stage doesn't include
+  them, `docker history --no-trunc` reveals all layer commands. The
+  guide must address Dockerfile security and layer history inspection.
+- What if `docker inspect` on the running n8n container reveals the
+  N8N_ENCRYPTION_KEY in plaintext under the Env section? Any user with
+  Docker access can extract all secrets. The guide must recommend Docker
+  secrets instead of environment variables for sensitive values.
+- What if an image vulnerability scanner discovers a critical CVE
+  (e.g., remote code execution in Node.js) in the deployed n8n Docker
+  image? The operator needs a procedure to assess impact, decide
+  whether to update immediately or accept the risk, and verify the fix
+  after updating. The guide must include an image scanning schedule and
+  response procedure.
+- What if the operator passes the N8N_ENCRYPTION_KEY as a command-line
+  argument (`n8n start --encryption-key=secret`) on bare-metal? The
+  secret is visible to every user via `ps aux`. The guide must warn
+  against CLI argument secrets and recommend launchd plist environment
+  variables or file-based injection instead.
 
 ## Requirements *(mandatory)*
 
@@ -728,13 +861,13 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   *Source: NIST SP 800-154 (Guide to Data-Centric System Threat Modeling).*
 - **FR-002**: Since the guide replaces the existing `docs/HARDENING.md`
   (FR-015), it MUST cover ALL control areas — both the foundational
-  controls from the current guide and the 17 blind spots identified in
+  controls from the current guide and the blind spots identified in
   HARDENING-AUDIT.md and nation-state attack surface analysis. The
-  complete list of 32 control areas:
+  complete list of 39 control areas:
   1. FileVault (full disk encryption)
   2. Application firewall and stealth mode
   3. SIP (System Integrity Protection)
-  4. Gatekeeper (code signing enforcement)
+  4. Gatekeeper (code signing enforcement and notarization)
   5. Software update policy and patch management
   6. DNS security (encrypted DNS, filtering)
   7. Screen lock and login window security
@@ -745,13 +878,13 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   12. Bluetooth
   13. SSH
   14. USB/Thunderbolt
-  15. Sharing services
+  15. Sharing services (comprehensive)
   16. Outbound filtering
   17. Logging and alerting
   18. Backup and recovery
   19. PII protection
-  20. Launch daemon auditing
-  21. Physical security
+  20. Persistence mechanism auditing (all types)
+  21. Physical security (including recovery mode)
   22. Guest account
   23. Automatic login
   24. IPv6
@@ -763,6 +896,13 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   30. Credential lifecycle (rotation, expiry, revocation)
   31. SSRF defense and internal network access control
   32. TCC permission management
+  33. Memory, swap, and core dump security
+  34. iCloud and Apple cloud services exposure
+  35. Time synchronization integrity (NTP)
+  36. Listening service inventory
+  37. Certificate trust store protection
+  38. Clipboard security
+  39. Canary and tripwire detection
 - **FR-003**: Every hardening recommendation MUST cite at least one
   canonical source from: CIS Apple macOS Benchmarks, NIST SP 800-179,
   Apple Platform Security Guide, Objective-See, Google Santa,
@@ -795,32 +935,51 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   - **Immediate (do first):** Controls that close critical attack
     vectors with minimal effort and no tool installation — enable
     FileVault, enable firewall + stealth mode, verify SIP, disable
-    guest account, disable automatic login, disable sharing services,
-    enable screen lock, change SSH defaults, enable software updates,
-    physical security basics, disable or restrict n8n REST API access,
-    configure n8n webhook authentication.
+    guest account, disable automatic login, disable sharing services
+    (comprehensive per FR-073), enable screen lock, change SSH
+    defaults, enable software updates, physical security basics,
+    disable or restrict n8n REST API access, configure n8n webhook
+    authentication, disable unnecessary iCloud services (#34),
+    disable core dumps (#33), verify NTP is enabled (#35).
   - **Follow-up (do next):** Controls that require tool installation
     or more complex configuration — install antivirus, set up IDS,
     configure outbound filtering, deploy n8n in a container, set up
     credential management, configure DNS security, harden Bluetooth,
-    restrict USB/Thunderbolt, audit launch daemons, configure IPv6,
-    set up logging, configure backup, PII data controls, audit n8n
-    workflows for injection vulnerabilities (Execute Command nodes,
-    Code nodes processing scraped data, LLM nodes without input
-    validation), pin Docker images by digest and verify Homebrew
-    package integrity, establish credential rotation schedule.
+    restrict USB/Thunderbolt, audit all persistence mechanisms
+    (FR-070), configure IPv6, set up logging, configure backup, PII
+    data controls, audit n8n workflows for injection vulnerabilities
+    (Execute Command nodes, Code nodes processing scraped data, LLM
+    nodes without input validation), pin Docker images by digest and
+    verify Homebrew package integrity, establish credential rotation
+    schedule, create listening service baseline (#36), run hardening
+    validation tests (FR-078), harden Screen Sharing/VNC if enabled
+    (FR-069), configure DNS query logging and covert channel defense
+    (FR-080), temp file and cache security hardening (FR-082), create
+    certificate trust store baseline (FR-084), audit and remove
+    unauthorized configuration profiles (FR-085), configure Spotlight
+    exclusions for n8n data directories (FR-086), deploy canary files
+    and honey credentials (FR-088), scan Docker images for
+    vulnerabilities (FR-089), migrate secrets from environment
+    variables to Docker secrets (FR-090).
   - **Ongoing (maintain):** Controls that require periodic action —
     re-run audit script, update security tool signatures, review
     logs, run post-update checklist after macOS updates, rotate
-    credentials per lifecycle policy, re-audit launch daemons after
-    software changes, review n8n execution logs for injection
-    indicators (unexpected commands, anomalous outbound connections,
-    LLM behavior changes), re-audit workflows after adding or
-    modifying nodes that process scraped data, verify automated
-    monitoring infrastructure is intact (launchd job, notification
-    config, log directory), verify Docker image digests against
-    known-good values after pulls, review webhook access logs for
-    abuse patterns.
+    credentials per lifecycle policy, re-audit all persistence
+    mechanisms after software changes, review n8n execution logs for
+    injection indicators (unexpected commands, anomalous outbound
+    connections, LLM behavior changes), re-audit workflows after
+    adding or modifying nodes that process scraped data, verify
+    automated monitoring infrastructure is intact (launchd job,
+    notification config, log directory), verify Docker image digests
+    against known-good values after pulls, review webhook access logs
+    for abuse patterns, verify listening service inventory against
+    baseline, annual emergency credential rotation practice run
+    (FR-077), review DNS query logs for anomalous exfiltration
+    patterns (FR-080), verify audit log integrity via hash chain
+    (FR-081), verify certificate trust store against baseline
+    (FR-084), clipboard hygiene during credential management
+    operations (FR-087), verify canary file integrity (FR-088),
+    rescan Docker images for newly discovered CVEs (FR-089).
   Every control area in FR-002 MUST appear in exactly one tier.
   Control areas #27 (n8n API security) and #28 (webhook security)
   MUST appear in the immediate tier — an exposed n8n API or
@@ -833,6 +992,16 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   tier as a workflow audit action.
   Docker/Colima deployment MUST appear in the follow-up tier as a
   recommended early action.
+  Control areas #33 (memory/swap), #34 (iCloud), #35 (NTP) MUST
+  appear in the immediate tier (quick system settings changes).
+  Control area #36 (listening service inventory) MUST appear in the
+  follow-up tier (requires baseline creation).
+  Control area #37 (certificate trust store) MUST appear in the
+  follow-up tier (requires baseline creation).
+  Control area #38 (clipboard security) MUST appear in the ongoing
+  tier (operational security practice, not a one-time configuration).
+  Control area #39 (canary/tripwire detection) MUST appear in the
+  follow-up tier (requires initial canary deployment).
   **Ordering constraints**: within the immediate tier, certain controls
   have dependencies that MUST be documented:
   - SSH key MUST be installed and tested BEFORE disabling password
@@ -880,7 +1049,7 @@ Domain-specific FRs are in the module files linked in the FR Index above.
 | FR | Summary | Module |
 |----|---------|--------|
 | FR-001 | Threat model section | spec.md |
-| FR-002 | 32 control areas coverage | spec.md |
+| FR-002 | 39 control areas coverage | spec.md |
 | FR-003 | Canonical source citations | spec.md |
 | FR-004 | Verification methods | spec.md |
 | FR-005 | Free-first tool defaults | spec.md |
@@ -946,6 +1115,29 @@ Domain-specific FRs are in the module files linked in the FR Index above.
 | FR-065 | Audit script limitations | [spec-audit-ops.md](spec-audit-ops.md) |
 | FR-066 | Troubleshooting guidance | [spec-n8n-platform.md](spec-n8n-platform.md) |
 | FR-067 | n8n user management | [spec-n8n-platform.md](spec-n8n-platform.md) |
+| FR-068 | Memory, swap, core dump security | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-069 | Screen Sharing / Remote Management hardening | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-070 | Comprehensive persistence mechanism auditing | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-071 | iCloud and Apple cloud services exposure | [spec-data-security.md](spec-data-security.md) |
+| FR-072 | Apple built-in malware defense layers | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-073 | Sharing services comprehensive hardening | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-074 | NTP and time synchronization integrity | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-075 | Listening service inventory and baseline | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-076 | Recovery mode and startup security | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-077 | Emergency credential rotation runbook | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-078 | Attack simulation / hardening validation | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-079 | Network service binding audit | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-080 | DNS exfiltration and covert channel defense | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-081 | Log integrity and anti-tampering | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-082 | Temporary file and cache security | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-083 | Secure deletion limitations on macOS | [spec-data-security.md](spec-data-security.md) |
+| FR-084 | Certificate trust store protection | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-085 | Configuration profile security | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-086 | Spotlight and metadata indexing privacy | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-087 | Clipboard security | [spec-data-security.md](spec-data-security.md) |
+| FR-088 | Canary and tripwire detection | [spec-audit-ops.md](spec-audit-ops.md) |
+| FR-089 | Docker image provenance and build security | [spec-macos-platform.md](spec-macos-platform.md) |
+| FR-090 | Process environment and metadata hardening | [spec-data-security.md](spec-data-security.md) |
 
 ### Key Entities
 
@@ -990,21 +1182,43 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   at a known-good state. Used by the audit script (FR-046) to detect
   unauthorized workflow modifications that could represent attacker
   persistence. Regenerated after intentional workflow changes.
+- **Persistence Baseline**: A comprehensive snapshot of ALL macOS
+  persistence mechanisms (launch daemons/agents, cron jobs, login
+  items, authorization plugins, periodic scripts, shell profiles,
+  XPC services, configuration profiles) at a known-good state. Used
+  by the audit script (FR-070) to detect unauthorized persistence
+  across all mechanism types.
+- **Listening Service Baseline**: An inventory of all TCP and UDP
+  services listening on the Mac Mini at a known-good state, including
+  port number, protocol, bound address, and owning process. Used by
+  the audit script (FR-075) to detect unexpected network services.
+- **Emergency Rotation Runbook**: A dependency-ordered, step-by-step
+  credential rotation procedure covering every credential type in the
+  deployment. Designed for execution under time pressure during
+  incident response (FR-077).
+- **Certificate Trust Baseline**: A fingerprint inventory of all root
+  CA certificates in the System Keychain at a known-good state. Used
+  by the audit script (FR-084) to detect unauthorized certificate
+  installations that could enable MITM attacks on HTTPS traffic.
+- **Canary Artifact**: A deliberately placed file, credential, or DNS
+  hostname that serves no operational purpose but is monitored for
+  access. Any access indicates an attacker is exploring the system.
+  Used by the canary detection mechanisms (FR-088).
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
-- **SC-001**: The guide covers all 32 control areas with zero
+- **SC-001**: The guide covers all 39 control areas with zero
   remaining "NOT COVERED" gaps.
 - **SC-002**: 100% of recommendations include at least one canonical
   source citation (CIS, NIST, Apple, Objective-See, OWASP, MITRE, CIS
   Docker Benchmark, or equivalent).
 - **SC-003**: 100% of recommendations include a verification method
   (terminal command, System Settings path, or audit script check).
-- **SC-004**: The audit script checks at least 45 distinct controls
-  (currently checks 5), including at least 8 container-specific
-  checks when Docker is detected. With 32 control areas, the script
+- **SC-004**: The audit script checks at least 60 distinct controls
+  (currently checks 5), including at least 10 container-specific
+  checks when Docker is detected. With 39 control areas, the script
   must average at least one check per area plus additional checks for
   areas with multiple verifiable settings.
 - **SC-005**: Every paid tool recommendation includes a `[PAID]` tag,
@@ -1101,6 +1315,54 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   startup, service account permissions, SSH lockout, firewall
   conflicts). Each troubleshooting entry resolves the issue without
   removing the security control.
+- **SC-031**: The guide's memory and volatile data security section
+  ensures that secrets in swap, hibernation images, and core dumps
+  are protected — core dumps are disabled for the n8n process, and
+  FileVault encrypts swap and hibernation data at rest.
+- **SC-032**: The guide's persistence mechanism audit covers ALL macOS
+  persistence types (launch daemons/agents, cron, login items,
+  authorization plugins, shell profiles, periodic scripts, XPC
+  services, configuration profiles) — not just launch daemons.
+- **SC-033**: The guide's sharing services section disables or hardens
+  every macOS sharing service with a documented risk rationale for
+  each. No sharing service is left in default state without explicit
+  justification.
+- **SC-034**: The guide's iCloud section ensures that no iCloud
+  service except Find My Mac is enabled on the Mac Mini, preventing
+  data leakage to Apple's servers and synced devices.
+- **SC-035**: The guide's emergency credential rotation runbook
+  enables an operator to rotate all credentials in dependency order
+  within 2 hours during an incident, with per-credential instructions
+  covering where to change, what breaks, and how to verify.
+- **SC-036**: The guide's attack simulation section provides safe,
+  non-destructive test procedures for every major hardening control
+  category (firewall, outbound filtering, auth, container isolation,
+  injection defense, persistence detection).
+- **SC-037**: The guide's listening service inventory enables the
+  operator to detect any unexpected network listener on the Mac Mini
+  within one audit cycle.
+- **SC-038**: The guide's DNS exfiltration defense section enables DNS
+  query logging and provides anomalous query detection heuristics,
+  addressing the covert channel gap that bypasses standard outbound
+  filtering.
+- **SC-039**: The guide's audit log integrity controls (hash chain,
+  file permissions, external forwarding recommendation) provide tamper
+  evidence if an attacker modifies or deletes audit logs after
+  compromise.
+- **SC-040**: The guide's certificate trust store audit detects
+  unauthorized root CA certificates by comparing against a known-good
+  baseline, preventing silent MITM interception of all HTTPS traffic.
+- **SC-041**: The guide's Spotlight exclusions prevent indexing of the
+  n8n data directory, backup archives, and credential storage, blocking
+  rapid data discovery by an attacker with user-level access.
+- **SC-042**: The guide's canary and tripwire mechanisms provide an
+  independent compromise detection layer — canary files, honey
+  credentials, and canary DNS hostnames detect attacker exploration
+  without relying on configuration checking or behavioral analysis.
+- **SC-043**: The guide's recommended container configuration passes no
+  secrets via environment variables (using Docker secrets instead),
+  ensuring that `docker inspect` and process listings do not reveal
+  credentials in plaintext.
 
 ## Assumptions
 
@@ -1168,3 +1430,12 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   nation-state) may bypass individual controls. The guide's goal is to
   make the overall defensive stack expensive to penetrate, likely to
   detect intrusion, and fast to recover from.
+- The Mac Mini has an Apple ID signed in for Find My Mac (FR-053).
+  All other iCloud services are assumed to be unnecessary for an
+  automation server and should be disabled (FR-071).
+- Screen Sharing may or may not be enabled depending on the operator's
+  management preference. If enabled, it must be hardened per FR-069.
+  SSH is the preferred remote management method.
+- The operator has network access to a trusted NTP server (Apple's
+  default time.apple.com is sufficient for most deployments). NTP
+  is not blocked by network firewalls.
