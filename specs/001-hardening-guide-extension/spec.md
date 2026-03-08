@@ -715,7 +715,6 @@ confirm the system is re-hardened.
   physical access recovery procedures and warn the operator about
   ordering dependencies before potentially destructive steps.
 
-
 ## Requirements *(mandatory)*
 
 ### Guide Structure Requirements (Meta-FRs)
@@ -727,8 +726,6 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   the specific platform, workload, assets, and adversaries for this
   deployment (Mac Mini + n8n + Apify + LinkedIn lead gen).
   *Source: NIST SP 800-154 (Guide to Data-Centric System Threat Modeling).*
-
-
 - **FR-002**: Since the guide replaces the existing `docs/HARDENING.md`
   (FR-015), it MUST cover ALL control areas — both the foundational
   controls from the current guide and the 17 blind spots identified in
@@ -766,36 +763,26 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   30. Credential lifecycle (rotation, expiry, revocation)
   31. SSRF defense and internal network access control
   32. TCC permission management
-
-
 - **FR-003**: Every hardening recommendation MUST cite at least one
   canonical source from: CIS Apple macOS Benchmarks, NIST SP 800-179,
   Apple Platform Security Guide, Objective-See, Google Santa,
   drduh/macOS-Security-and-Privacy-Guide, OWASP, MITRE ATT&CK, CIS
   Docker Benchmark, or Docker's own security documentation.
   *Source: Constitution Article IV.*
-
-
 - **FR-004**: Every recommendation MUST include a verification method:
   either a terminal command, a System Settings navigation path, or a
   check in the audit script.
   *Source: Constitution Article V; CIS Benchmark Audit/Remediation pattern.*
-
-
 - **FR-005**: The guide MUST default to free and open-source tools for
   every recommendation. Paid tools MUST be marked with `[PAID]`,
   include approximate cost, and state the specific capability gap over
   the free alternative.
   *Source: Constitution Article III.*
-
-
 - **FR-006**: Where no free alternative exists for a risk, the guide
   MUST state the explicit tradeoff: what risk is accepted and what the
   liability exposure looks like (breach notification costs, credential
   compromise blast radius, account bans).
   *Source: Constitution Article III.*
-
-
 - **FR-008**: Every control in the guide MUST be labeled with its
   primary defensive layer (Prevent, Detect, or Respond). Sections
   that contain controls spanning multiple layers MUST group them by
@@ -803,8 +790,6 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   disabling guest account is purely Prevent) need not artificially
   introduce other layers — label the section and move on.
   *Source: Constitution Article VII; NIST Cybersecurity Framework.*
-
-
 - **FR-009**: The guide MUST include a prioritized quick-start
   checklist separating actions into three tiers:
   - **Immediate (do first):** Controls that close critical attack
@@ -863,19 +848,13 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   The guide MUST call out each ordering dependency with a warning box
   before the step that could cause lockout. Cross-reference US-1
   acceptance scenario #4 (lockout recovery).
-
-
 - **FR-010**: The guide MUST explain WHY each control matters (naming
   the attack it prevents) before explaining HOW to enable it, written
   for an operator who is not a macOS security specialist.
   *Source: Constitution Article VIII.*
-
-
 - **FR-014**: The guide MUST pass the project's markdownlint CI
   pipeline with zero errors.
   *Source: Constitution Article IX.*
-
-
 - **FR-015**: The guide MUST replace the existing `docs/HARDENING.md`
   content (not create a separate file). The current guide's factual
   content (specific terminal commands, System Settings paths,
@@ -885,8 +864,6 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   (Article VIII: explicit over clever). The existing 5-check
   verification script MUST be incorporated into the new standalone
   audit script (FR-007) and expanded.
-
-
 - **FR-019**: All infrastructure setup instructions in the guide MUST
   be CLI-only. No step may instruct the operator to use a GUI
   application for infrastructure tasks (Docker Desktop GUI, system
@@ -897,7 +874,6 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   `n8n import`) MUST also be documented for bulk and precision
   operations.
   *Source: Constitution Article X.*
-
 
 ### FR Index
 
@@ -970,7 +946,6 @@ Domain-specific FRs are in the module files linked in the FR Index above.
 | FR-065 | Audit script limitations | [spec-audit-ops.md](spec-audit-ops.md) |
 | FR-066 | Troubleshooting guidance | [spec-n8n-platform.md](spec-n8n-platform.md) |
 | FR-067 | n8n user management | [spec-n8n-platform.md](spec-n8n-platform.md) |
-
 
 ### Key Entities
 
@@ -1128,7 +1103,6 @@ Domain-specific FRs are in the module files linked in the FR Index above.
   removing the security control.
 
 ## Assumptions
-
 
 - The target machine is a Mac Mini (Apple Silicon or Intel) running
   macOS Tahoe (26) or Sonoma (14).
