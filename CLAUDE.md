@@ -16,7 +16,7 @@ tests/
 
 ## Commands
 
-*Add commands for Bash 5.x (POSIX-compatible subset for portability)*
+<!-- TODO: Add commands for Bash 5.x (POSIX-compatible subset for portability) -->
 
 ## Code Style
 
