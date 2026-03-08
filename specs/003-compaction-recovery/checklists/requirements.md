@@ -66,6 +66,7 @@
 ~~1. **FR-031 (BLOCKING)**: Validate hook API~~ **RESOLVED 2026-03-08**
 
 Remaining items:
+
 1. **FR-007**: Choose sequencing mechanism for /clear after audit completion
 2. **FR-020**: Design tmux response-completion detection
 3. **FR-035**: Design batch mode extension for compaction-audit command

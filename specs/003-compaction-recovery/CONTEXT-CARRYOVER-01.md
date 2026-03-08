@@ -59,11 +59,13 @@ This session performed 10 rounds of `/speckit.specify` on spec 003-compaction-re
 ### Spec Architecture
 
 **3 User Stories:**
+
 - US1 (P1): Automatic compaction detection and audit
 - US2 (P2): Automated /clear and resume after recovery
 - US3 (P2): Interrupted task capture
 
 **FR Categories (7 sections):**
+
 - Core (FR-001–015): Detection, audit invocation, /clear, CARRYOVER loading, tmux/non-tmux paths
 - Race Condition Safeguards (FR-016–023): Re-entrancy, CARRYOVER suppression, halt, crash-safe reads, tmux timing, infinite loops, exactly-once, stale markers
 - Blind Spot Safeguards (FR-024–031): Model non-compliance, trivial task, env validation, tmux fallback, missing transcript, preamble, size limits, API gate

@@ -75,11 +75,13 @@ This session performed rounds 11–20 of `/speckit.specify` on spec 003-compacti
 ### Spec Architecture (after 20 rounds)
 
 **3 User Stories:**
+
 - US1 (P1): Automatic compaction detection and audit
 - US2 (P2): Automated /clear and resume after recovery
 - US3 (P2): Interrupted task capture
 
 **FR Categories (16 sections):**
+
 - Core (FR-001–015)
 - Race Condition Safeguards (FR-016–023)
 - Blind Spot Safeguards (FR-024–031)

@@ -52,7 +52,7 @@ This session performed rounds 26–30 of `/speckit.specify` on spec 003-compacti
 
 ### Cumulative Spec Architecture (30 rounds)
 
-**24 FR categories, 97 FRs, 90 edge cases, 42 assumptions, 28 SCs, 5 entities, 3 user stories**
+#### 24 FR categories, 97 FRs, 90 edge cases, 42 assumptions, 28 SCs, 5 entities, 3 user stories
 
 **15 planning-phase blockers identified** — FR-031 remains the single BLOCKING item (hook API validation).
 
