@@ -16,7 +16,7 @@
 | File | What |
 |------|------|
 | `.specify/memory/constitution.md` | v1.3.0 -- 10 articles (I-X), injection adversary in Article II |
-| `specs/001-hardening-guide-extension/spec.md` | Rev 17 -- 37 FRs, 9 user stories, 16 SCs, 29 edge cases, 7 key entities |
+| `specs/001-hardening-guide-extension/spec.md` | Rev 23 -- 67 FRs, 9 user stories, 30 SCs, 32 control areas (modular: see spec.md FR Index) |
 | `specs/001-hardening-guide-extension/checklists/requirements.md` | All items pass |
 | `specs/001-hardening-guide-extension/CONTEXT-CARRYOVER-01.md` | Prior session context (Rev 3) |
 | `docs/HARDENING.md` | Current thin guide -- to be replaced |
@@ -161,6 +161,6 @@ Systematically identified and strengthened the 10 weakest areas:
 
 1. Read this file for context (covers Rev 12-17)
 2. Read `CONTEXT-CARRYOVER-01.md` for earlier session context (Rev 1-3)
-3. Read `specs/001-hardening-guide-extension/spec.md` for current spec (Rev 17)
+3. Read `specs/001-hardening-guide-extension/spec.md` for current spec (Rev 23, modular split)
 4. Read `.specify/memory/constitution.md` for governance rules (v1.3.0)
 5. Continue with `/speckit.clarify`, `/speckit.plan`, or more `/speckit.specify` rounds
