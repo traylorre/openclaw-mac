@@ -1,6 +1,6 @@
 # Spec Module: n8n Platform Security
 
-**Parent spec**: [spec.md](spec.md) (Rev 23)
+**Parent spec**: [spec.md](spec.md) (Rev 29)
 **Module scope**: n8n application configuration, API security, webhook hardening, node restrictions, updates, and troubleshooting.
 
 ## Functional Requirements

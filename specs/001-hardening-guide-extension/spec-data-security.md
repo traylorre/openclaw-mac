@@ -1,7 +1,7 @@
 # Spec Module: Data Security
 
-**Parent spec**: [spec.md](spec.md) (Rev 23)
-**Module scope**: Injection defense, PII/lead data protection, credential management, SSRF, data exfiltration, and supply chain integrity.
+**Parent spec**: [spec.md](spec.md) (Rev 29)
+**Module scope**: Injection defense, PII/lead data protection, credential management, SSRF, data exfiltration, supply chain integrity, and cloud service exposure.
 
 ## Functional Requirements
 
@@ -443,3 +443,210 @@
   *Source: Apify platform security documentation; OWASP Top 10 (A08
   Software and Data Integrity Failures); MITRE ATT&CK T1195.002
   (Compromise Software Supply Chain).*
+
+- **FR-071**: The guide MUST include an iCloud and Apple cloud
+  services exposure control section. If the Mac Mini has an Apple ID
+  signed in (required for Find My Mac per FR-053), other iCloud
+  services may sync data from the Mac Mini to Apple's servers and
+  to the operator's other Apple devices, creating data leakage paths
+  and expanding the attack surface. The section MUST cover:
+  - **iCloud Keychain**: if enabled, passwords and credentials stored
+    in the macOS Keychain may sync to the operator's iPhone, iPad,
+    and other Macs. A compromise of any synced device exposes the
+    Mac Mini's credentials. The guide MUST recommend disabling iCloud
+    Keychain on the Mac Mini — credentials for n8n should be stored
+    in a separate, non-syncing Keychain (cross-reference FR-051)
+  - **iCloud Drive**: if enabled, files in Desktop, Documents, or
+    other configured directories are uploaded to Apple's servers.
+    If the n8n data directory or backup files are in a synced
+    location, PII and credentials could be uploaded to iCloud. The
+    guide MUST recommend disabling iCloud Drive entirely on the Mac
+    Mini
+  - **Desktop & Documents sync**: a subset of iCloud Drive that
+    specifically syncs the Desktop and Documents folders. The guide
+    MUST verify this is disabled — any sensitive files placed on the
+    Desktop (common during debugging or maintenance) would be
+    uploaded
+  - **Universal Clipboard**: syncs clipboard content between Apple
+    devices on the same Apple ID. If the operator copies a password
+    or API key on the Mac Mini, it appears on their iPhone. The guide
+    MUST recommend disabling Handoff (which includes Universal
+    Clipboard) on the Mac Mini (cross-reference FR-042 which already
+    recommends disabling Handoff for lateral movement defense)
+  - **Photos, Mail, Contacts, Calendar**: all MUST be disabled on a
+    headless server. None have legitimate use for an automation server
+    and each adds iCloud data sync surface
+  - **iCloud Backup**: does not apply to macOS (only iOS/iPadOS), but
+    the guide MUST note this to prevent confusion with Time Machine
+    backup (FR-018)
+  - **Find My Mac**: the ONLY iCloud service that should remain
+    enabled (per FR-053). The guide MUST explain that Find My Mac
+    requires iCloud sign-in but does not require any other iCloud
+    service to be enabled
+  - **Apple ID compromise impact**: if the operator's Apple ID is
+    compromised (phishing, credential stuffing), an attacker could:
+    - Use Find My Mac to remotely lock or erase the Mac Mini
+    - Access any iCloud-synced data (if services were left enabled)
+    - The guide MUST recommend enabling two-factor authentication on
+      the Apple ID and using a strong, unique password
+  - Verification: audit script checks iCloud service status (WARN
+    if any service besides Find My Mac is enabled), Handoff status
+    (WARN if enabled — cross-ref FR-042)
+  *Source: Apple Platform Security Guide (iCloud security); CIS Apple
+  macOS Benchmarks (iCloud configuration); MITRE ATT&CK T1537 (Transfer
+  Data to Cloud Account), T1530 (Data from Cloud Storage).*
+
+- **FR-083**: The guide MUST address the practical limitations of secure
+  data deletion on modern macOS systems with APFS-formatted SSDs.
+  FR-013 requires secure deletion of PII, but traditional secure
+  deletion methods do not work as expected on current Mac hardware. The
+  section MUST cover:
+  - **APFS + SSD + TRIM**: Apple's APFS filesystem on SSDs uses
+    copy-on-write semantics, and the SSD controller performs TRIM (block
+    reclamation) independently of the operating system. The `srm`
+    (secure remove) command was removed in macOS Catalina because it
+    cannot guarantee data overwrite on SSDs — the SSD controller may
+    remap blocks, leaving original data on the physical medium. The
+    guide MUST explain that traditional "overwrite the file with zeros"
+    secure deletion is not reliable on any modern Mac
+  - **FileVault as the primary data-at-rest protection**: since secure
+    deletion is unreliable, the guide MUST position FileVault (full-disk
+    encryption) as the primary mechanism for protecting deleted data.
+    When FileVault is enabled, deleted data remains on the SSD in
+    encrypted form — an attacker who obtains the physical disk cannot
+    read deleted data without the FileVault decryption key. This makes
+    FileVault not just a theft defense but a deletion defense
+  - **Crypto-shredding**: the most reliable way to permanently destroy
+    data on an encrypted volume is crypto-shredding — destroying the
+    encryption key. Apple's Erase All Content and Settings (or
+    `diskutil secureErase`) performs crypto-shredding for the entire
+    volume. For individual files, there is no crypto-shredding mechanism
+    — the data remains on disk until TRIM reclaims the blocks, but is
+    protected by FileVault encryption while it persists
+  - **Time Machine snapshot implications**: when PII is deleted from
+    n8n's database, it may persist in Time Machine local snapshots and
+    backup volumes. The guide MUST cross-reference FR-013 (PII retention
+    limits) and note that old Time Machine backups containing PII should
+    be scheduled for destruction per the data retention policy.
+    `tmutil deletelocalsnapshots` removes local snapshots but cannot
+    selectively delete individual files from backups
+  - **Practical deletion procedures**: for this deployment, the guide
+    MUST document:
+    - How to purge PII from n8n's database (workflow execution logs,
+      stored lead data) using n8n CLI or database operations
+    - How to delete n8n execution logs that contain PII (cross-ref
+      FR-013)
+    - How to remove Docker volumes containing PII (`docker volume rm`)
+    - The fact that after deletion, the data remains encrypted on disk
+      (via FileVault) until the SSD controller reclaims the blocks,
+      which is the best achievable outcome on current hardware
+  - Verification: not automated — this is educational content that
+    informs the operator's data handling practices. The audit script's
+    FileVault check (existing) is the technical verification
+  *Source: Apple Platform Security Guide (Data Protection, APFS); NIST
+  SP 800-88 Rev 1 (Guidelines for Media Sanitization — Section 2.5 SSD
+  considerations); Apple Support (About encrypted storage on your Mac);
+  APFS reference documentation.*
+
+- **FR-087**: The guide MUST address clipboard (pasteboard) security as
+  a credential exposure vector on the bare-metal deployment path. On
+  macOS, the system pasteboard is accessible to all processes running
+  as the same user. If the operator copies a password, API key, or
+  N8N_ENCRYPTION_KEY to the clipboard, any process — including a
+  compromised n8n Code node running as the same user — can read it via
+  `pbpaste` or the NSPasteboard API. The section MUST cover:
+  - **Clipboard exposure on bare-metal**: on the bare-metal path, n8n
+    runs as a user account and Code nodes execute JavaScript in the
+    same process. A malicious or injected Code node can read the
+    clipboard via `require('child_process').execSync('pbpaste')
+    .toString()`. The guide MUST warn operators to never copy sensitive
+    credentials to the clipboard while n8n is running on bare-metal
+  - **Containerized path advantage**: in the containerized deployment
+    path, the n8n process runs inside the Colima VM and has no access
+    to the macOS pasteboard. The guide MUST note this as another
+    advantage of containerization for security-sensitive deployments
+  - **Universal Clipboard cross-reference**: FR-071 addresses Universal
+    Clipboard (syncing clipboard between Apple devices via iCloud/
+    Handoff). This FR addresses the local clipboard accessible to
+    processes on the same Mac Mini
+  - **Operational security practices**: the guide MUST recommend:
+    - Use a password manager (Bitwarden CLI, free) to inject
+      credentials directly into configuration files or environment
+      variables, avoiding the clipboard entirely
+    - If clipboard use is unavoidable, clear the clipboard immediately
+      after pasting: `pbcopy < /dev/null`
+    - On bare-metal: run credential management tasks only when n8n is
+      stopped, or with n8n running under the dedicated service account
+      (FR-036) which cannot access the admin user's clipboard
+  - **Clipboard monitoring detection**: for bare-metal, the guide MUST
+    note that there is no reliable macOS mechanism to detect clipboard
+    monitoring by a process running as the same user. This is a
+    fundamental limitation of the same-user execution model,
+    reinforcing the recommendation for containerization or service
+    account isolation (FR-036)
+  - Verification: not automated — this is operational security
+    guidance. The audit script cannot monitor clipboard activity
+  *Source: Apple Developer Documentation (NSPasteboard); MITRE ATT&CK
+  T1115 (Clipboard Data); CIS Apple macOS Benchmarks (privacy
+  controls).*
+
+- **FR-090**: The guide MUST address environment variable and container
+  metadata exposure as credential leakage vectors. Multiple tools and
+  interfaces can reveal secrets that are passed via environment
+  variables or stored in container configuration. The section MUST
+  cover:
+  - **`docker inspect` credential exposure**: `docker inspect
+    <container>` displays the full container configuration including
+    all environment variables in plaintext. If n8n's
+    N8N_ENCRYPTION_KEY, database passwords, or API keys are set via
+    environment variables in docker-compose.yml, any user with Docker
+    access can read them via `docker inspect`. The guide MUST
+    recommend:
+    - Using Docker secrets instead of environment variables for
+      sensitive values (cross-ref FR-016, FR-058)
+    - Restricting Docker socket access to root only (the default on
+      Colima, but may be changed if the operator adds their user to
+      the docker group)
+    - Being aware that `docker inspect` is a credential disclosure
+      vector during container forensics and debugging
+  - **Process listing exposure**: on bare-metal, `ps aux` shows
+    command-line arguments passed to processes. If secrets are passed
+    as command-line arguments (e.g., `n8n start --encryption-key=...`),
+    they are visible to any user on the system. Additionally,
+    `/proc/<pid>/environ` (on Linux inside the Colima VM) exposes
+    all environment variables of a running process. The guide MUST
+    recommend:
+    - Never passing secrets via command-line arguments — use files,
+      launchd plist EnvironmentVariables (not visible in `ps`), or
+      Docker secrets
+    - For containerized: secrets should be mounted via Docker secrets
+      (`/run/secrets/`), not passed as environment variables
+    - Cross-reference FR-044 (execution model) and FR-057 (credential
+      access patterns)
+  - **Docker log credential leakage**: n8n's stdout/stderr may include
+    environment variable references in error messages or debug output.
+    If Docker logging is set to `json-file` (default), these logs are
+    stored in plaintext on the host at
+    `/var/lib/docker/containers/<id>/<id>-json.log` (inside the Colima
+    VM). The guide MUST recommend:
+    - Setting n8n log level to `warn` or `info` (not `debug`) in
+      production (cross-ref FR-059)
+    - Configuring Docker log rotation via the `max-size` and
+      `max-file` logging options in docker-compose.yml to limit the
+      window of credential exposure
+    - Reviewing Docker logs before sharing them for debugging — redact
+      any secrets that appear in error messages
+  - **Compose file credential exposure**: the docker-compose.yml may
+    contain secrets in plaintext if the operator uses `environment:`
+    directives instead of `secrets:`. The guide MUST verify this is
+    addressed in FR-058 and cross-reference the reference compose file
+    which uses Docker secrets for all sensitive values
+  - Verification: audit script checks whether `docker inspect` on the
+    running n8n container reveals environment variables matching secret
+    patterns (N8N_ENCRYPTION_KEY, PASSWORD, TOKEN, SECRET, API_KEY) —
+    WARN if secrets are found in environment variables, recommending
+    Docker secrets instead
+  *Source: CIS Docker Benchmark v1.6 (Section 5: Container Runtime —
+  environment variable exposure); Docker documentation (Docker
+  Secrets); NIST SP 800-190 (Application Container Security Guide);
+  OWASP (Secrets in Environment Variables).*

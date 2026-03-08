@@ -2,7 +2,7 @@
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-03-07
-**Updated**: 2026-03-07 (Rev 23 -- 6 nation-state attacker rounds: Rev 18-23)
+**Updated**: 2026-03-07 (Rev 29 -- 12 nation-state attacker rounds: Rev 18-29)
 **Feature**: [spec.md](../spec.md)
 
 ## Content Quality
@@ -33,6 +33,104 @@
 ## Notes
 
 - All items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.
+- **Rev 27 changes (covert channels, forensic integrity, data residue — round 10):**
+  - FR-080 added: DNS exfiltration and covert channel defense — DNS
+    tunneling attack explanation, DNS query logging via mDNSResponder
+    or dnsmasq, anomalous query detection heuristics, container DNS
+    isolation, encrypted DNS vs exfiltration distinction. MITRE ATT&CK
+    T1048.003.
+  - FR-081 added: log integrity and anti-tampering — log file
+    permissions, append-only protection (chflags uappend), SHA256 hash
+    chain for tamper evidence, log gap detection, external log
+    forwarding recommendation, container log separation. MITRE ATT&CK
+    T1070.001.
+  - FR-082 added: temporary file and cache security — macOS temp
+    directories (/tmp, /var/folders), n8n temporary data, Docker build
+    cache cleanup, container tmpfs isolation, macOS application caches.
+  - FR-083 added: secure deletion limitations on modern macOS — APFS +
+    SSD + TRIM makes srm unreliable, FileVault as deletion defense,
+    crypto-shredding, Time Machine snapshot PII implications, practical
+    deletion procedures.
+  - FR-007 updated: added WARN checks for DNS query logging, log file
+    permissions, hash chain integrity, log gap detection, container
+    tmpfs configuration.
+  - FR-009 updated: added DNS query logging and temp file hardening to
+    follow-up tier; DNS log review and log integrity verification to
+    ongoing tier.
+  - SC-038 added: DNS exfiltration defense with query logging.
+  - SC-039 added: audit log integrity via hash chain and tamper
+    evidence.
+  - 6 edge cases added: DNS subdomain exfiltration, log
+    clearing/truncation, temp file PII residue, srm on APFS SSDs,
+    Time Machine snapshot PII retention, root log tampering.
+  - Cumulative counts: 83 FRs, 88 edge cases, 39 success criteria.
+- **Rev 28 changes (trust manipulation and operational security — round 11):**
+  - FR-084 added: certificate trust store protection — rogue root CA
+    attack explanation, trust store audit procedure, baseline creation
+    and comparison, certificate pinning awareness, post-incident trust
+    store reset. MITRE ATT&CK T1553.004.
+  - FR-085 added: macOS configuration profile security — profile
+    installation vectors, profile audit (`profiles list`), Lockdown
+    Mode protection, profile-based attacks (MITM, VPN redirect,
+    FileVault disable), baseline monitoring, profile removal.
+  - FR-086 added: Spotlight and metadata indexing privacy — indexing
+    risk for n8n data, Spotlight exclusions via `mdutil`, CLI
+    configuration, stale index cleanup. MITRE ATT&CK T1005, T1083.
+  - FR-087 added: clipboard security — bare-metal pasteboard exposure
+    via pbpaste, containerized path advantage, operational security
+    practices (password manager, clipboard clearing), clipboard
+    monitoring detection limitations. MITRE ATT&CK T1115.
+  - FR-002 updated: 36 → 38 control areas (added #37 certificate
+    trust store, #38 clipboard security).
+  - FR-007 updated: added WARN checks for certificate trust store
+    baseline, configuration profiles, Spotlight indexing.
+  - FR-009 updated: certificate trust, config profiles, Spotlight
+    added to follow-up tier; clipboard hygiene and trust store
+    verification added to ongoing tier.
+  - SC-001 updated: 36 → 38 control areas.
+  - SC-004 updated: 55 → 60 minimum checks.
+  - SC-040 added: certificate trust store baseline audit.
+  - SC-041 added: Spotlight exclusions for n8n data.
+  - Key Entity added: Certificate Trust Baseline.
+  - 6 edge cases added: rogue root CA MITM, malicious config
+    profile, Spotlight PII discovery, clipboard credential theft,
+    macOS update certificate additions, profile-based VPN redirect.
+  - Cumulative counts: 87 FRs, 94 edge cases, 41 success criteria,
+    38 control areas, 14 key entities.
+- **Rev 29 changes (proactive detection, build security, completeness — round 12):**
+  - FR-088 added: canary and tripwire detection — canary files with
+    attractive names, honey credentials in n8n, canary DNS hostnames
+    via free token services, OpenBSM file access auditing, detection
+    integration with notification infrastructure, limitations
+    acknowledgment. MITRE D3FEND (Decoy Object, Decoy Credentials).
+  - FR-089 added: Docker image provenance and build security — image
+    provenance attestations, vulnerability scanning (Trivy, Docker
+    Scout, Grype — all free), custom Dockerfile security (no secrets
+    in layers, multi-stage builds, BuildKit secrets), layer history
+    inspection, image scanning schedule. CIS Docker Benchmark Section
+    4.
+  - FR-090 added: process environment and metadata hardening — docker
+    inspect credential exposure, process listing (ps) exposure,
+    Docker log credential leakage, compose file secrets migration,
+    Docker secrets recommendation for all sensitive values. CIS Docker
+    Benchmark Section 5, OWASP.
+  - FR-002 updated: 38 → 39 control areas (added #39 canary/tripwire
+    detection).
+  - FR-007 updated: added WARN checks for canary file integrity,
+    docker inspect secrets exposure.
+  - FR-009 updated: canary deployment, image scanning, secrets
+    migration added to follow-up tier; canary integrity verification
+    and image rescanning added to ongoing tier.
+  - SC-001 updated: 38 → 39 control areas.
+  - SC-042 added: canary mechanisms for independent compromise
+    detection.
+  - SC-043 added: no secrets in docker inspect / process listings.
+  - Key Entity added: Canary Artifact.
+  - 6 edge cases added: canary evidence destruction, Docker layer
+    secrets, docker inspect credential exposure, image CVE discovery,
+    CLI argument secrets visibility, canary file cleanup detection.
+  - Cumulative counts (Rev 29): 90 FRs, 100 edge cases, 43 success
+    criteria, 39 control areas, 16 key entities, 19 assumptions.
 - **Rev 9 changes (injection: data flow and detection):**
   - Added US-7 (Operator Secures Workflows Against Injection) with
     4 acceptance scenarios: vulnerable Code node pattern, prompt
@@ -378,11 +476,108 @@
   - Audit check coverage verified across all 32 control areas — all
     have explicit checks in FR-007 or individual FR verification
     sections.
-- Cumulative counts (Rev 23):
-  - FR count: 67
+- **Rev 24 changes (runtime data exposure and persistence — round 7):**
+  - FR-068 added: memory, swap, and core dump security — swap
+    encryption (FileVault dependency), hibernation image protection,
+    core dump disabling (`ulimit -c 0`), container core dump
+    prevention (`ulimits: core: 0`), secure memory deallocation
+    limitations. MITRE ATT&CK T1003.007, T1005.
+  - FR-069 added: Screen Sharing / Remote Management hardening —
+    disable if not needed, macOS account auth vs legacy VNC password,
+    user restriction, SSH tunneling for VNC, ARD vs Screen Sharing,
+    VNC protocol encryption limitations. MITRE ATT&CK T1021, T1563.
+  - FR-070 added: comprehensive persistence mechanism auditing —
+    extends FR-033 to cover cron, at jobs, Login Items, Authorization
+    Plugins, periodic scripts, shell profiles, XPC services,
+    configuration profiles. Comprehensive baseline creation. MITRE
+    ATT&CK T1543, T1053, T1547, T1556.
+  - FR-071 added: iCloud and Apple cloud services exposure — iCloud
+    Keychain sync risk, iCloud Drive data leakage, Desktop & Documents
+    sync, Universal Clipboard, Find My Mac as only enabled service,
+    Apple ID compromise impact, 2FA recommendation. MITRE ATT&CK
+    T1537, T1530.
+  - FR-002 updated: 32 → 36 control areas (added #33 memory/swap,
+    #34 iCloud, #35 NTP, #36 listening service inventory). Control
+    area #20 renamed from "Launch daemon auditing" to "Persistence
+    mechanism auditing."
+  - FR-007 updated: new check classifications for #33-#36 and
+    expanded checks (Screen Sharing VNC password type as FAIL,
+    comprehensive persistence and sharing services checks).
+  - FR-009 updated: new control areas assigned to tiers (#33/#34/#35
+    immediate, #36 follow-up).
+  - SC-001 updated: 32 → 36 control areas.
+  - SC-004 updated: 45 → 55 minimum checks, 8 → 10 container checks.
+  - SC-031 added: memory/swap secret protection.
+  - SC-032 added: all persistence mechanism types audited.
+  - SC-034 added: iCloud services disabled except Find My Mac.
+  - 5 edge cases added: core dump with encryption key, VNC brute
+    force, persistence via cron/login hooks, iCloud Keychain sync,
+    iCloud Drive data leakage.
+  - Key Entities added: Persistence Baseline, Listening Service
+    Baseline.
+  - Assumptions added: Apple ID for Find My Mac, Screen Sharing
+    optional.
+- **Rev 25 changes (system integrity and service exposure — round 8):**
+  - FR-072 added: Apple's built-in malware defense layers — XProtect
+    signature checking and freshness, XProtect Remediator (macOS
+    Ventura+), MRT transition, Gatekeeper notarization chain, Apple
+    security response rapid updates, Homebrew notarization handling.
+    CIS Apple macOS Benchmarks, NIST SP 800-83.
+  - FR-073 added: sharing services comprehensive hardening — all 10+
+    macOS sharing services enumerated with disable/harden decision:
+    File Sharing (SMB), Printer Sharing, Remote Login (SSH cross-ref),
+    Remote Management (ARD cross-ref), Remote Apple Events, Internet
+    Sharing, Bluetooth Sharing, Content Caching, Media Sharing,
+    AirPlay Receiver. macOS update re-enable risk documented.
+    Critical FAIL for File Sharing, Remote Apple Events, Internet
+    Sharing; WARN for informational services.
+  - FR-074 added: NTP and time synchronization integrity — impact on
+    log forensics, TLS validation, credential expiry, scheduled tasks.
+    macOS `timed` configuration, NTS (Network Time Security), NTP
+    spoofing defense, container time sync via Colima VM. RFC 8915.
+  - FR-075 added: listening service inventory and baseline — automated
+    baseline creation and comparison, expected services per deployment
+    path, new listener triage procedure. Integrated into audit script.
+  - SC-033 added: all sharing services hardened with risk rationale.
+  - SC-037 added: unexpected network listeners detected within one
+    audit cycle.
+  - 5 edge cases added: XProtect outdated, Target Disk Mode, NTP
+    spoofing, unexpected listener after update, SMB relay attack,
+    Remote Apple Events abuse.
+- **Rev 26 changes (recovery, validation, emergency procedures — round 9):**
+  - FR-076 added: recovery mode and startup security — macOS Recovery
+    Mode, Apple Silicon vs Intel protections, Single User Mode (SIP),
+    Target Disk Mode / Mac Sharing Mode, external boot media
+    restrictions, DFU Mode. Extends FR-053 physical security.
+    MITRE ATT&CK T1542, T1200.
+  - FR-077 added: emergency credential rotation runbook — dependency-
+    ordered 10-step rotation sequence, per-credential documentation
+    (where to change, what breaks, how to verify), N8N_ENCRYPTION_KEY
+    special handling, 2-hour time target, practice run recommendation.
+    NIST SP 800-61 Rev 2.
+  - FR-078 added: attack simulation / hardening validation — safe
+    non-destructive tests for firewall, outbound filtering, n8n auth,
+    container isolation, injection defense, persistence detection,
+    notification delivery. Non-destructive guarantee with cleanup
+    steps. Extends FR-056 (audit script validation) to validate
+    controls themselves. NIST SP 800-115.
+  - FR-079 added: network service binding audit — comprehensive
+    listening port inventory procedure (`lsof`, `netstat`), expected
+    vs unexpected services per deployment path, triage procedure for
+    unknown listeners, container port binding verification. Integrated
+    with FR-075 baseline. MITRE ATT&CK T1046.
+  - SC-035 added: emergency rotation runbook within 2-hour target.
+  - SC-036 added: attack simulation for all major control categories.
+  - Key Entities added: Emergency Rotation Runbook.
+  - Assumptions added: NTP access availability.
+  - 5 edge cases added: N8N_ENCRYPTION_KEY rotation ordering, skipping
+    validation tests, File Sharing SMB relay, Apple ID compromise via
+    Find My Mac, core dump data exposure.
+- Cumulative counts (Rev 26):
+  - FR count: 79
   - User story count: 9
-  - Success criteria count: 30
-  - Edge case count: 70
-  - Control areas: 32
-  - Key Entities: 10
-  - Assumptions: 16 (checklist previously said 17; verified 16 on disk, likely miscount)
+  - Success criteria count: 37
+  - Edge case count: 82
+  - Control areas: 36
+  - Key Entities: 13
+  - Assumptions: 19

@@ -1,7 +1,7 @@
 # Spec Module: Audit, Monitoring & Operations
 
-**Parent spec**: [spec.md](spec.md) (Rev 23)
-**Module scope**: Audit script, scheduled monitoring, notifications, incident response, backup/recovery, and operational limitations.
+**Parent spec**: [spec.md](spec.md) (Rev 29)
+**Module scope**: Audit script, scheduled monitoring, notifications, incident response, backup/recovery, operational limitations, and hardening validation.
 
 ## Functional Requirements
 
@@ -20,20 +20,40 @@
     immediate, high-severity risk — FileVault, firewall, SIP,
     Gatekeeper, guest account disabled, automatic login disabled, n8n
     authentication, n8n localhost binding, screen lock enabled,
-    sharing services disabled.
+    sharing services disabled (File Sharing, Remote Apple Events,
+    Internet Sharing per FR-073), Screen Sharing using legacy VNC
+    password (FR-069).
   - **Recommended (WARN):** Controls that add defense in depth but
     whose absence does not create an immediately exploitable gap —
     Bluetooth disabled, antivirus installed, IDS running, outbound
     filtering, USB restrictions, logging configured, DNS security,
-    software updates current, launch daemons audited, IPv6
-    disabled/hardened. Injection defense checks: Execute Command node
-    disabled or restricted, `N8N_BLOCK_ENV_ACCESS_IN_NODE` set,
+    software updates current, persistence mechanisms audited (all
+    types per FR-070), IPv6 disabled/hardened. Injection defense
+    checks: Execute Command node disabled or restricted,
+    `N8N_BLOCK_ENV_ACCESS_IN_NODE` set,
     `N8N_RESTRICT_FILE_ACCESS_TO` configured, n8n execution logging
     enabled. n8n API security checks: API disabled or key-protected.
     Webhook security checks: authentication configured on webhook
     nodes. Supply chain checks: Docker image pinned by digest,
     Homebrew packages verified. Credential lifecycle checks:
-    credential age within rotation policy.
+    credential age within rotation policy. Memory/swap checks: core
+    dumps disabled, hibernation mode appropriate (FR-068). iCloud
+    checks: unnecessary services disabled (FR-071). NTP checks:
+    network time enabled (FR-074). Listening service checks:
+    inventory matches baseline (FR-075). XProtect checks: signature
+    freshness within 14 days (FR-072). Apple built-in security:
+    Gatekeeper notarization enforcement, automatic security updates
+    enabled (FR-072). DNS exfiltration defense checks: DNS query
+    logging enabled (FR-080). Log integrity checks: log file
+    permissions, hash chain integrity, log gap detection (FR-081).
+    Temp file checks: container tmpfs configuration (FR-082).
+    Certificate trust store checks: baseline comparison for
+    unauthorized root CAs (FR-084). Configuration profile checks:
+    installed profiles not in baseline (FR-085). Spotlight checks:
+    n8n data directory excluded from indexing (FR-086). Canary
+    mechanism checks: canary files present and unmodified (FR-088).
+    Container metadata checks: secrets in docker inspect environment
+    variables (FR-090).
   Every control area in FR-002 MUST be classified as either critical
   or recommended. Areas not explicitly named above default to
   recommended. Physical security controls that cannot be verified
@@ -531,3 +551,320 @@
     script validates configuration, not absence of compromise
   *Source: NIST SP 800-53 Rev 5 (CA-7 Continuous Monitoring); NIST
   Cybersecurity Framework (Limitations of compliance-based security).*
+
+- **FR-072**: The guide MUST include a section documenting Apple's
+  built-in malware defense layers (XProtect, XProtect Remediator,
+  MRT, Gatekeeper notarization) and how they interact with the
+  guide's recommended security tools. Operators often install third-
+  party tools without understanding the baseline protection macOS
+  already provides. The section MUST cover:
+  - **XProtect**: Apple's built-in signature-based malware scanner.
+    XProtect runs automatically when applications are first opened,
+    when apps are updated, and when XProtect signatures are updated.
+    The guide MUST:
+    - Explain that XProtect updates are delivered silently via
+      Software Update, independent of macOS version updates
+    - Document how to check XProtect version and signature freshness
+      (`system_profiler SPInstallHistoryDataType | grep XProtect`)
+    - Note that XProtect provides a baseline and is NOT a substitute
+      for ClamAV (which has a much larger signature database) or
+      behavioral detection (Santa, BlockBlock per FR-032)
+  - **XProtect Remediator** (macOS Ventura+): an automated malware
+    remediation tool that scans for and removes known malware. Unlike
+    XProtect (which prevents execution), Remediator removes malware
+    that is already on the system. The guide MUST document its
+    existence and how to verify it is running
+  - **MRT (Malware Removal Tool)**: legacy malware removal that runs
+    after Software Update. Being replaced by XProtect Remediator on
+    newer macOS versions. The guide MUST note this transition
+  - **Gatekeeper notarization**: beyond code signing (control area
+    #4), Apple requires apps to be notarized (submitted to Apple for
+    malware scanning) before Gatekeeper allows them. The guide MUST
+    explain the notarization chain: developer signs → submits to
+    Apple → Apple scans → issues a notarization ticket → Gatekeeper
+    verifies the ticket at launch. CLI tools installed via Homebrew
+    may not be notarized — the guide MUST explain how to handle
+    Gatekeeper prompts for Homebrew-installed security tools
+  - **Apple security response updates**: rapid security responses
+    that patch critical vulnerabilities between major macOS updates.
+    The guide MUST recommend enabling automatic security response
+    installation
+  - Verification: audit script checks XProtect signature freshness
+    (WARN if last update is older than 14 days), Gatekeeper status
+    (FAIL if disabled — cross-ref existing check), automatic security
+    update settings (WARN if disabled)
+  *Source: Apple Platform Security Guide (XProtect, Gatekeeper,
+  notarization); CIS Apple macOS Benchmarks (malware protection);
+  NIST SP 800-83 Rev 1 (Guide to Malware Incident Prevention).*
+
+- **FR-074**: The guide MUST include a time synchronization (NTP)
+  integrity section. Accurate system time is a security dependency
+  for multiple controls in this guide. Time manipulation can undermine
+  log forensics, certificate validation, credential expiry detection,
+  and scheduled task execution. The section MUST cover:
+  - **Why time integrity matters for this deployment**:
+    - Log timestamps: if an attacker can skew the clock, forensic
+      log analysis (FR-035, FR-027) becomes unreliable — events
+      appear out of order or at incorrect times
+    - TLS certificate validation: certificate expiry checks depend
+      on accurate time. A sufficiently skewed clock can make expired
+      certificates appear valid or valid certificates appear expired,
+      disrupting HTTPS connections to Apify, LinkedIn, SMTP relays
+    - Credential expiry: credential rotation detection (FR-043)
+      relies on comparing creation timestamps against rotation
+      policy. Clock skew can mask overdue rotations
+    - Scheduled tasks: launchd audit scheduling (FR-022) depends on
+      the system clock. Clock manipulation can delay or prevent
+      scheduled audit runs
+  - **macOS NTP configuration**: macOS uses `timed` for time
+    synchronization, defaulting to `time.apple.com`. The guide MUST
+    verify NTP is enabled (`systemsetup -getusingnetworktime`) and
+    recommend keeping Apple's default time server (which uses NTS —
+    Network Time Security — for authenticated time on newer macOS
+    versions)
+  - **NTP attack surface**: on a LAN, an attacker can spoof NTP
+    responses to skew the clock (MITRE ATT&CK T1070.006 Timestomp).
+    The guide MUST note that NTS (Network Time Security) protects
+    against NTP spoofing on supported macOS versions, and that
+    certificate-based TLS connections provide an independent time
+    verification (TLS handshake will fail if time skew is too large)
+  - **Container time**: Docker containers inherit the host's clock.
+    The guide MUST verify that the Colima VM's time sync is working
+    (Colima uses Lima's time sync mechanism). A drifted VM clock
+    affects all container operations
+  - Verification: audit script checks NTP status (WARN if network
+    time is disabled), clock skew (WARN if system time differs from
+    NTP source by more than 60 seconds)
+  *Source: NIST SP 800-86 (Guide to Integrating Forensic Techniques
+  — timestamp reliability); CIS Apple macOS Benchmarks (time
+  synchronization); MITRE ATT&CK T1070.006 (Timestomp); RFC 8915
+  (Network Time Security).*
+
+- **FR-075**: The guide MUST include a listening service inventory
+  section that is integrated into the audit script (FR-007) as a
+  baseline-comparison check. While individual FRs cover specific
+  services, an attacker will enumerate all listening ports — the
+  audit must do the same. The section MUST:
+  - **Baseline creation**: after initial hardening, enumerate all
+    listening TCP and UDP services and save the list as a known-good
+    baseline (similar to launch daemon baseline in FR-033). The
+    baseline MUST record: port number, protocol, bound address,
+    owning process name and PID
+  - **Automated comparison**: the audit script MUST compare current
+    listening services against the baseline on every run and flag
+    new listeners (WARN), missing expected listeners (informational),
+    and listeners that changed their binding address (WARN — e.g.,
+    a service that was bound to 127.0.0.1 is now on 0.0.0.0)
+  - **Expected services documentation**: the guide MUST list the
+    expected listening services for each deployment path (cross-
+    reference FR-079 in spec-macos-platform.md for the detailed
+    inventory procedure)
+  - Verification: audit script performs the baseline comparison as
+    described above
+  *Source: CIS Apple macOS Benchmarks (network configuration); NIST
+  SP 800-123 Section 4.2 (Network Security); CIS Controls v8
+  (Control 9: Email and Web Browser Protections — adapted for
+  network service inventory).*
+
+- **FR-077**: The guide MUST include an emergency credential rotation
+  runbook — a step-by-step procedure for rotating ALL credentials in
+  priority order during an incident response (FR-031). The current
+  spec includes credential rotation schedules (FR-043) and revocation
+  procedures, but does not provide an ordered, time-pressured
+  emergency rotation sequence. During an active breach, the operator
+  needs a concrete checklist they can execute without decision-making
+  under pressure. The runbook MUST:
+  - **Rotation order**: rotate credentials in dependency order —
+    credentials that protect other credentials are rotated first:
+    1. Mac Mini login password (protects physical and SSH access)
+    2. SSH keys (protects remote access; revoke old keys from all
+       `authorized_keys` on remote systems)
+    3. N8N_ENCRYPTION_KEY (protects all n8n-stored credentials; must
+       re-encrypt the n8n database after rotation)
+    4. n8n web UI / owner account password
+    5. n8n API keys (if enabled per FR-038)
+    6. Apify API key
+    7. LinkedIn session tokens / cookies (force re-authentication)
+    8. SMTP relay credentials (email notifications)
+    9. Docker registry credentials (if applicable)
+    10. Any additional credentials in the credential inventory
+        (FR-043)
+  - **Per-credential rotation steps**: for each credential, document:
+    - Where to change it (specific settings page, CLI command, config
+      file)
+    - What breaks immediately when changed (which workflows, services,
+      or connections will fail)
+    - What to update after changing (which config files, environment
+      variables, or n8n credential entries reference the old value)
+    - How to verify the rotation worked (test command or workflow
+      execution)
+  - **N8N_ENCRYPTION_KEY special handling**: rotating this key
+    requires re-encrypting all n8n credentials. The guide MUST
+    provide the exact procedure: export credentials, change the key,
+    re-import with the new key. Loss of the old key before re-
+    encryption means all credentials are unrecoverable
+  - **Time target**: the complete emergency rotation MUST be
+    achievable within the SC-019 target (2 hours) by an operator
+    following the runbook step-by-step
+  - **Practice runs**: the guide MUST recommend performing a dry run
+    of the emergency rotation procedure (without actually changing
+    production credentials) to verify the operator can complete it
+    within the time target
+  - Verification: not automated — this is a procedural document.
+    The guide MUST recommend scheduling an annual practice rotation
+    (similar to restore testing in FR-037)
+  *Source: NIST SP 800-61 Rev 2 (Incident Handling — eradication
+  steps); NIST SP 800-63B Section 5.1 (Authenticator Lifecycle);
+  CIS Controls v8 (Control 5: Account Management).*
+
+- **FR-078**: The guide MUST include an attack simulation / hardening
+  validation section that provides safe, non-destructive test
+  procedures for verifying that hardening controls actually work.
+  FR-056 covers audit script validation (does the script detect
+  misconfigurations); this FR covers control validation (do the
+  controls actually prevent attacks). The section MUST cover:
+  - **Firewall validation**: from another device on the LAN, attempt
+    to connect to the Mac Mini on ports that should be blocked. The
+    guide MUST provide specific test commands (`nc -z <ip> <port>`)
+    and expected results (connection refused or timeout)
+  - **Outbound filtering validation**: from the Mac Mini, attempt an
+    outbound connection to a non-allowlisted destination. The guide
+    MUST provide a test command (`curl -s -o /dev/null -w "%{http_code}"
+    http://example.com`) and expected result (blocked by pf or LuLu)
+  - **n8n authentication validation**: attempt to access the n8n web
+    UI and API without credentials. The guide MUST provide the test
+    URL and expected result (401 Unauthorized or login page redirect)
+  - **Container isolation validation**: from inside the running n8n
+    container, attempt to access host resources:
+    - Try to read host filesystem outside mounted volumes
+    - Try to access the Docker socket (should not be mounted)
+    - Try to reach host services on the gateway IP
+    - Try to execute privileged operations (should fail with
+      cap-drop and no-new-privileges)
+  - **Injection defense validation**: create a test n8n workflow that
+    processes a benign test payload containing shell metacharacters
+    and prompt injection strings. Verify that:
+    - The payload does not execute as code
+    - The attempt is logged (FR-021 detection)
+    - `N8N_BLOCK_ENV_ACCESS_IN_NODE` prevents env var access
+  - **Persistence detection validation**: create a temporary test
+    launch agent (with a harmless payload like `echo test`). Run the
+    audit script and verify it detects the new agent. Remove the
+    test agent afterward
+  - **Notification validation**: deliberately introduce a security
+    regression (e.g., disable the firewall temporarily), trigger an
+    audit run, and verify the notification is delivered. Re-enable
+    the firewall immediately after the test
+  - **Non-destructive guarantee**: every test procedure MUST include
+    cleanup steps that return the system to its hardened state. The
+    guide MUST warn against running validation tests during active
+    production workloads
+  - **Schedule**: the guide MUST recommend running validation tests
+    after initial hardening setup and after any major configuration
+    change (not on a recurring schedule — the audit script covers
+    ongoing monitoring)
+  *Source: NIST SP 800-115 (Technical Guide to Information Security
+  Testing and Assessment); CIS Controls v8 (Control 18: Penetration
+  Testing); OWASP Testing Guide.*
+
+- **FR-081**: The guide MUST address log integrity as a forensic
+  prerequisite. All detection and incident response capabilities
+  (FR-031, FR-035, FR-063) depend on logs being trustworthy. An attacker
+  who gains shell access (especially root/admin on bare-metal) can
+  modify, truncate, or delete logs to hide their activity — rendering
+  the entire detection stack useless. The section MUST cover:
+  - **Log file permissions**: audit log files (FR-027) MUST be owned by
+    root and writable only by the audit script process. The n8n service
+    account (bare-metal) and container process MUST NOT have write
+    access to audit logs. This prevents a compromised n8n from tampering
+    with audit output
+  - **Append-only protection**: where feasible, the guide MUST recommend
+    macOS extended attributes (`chflags uappend`) on active log files to
+    prevent modification of existing entries. This is not foolproof
+    (root can remove the flag), but it raises the attacker's required
+    privilege level and creates a forensic indicator if the flag is
+    removed
+  - **Log hash chain**: the guide MUST recommend that the audit script
+    include a running hash chain — each audit log entry includes a
+    SHA256 hash of the previous entry, creating a tamper-evident chain.
+    If an attacker deletes or modifies a middle entry, the hash chain
+    breaks, and this break is detectable at the next audit run. The
+    first entry in the chain uses a random initialization value stored
+    separately from the logs
+  - **Log gap detection**: the audit script's self-monitoring (FR-027)
+    MUST check for suspicious log gaps — if the most recent log
+    timestamp is older than expected, or if log file sizes have
+    decreased between runs (indicating truncation), this MUST be
+    reported as WARN with a recommendation to investigate
+  - **External log forwarding**: the guide MUST recommend forwarding
+    critical logs (audit results, n8n execution events, security events
+    from FR-035) to an external destination that the Mac Mini cannot
+    modify. Options: a remote syslog server, a cloud logging service
+    (many free tiers available), or a simple `scp` to a separate server
+    on a schedule via launchd. The guide MUST note that external
+    forwarding is the strongest log integrity control — an attacker who
+    compromises the Mac Mini cannot modify logs that have already been
+    forwarded
+  - **Container log separation**: for containerized deployments, Docker
+    logs are separate from host logs. The guide MUST recommend that
+    Docker logs be captured to the host filesystem via Docker's logging
+    driver configuration (not only inside the container) and included
+    in the log forwarding pipeline
+  - Verification: audit script checks log file permissions (WARN if
+    writable by non-root), log hash chain integrity (WARN if chain is
+    broken or missing), log gap detection (WARN if expected logs are
+    missing or truncated)
+  *Source: NIST SP 800-92 (Guide to Computer Security Log Management);
+  NIST SP 800-86 (Guide to Integrating Forensic Techniques); MITRE
+  ATT&CK T1070.001 (Indicator Removal: Clear Linux or Mac System
+  Logs); CIS Controls v8 (Control 8: Audit Log Management).*
+
+- **FR-088**: The guide MUST include tripwire and canary detection
+  mechanisms that provide independent compromise detection beyond
+  periodic auditing and continuous monitoring tools. The existing
+  detection stack (FR-007 audit script, FR-032 IDS tools, FR-063
+  continuous monitoring) relies on checking for known indicators.
+  Canary mechanisms detect compromise by monitoring for access to
+  resources that should never be legitimately accessed — if triggered,
+  an attacker is present. The section MUST cover:
+  - **Canary files**: the guide MUST recommend creating files in
+    sensitive locations that should never be accessed during normal
+    operations:
+    - A file in the n8n data directory with an attractive name (e.g.,
+      `admin-credentials.txt`) containing a unique identifier. If the
+      file is accessed, the attacker was browsing the filesystem for
+      credentials
+    - On bare-metal: a file in the operator's home directory with a
+      credential-like name containing a unique token
+    - The guide MUST document how to set up macOS file access auditing
+      via OpenBSM (`/etc/security/audit_control`) or `log stream` with
+      a file open predicate to detect when these files are read
+  - **Honey credentials**: the guide MUST recommend creating a separate
+    n8n credential entry with an attractive name (e.g., "AWS Root
+    Account") containing a unique token or a URL pointing to a canary
+    service. If the token appears in any outbound traffic or the URL
+    is accessed, an attacker is testing stolen credentials. Free
+    canary token services exist (e.g., Canarytokens.org)
+  - **Canary DNS**: the guide MUST recommend using a canary DNS hostname
+    (via a free canary token service) placed in a configuration file
+    or credential store. If this hostname is ever resolved (appearing
+    in DNS logs per FR-080), it indicates that an attacker is exploring
+    the environment and testing discovered credentials
+  - **Detection integration**: canary alerts MUST integrate with the
+    existing notification infrastructure (FR-024) or use the canary
+    service's built-in notification. The guide MUST provide specific
+    log predicates or monitoring commands for detecting canary file
+    access
+  - **Limitations**: the guide MUST note that canary mechanisms are
+    not foolproof — a sophisticated attacker may recognize canary
+    files (common names, zero-byte content, obvious honeypot patterns)
+    and avoid triggering them. However, they provide an independent
+    detection layer that does not rely on configuration checking (audit
+    script) or behavioral analysis (IDS tools), and most automated
+    attack tools will trigger them
+  - Verification: audit script checks that canary files exist and have
+    not been modified or deleted (WARN if missing — could indicate
+    attacker cleanup or accidental deletion)
+  *Source: Thinkst Canary documentation (canary detection concepts);
+  MITRE D3FEND (Decoy Object, Decoy Credentials); NIST SP 800-53
+  Rev 5 (SI-4 Information System Monitoring — deception techniques).*

@@ -1,6 +1,6 @@
 # Spec Module: macOS Platform, Container & Network Security
 
-**Parent spec**: [spec.md](spec.md) (Rev 23)
+**Parent spec**: [spec.md](spec.md) (Rev 29)
 **Module scope**: macOS OS-level hardening, container infrastructure (Colima/Docker), and network controls.
 
 ## Functional Requirements
@@ -662,3 +662,571 @@
     risks
   *Source: Apple Platform Security Guide (Lockdown Mode); Apple
   Support documentation on Lockdown Mode restrictions.*
+
+- **FR-068**: The guide MUST include a memory, swap, and core dump
+  security section addressing volatile data exposure. Secrets
+  (N8N_ENCRYPTION_KEY, API keys, credentials, PII) exist in process
+  memory while n8n is running and can persist in swap files,
+  hibernation images, and core dumps after the process terminates or
+  the system sleeps. The section MUST cover:
+  - **Swap encryption**: macOS encrypts swap when FileVault is
+    enabled. The guide MUST verify FileVault is active (FR-001 cross-
+    ref) and explain that without FileVault, swap files in
+    `/private/var/vm/` can be read by an attacker with physical disk
+    access, exposing any secret that was paged out of RAM
+  - **Hibernation image**: when a Mac sleeps in hibernation mode
+    (standby), a full RAM image is written to
+    `/private/var/vm/sleepimage`. This image contains all in-memory
+    secrets. FileVault encrypts this file at rest. The guide MUST
+    recommend setting `standbydelaylow` and `standbydelayhigh` values
+    appropriate for a headless server (or disabling hibernation
+    entirely via `sudo pmset -a hibernatemode 0` if the Mac Mini is on
+    a UPS and sleep is not desired)
+  - **Core dumps**: a crashing n8n process (bare-metal) can generate
+    a core dump containing all process memory. The guide MUST
+    recommend disabling core dumps for the n8n service account
+    (`ulimit -c 0` in the launchd plist or shell profile) and
+    verifying that `/cores/` does not contain unexpected dump files
+  - **Container memory**: for containerized deployments, Docker
+    containers respect the `--security-opt=no-new-privileges:true`
+    and `ulimit` settings. The guide MUST recommend setting
+    `ulimits: core: 0` in docker-compose.yml to prevent core dumps
+    inside the container
+  - **Secure memory deallocation**: macOS does not zero-fill freed
+    memory by default. The guide MUST note this limitation and
+    explain that container isolation + FileVault + disabled core
+    dumps is the practical mitigation stack — there is no user-
+    accessible control for memory scrubbing on macOS
+  - Verification: audit script checks FileVault status (cross-ref),
+    core dump settings (`ulimit -c`), hibernation mode, and presence
+    of core dump files in `/cores/`
+  *Source: Apple Platform Security Guide (FileVault, memory
+  protection); CIS Apple macOS Benchmarks (core dump restrictions);
+  MITRE ATT&CK T1003.007 (OS Credential Dumping: Proc Filesystem),
+  T1005 (Data from Local System).*
+
+- **FR-069**: The guide MUST include a Screen Sharing and Remote
+  Management hardening section. Screen Sharing (VNC-based) is
+  commonly enabled on headless Mac Minis for GUI management, but it
+  exposes a significant attack surface. The section MUST cover:
+  - **Disable if not needed**: for operators who manage the Mac Mini
+    exclusively via SSH, Screen Sharing should be disabled entirely.
+    The guide MUST provide the command to disable it
+    (`sudo launchctl disable system/com.apple.screensharing`) and
+    explain that SSH provides all management capabilities documented
+    in this guide
+  - **Harden if needed**: if Screen Sharing must remain enabled
+    (operator needs GUI access for n8n web UI on the local machine
+    or for macOS System Settings that lack CLI equivalents), the
+    guide MUST cover:
+    - Require macOS account authentication (not VNC password) —
+      VNC passwords are limited to 8 characters and use weak
+      encryption
+    - Restrict access to specific users via the Screen Sharing
+      preference pane or `kickstart` command
+    - Ensure Screen Sharing is bound to the LAN interface only —
+      verify it is not accessible from the internet
+    - Enable "Show Screen Sharing status in menu bar" for awareness
+    - Consider pairing with SSH tunneling: disable network access to
+      Screen Sharing and access it only via an SSH tunnel
+      (`ssh -L 5900:localhost:5900`), combining VNC convenience with
+      SSH security
+  - **Apple Remote Desktop (ARD) vs Screen Sharing**: ARD is the
+    enterprise version of Screen Sharing with additional features
+    (remote scripting, package deployment). If ARD is installed, the
+    guide MUST cover the same hardening as Screen Sharing plus:
+    disabling features not needed (remote scripting, package install),
+    restricting admin privileges to specific accounts
+  - **VNC protocol risks**: the guide MUST note that VNC (even with
+    macOS auth) transmits display data without encryption by default.
+    If Screen Sharing is used across an untrusted network, it MUST
+    be tunneled through SSH or a VPN
+  - Verification: audit script checks Screen Sharing status (WARN if
+    enabled — informational, since it may be intentional), VNC
+    password type (FAIL if legacy VNC password is used instead of
+    macOS account auth)
+  *Source: CIS Apple macOS Benchmarks (Remote Management controls);
+  Apple Platform Security Guide (Screen Sharing); MITRE ATT&CK T1021
+  (Remote Services), T1563 (Remote Service Session Hijacking).*
+
+- **FR-070**: The guide MUST expand the persistence mechanism auditing
+  section (FR-033) to cover ALL macOS persistence mechanisms, not just
+  launch daemons and agents. A nation-state attacker has many
+  persistence options beyond LaunchDaemons — limiting the audit to
+  one mechanism leaves blind spots. The section MUST cover:
+  - **cron jobs**: check `crontab -l` for all users and `/etc/crontab`
+    for system-wide entries. cron is deprecated on macOS in favor of
+    launchd but still functional. Unexpected cron entries are a strong
+    indicator of compromise
+  - **at jobs**: check `/var/at/` directory. `at` is disabled by
+    default on macOS but can be re-enabled. The guide MUST verify
+    `atrun` is not loaded
+  - **Login Items**: check `~/Library/Application Support/
+    com.apple.backgroundtaskmanagementagent/backgrounditems.btm` and
+    the System Settings > Login Items list. Login Items run at user
+    login — on a headless server that auto-logs-in, these run at boot
+  - **Authorization Plugins**: check `/Library/Security/
+    SecurityAgentPlugins/`. These plugins execute during the
+    authentication process and can capture passwords or bypass
+    authentication entirely. Unauthorized plugins are a critical
+    indicator of compromise
+  - **Periodic scripts**: check `/etc/periodic/daily/`,
+    `/etc/periodic/weekly/`, `/etc/periodic/monthly/`. These scripts
+    run via the system's periodic task mechanism. Unexpected scripts
+    in these directories are suspicious
+  - **Shell profile persistence**: check `/etc/profile`,
+    `/etc/bashrc`, `/etc/zshrc`, `~/.bash_profile`, `~/.bashrc`,
+    `~/.zshrc`, `~/.zprofile` for unauthorized modifications.
+    Attackers can add commands to shell profiles that execute on
+    every shell invocation
+  - **XPC services**: check for unauthorized XPC services registered
+    with launchd. XPC is macOS's inter-process communication
+    mechanism and can be used for stealthy persistence
+  - **Configuration profiles**: check `profiles list` for MDM-style
+    configuration profiles. Malicious profiles can modify system
+    settings, install certificates, or configure persistent network
+    connections
+  - **Baseline for all mechanisms**: the guide MUST extend the
+    baseline creation procedure (FR-033) to capture all persistence
+    types, not just launch daemons. The comprehensive baseline should
+    be generated after initial hardening and stored securely
+  - Verification: audit script checks all persistence mechanisms
+    against the comprehensive baseline and flags unknown entries
+    (WARN for new items, cross-referencing the mechanism type)
+  *Source: CIS Apple macOS Benchmarks (persistence controls); MITRE
+  ATT&CK T1543 (Create or Modify System Process), T1053 (Scheduled
+  Task/Job), T1547 (Boot or Logon Autostart Execution), T1556
+  (Modify Authentication Process); Objective-See documentation
+  (KnockKnock persistence enumeration).*
+
+- **FR-073**: The guide MUST include a comprehensive sharing services
+  hardening section that audits and controls ALL macOS sharing
+  services. A headless automation server has no need for most sharing
+  services, and each enabled service adds attack surface. The section
+  MUST cover every sharing service with a disable/harden decision:
+  - **File Sharing (SMB/AFP)**: MUST be disabled on a headless
+    server. SMB exposes the system to credential brute force and
+    relay attacks (MITRE ATT&CK T1021.002). If the operator needs
+    file transfer, use `scp` or `rsync` over SSH instead
+  - **Printer Sharing**: MUST be disabled. No headless server needs
+    to share printers
+  - **Remote Login (SSH)**: covered by FR-028. If enabled, MUST be
+    hardened per FR-028. If not needed, disable entirely
+  - **Remote Management (ARD)**: covered by FR-069
+  - **Remote Apple Events**: MUST be disabled. Remote Apple Events
+    allow external applications to send Apple Events to the Mac Mini,
+    enabling remote scripting. This is a direct code execution vector
+  - **Internet Sharing**: MUST be disabled. Turning the Mac Mini into
+    a NAT gateway adds attack surface and can allow LAN devices to
+    route traffic through the Mac Mini
+  - **Bluetooth Sharing**: MUST be disabled. Bluetooth file transfer
+    has no use on a headless server and exposes a short-range attack
+    surface
+  - **Content Caching**: MUST be disabled. Content Caching stores
+    Apple software updates for LAN distribution. It consumes disk
+    space, adds network services, and has no security benefit for
+    this deployment
+  - **Media Sharing**: MUST be disabled. Home Sharing and media
+    streaming have no use on a headless server
+  - **AirPlay Receiver**: MUST be disabled. AirPlay Receiver accepts
+    incoming connections from other Apple devices on the LAN. It adds
+    a network service and has been a target for remote code execution
+    vulnerabilities
+  - The guide MUST provide both the System Settings path and the CLI
+    command for each service (per FR-019 CLI-first principle)
+  - The guide MUST note that macOS updates sometimes re-enable sharing
+    services — the post-update checklist (FR-020) MUST verify all
+    sharing services remain in the expected state
+  - Verification: audit script checks the status of every sharing
+    service listed above. Services that should be disabled produce
+    FAIL if enabled (critical: File Sharing, Remote Apple Events,
+    Internet Sharing) or WARN if enabled (informational: Content
+    Caching, Media Sharing, AirPlay Receiver)
+  *Source: CIS Apple macOS Benchmarks (sharing services); Apple
+  Platform Security Guide; NIST SP 800-123 Section 4 (Securing the
+  OS); MITRE ATT&CK T1021 (Remote Services).*
+
+- **FR-076**: The guide MUST include a recovery mode and startup
+  security section that extends physical security (FR-053) to cover
+  macOS recovery and alternate boot modes that can bypass software
+  security controls. The section MUST cover:
+  - **Recovery Mode (macOS Recovery)**: provides a recovery
+    environment with Terminal access, Disk Utility, and the ability
+    to reset passwords. On Apple Silicon, Recovery Mode requires
+    authentication with an administrator account (strong protection).
+    On Intel Macs without a firmware password, anyone with physical
+    access can boot into Recovery Mode and reset passwords, disable
+    FileVault, or modify the system volume. The guide MUST:
+    - For Intel: confirm firmware password is set (FR-053) to prevent
+      unauthorized Recovery Mode access
+    - For Apple Silicon: confirm that Startup Security Utility is set
+      to Full Security
+    - Document what Recovery Mode can and cannot do when FileVault is
+      enabled (it cannot read encrypted data without the FileVault
+      password)
+  - **Single User Mode**: disabled by SIP on modern macOS (Catalina+)
+    and unavailable on Apple Silicon. The guide MUST verify that SIP
+    is enabled (FR-002 control area #3) as the primary protection
+    against single user mode abuse
+  - **Target Disk Mode / Mac Sharing Mode**: Intel Macs support
+    Target Disk Mode (hold T at boot) which exposes the internal disk
+    as an external drive to another Mac. Apple Silicon uses "Mac
+    Sharing Mode" with similar functionality but requires
+    authentication. The guide MUST:
+    - For Intel: firmware password prevents Target Disk Mode access.
+      FileVault encrypts the disk even if Target Disk Mode is entered
+    - For Apple Silicon: Mac Sharing Mode requires authentication.
+      The guide MUST verify this is configured
+  - **External boot media**: the guide MUST verify that booting from
+    external media is restricted (Startup Security Utility on Apple
+    Silicon, firmware password on Intel). An attacker with physical
+    access and a bootable USB can bypass all OS-level security
+    controls
+  - **DFU Mode (Apple Silicon)**: Device Firmware Update mode allows
+    restoring the Mac at the firmware level. The guide MUST note
+    that DFU mode erases all data (FileVault protects existing data)
+    but an attacker could use it to install a clean macOS and
+    repurpose the hardware. Activation Lock (Find My Mac, FR-053)
+    is the defense
+  - Verification: audit script checks Startup Security level (Apple
+    Silicon) or firmware password status (Intel) where programmatically
+    verifiable, and SIP status (FAIL if disabled)
+  *Source: Apple Platform Security Guide (Startup Security, Recovery
+  Mode, DFU); CIS Apple macOS Benchmarks (boot security); MITRE
+  ATT&CK T1542 (Pre-OS Boot), T1200 (Hardware Additions).*
+
+- **FR-079**: The guide MUST include a network service binding audit
+  section that provides a comprehensive inventory of all listening
+  network services on the Mac Mini. Individual FRs cover specific
+  services (n8n in FR-011, SSH in FR-028, Screen Sharing in FR-069),
+  but an attacker will scan all ports — the operator needs to know
+  every service listening on the network. The section MUST cover:
+  - **Service inventory procedure**: the guide MUST provide commands
+    to enumerate all listening TCP and UDP services:
+    - `lsof -iTCP -sTCP:LISTEN -P -n` for TCP listeners
+    - `lsof -iUDP -P -n` for UDP listeners
+    - `netstat -an | grep LISTEN` as a cross-check
+  - **Expected vs unexpected services**: the guide MUST document
+    which services are expected to be listening for each deployment
+    path:
+    - Containerized: SSH (if enabled), Docker/Colima VM port,
+      n8n mapped port (127.0.0.1:5678). No other services expected
+    - Bare-metal: SSH (if enabled), n8n (127.0.0.1:5678). No other
+      services expected
+  - **Unexpected listener response**: if the inventory reveals
+    services not in the expected list, the guide MUST provide a
+    triage procedure:
+    - Identify the process: `lsof -i :PORT` to find the owning
+      process
+    - Determine if it is legitimate (macOS system service, installed
+      tool) or suspicious (unknown binary, unexpected path)
+    - If suspicious: follow incident response procedure (FR-031)
+    - If legitimate but unnecessary: disable it and document why
+  - **Container port binding verification**: for containerized
+    deployments, verify that all Docker port mappings bind to
+    127.0.0.1 (cross-reference FR-058). The guide MUST show how to
+    check actual container port bindings using `docker port` and
+    `docker inspect`
+  - **Regular re-audit**: the listening service inventory MUST be
+    part of the periodic audit (FR-007) and the post-update
+    checklist (FR-020) — macOS updates and new software installations
+    can introduce new listening services
+  - Verification: audit script enumerates all listening services,
+    compares against an expected-services baseline, and flags
+    unexpected listeners (WARN for unknown services, FAIL if a
+    service is listening on 0.0.0.0 or a non-localhost interface
+    when it should be localhost-only)
+  *Source: CIS Apple macOS Benchmarks (network configuration); NIST
+  SP 800-123 Section 4.2 (Network Security); MITRE ATT&CK T1046
+  (Network Service Discovery).*
+
+- **FR-080**: The guide MUST address DNS as a covert data exfiltration
+  channel. Outbound filtering (FR-030) and pf rules block direct TCP/UDP
+  connections to unauthorized destinations, but DNS traffic is typically
+  permitted because it is required for name resolution. An attacker who
+  achieves code execution (via injection per FR-021 or container escape)
+  can exfiltrate data by encoding it in DNS subdomain queries (e.g.,
+  `base64encodeddata.attacker-domain.com`), bypassing all outbound
+  filtering that does not inspect DNS payloads. The section MUST cover:
+  - **DNS tunneling attack**: explain how DNS tunneling works — data is
+    encoded in subdomain queries to an attacker-controlled domain, and
+    responses carry return data. This bypasses standard outbound
+    filtering because DNS is allowed. n8n nodes that could be leveraged
+    include Execute Command (calling `dig`, `nslookup`, or `host`),
+    Code nodes (using Node.js `dns.lookup` or `dns.resolve`), and HTTP
+    Request nodes (following attacker-controlled URLs triggers DNS
+    resolution that leaks the domain to the attacker's nameserver)
+  - **DNS query logging**: the guide MUST recommend enabling DNS query
+    logging to detect anomalous patterns. macOS's mDNSResponder can be
+    configured for verbose logging (`sudo log config --subsystem
+    com.apple.mDNSResponder --mode level:debug`), or a local DNS
+    forwarder (such as dnsmasq via Homebrew, free) can log all queries
+    with timestamps. Container DNS queries pass through Colima's VM
+    DNS resolver and then the host's resolver
+  - **Anomalous query detection heuristics**: the guide MUST describe
+    DNS exfiltration indicators for manual log review: high volume of
+    queries to a single uncommon domain, unusually long subdomain labels
+    (>30 characters of high-entropy content), queries with base64 or
+    hex-encoded strings in subdomains, repeated queries to newly
+    registered or uncommon TLDs. These patterns can be reviewed from
+    DNS query logs during periodic log review (FR-009 ongoing tier)
+  - **Container DNS isolation**: for containerized deployments, Docker
+    containers resolve DNS through the Colima VM's resolver. The guide
+    MUST document how to configure container DNS to use only the
+    host-configured trusted resolvers (the same encrypted DNS providers
+    from FR-029), preventing containers from querying arbitrary DNS
+    servers by configuring the `dns` directive in docker-compose.yml
+  - **Encrypted DNS and exfiltration**: the guide MUST note that DoH/DoT
+    (FR-029) encrypts DNS queries in transit but does NOT prevent DNS
+    exfiltration — the queries still reach the DNS provider's resolver,
+    which resolves the attacker's domain normally. Encrypted DNS
+    protects query privacy from network observers but does not prevent
+    the attacker from receiving the exfiltrated data via their
+    authoritative nameserver
+  - Verification: audit script checks whether DNS query logging is
+    enabled (WARN if not configured), container DNS configuration (WARN
+    if containers use default DNS instead of host-configured encrypted
+    DNS)
+  *Source: MITRE ATT&CK T1048.003 (Exfiltration Over Alternative
+  Protocol: DNS); SANS Institute (Detecting DNS Tunneling); CIS
+  Controls v8 (Control 9); NIST SP 800-81-2 (Secure Domain Name System
+  Deployment Guide).*
+
+- **FR-082**: The guide MUST address sensitive data residue in temporary
+  files and caches. n8n, Docker, and macOS all create temporary files
+  that may contain PII, credentials, or intermediate processing data.
+  While FileVault encrypts these at rest, a running attacker with
+  filesystem access can read them. The section MUST cover:
+  - **macOS temp directories**: `/tmp` (symlinked to `/private/tmp`) and
+    `/var/folders/` (per-user temp directories created by macOS's confstr
+    system). These directories accumulate data from all processes. The
+    guide MUST recommend:
+    - Verifying temp directory permissions are appropriate for the
+      deployment path (bare-metal: the n8n service account's temp
+      directory should not be readable by other non-root users)
+    - Periodic cleanup of stale temp data (macOS performs automatic
+      cleanup but timing is unpredictable)
+    - For bare-metal: the n8n service account's temp directory
+      (`/var/folders/xx/.../`) may contain scraped data and intermediate
+      processing artifacts from workflow executions
+  - **n8n temporary data**: n8n writes temporary files during workflow
+    execution (binary data processing, file uploads/downloads, execution
+    snapshots). The guide MUST document that these temporary files
+    typically reside within the n8n data directory or the system temp
+    directory, and recommend that these locations are covered by
+    FileVault and excluded from Time Machine if PII sensitivity warrants
+    it
+  - **Docker build cache**: `docker build` operations cache intermediate
+    layers. If custom Dockerfiles are used, build cache may contain
+    sensitive data. The guide MUST recommend `docker builder prune` as
+    part of periodic maintenance (FR-020) and MUST warn against putting
+    secrets in Dockerfile instructions (which persist in layer history);
+    use multi-stage builds with `--mount=type=secret` instead
+  - **Container /tmp isolation**: in the reference docker-compose.yml
+    (FR-058), `read_only: true` prevents writing to most container
+    paths, but tmpfs mounts are provided for `/tmp` and other write
+    paths. The guide MUST verify that container tmpfs mounts are
+    appropriately sized and that container temp data does not persist
+    across restarts (tmpfs is RAM-backed and cleared on container stop)
+  - **macOS application caches**: macOS applications and services cache
+    data in `~/Library/Caches/` and `/Library/Caches/`. If any
+    macOS-level tools interact with n8n data (e.g., a web browser
+    accessing the n8n UI stores page data, forms, and responses in
+    browser cache), this cache may contain PII. The guide MUST recommend
+    clearing browser caches after accessing the n8n UI from the Mac Mini
+    itself, or using Private Browsing / Incognito mode
+  - Verification: audit script checks for unexpected files in `/cores/`
+    (cross-ref FR-068), Docker build cache size (informational), and
+    container tmpfs configuration in running containers (WARN if tmpfs
+    is not configured for write paths)
+  *Source: Apple Platform Security Guide (Data Protection); CIS Apple
+  macOS Benchmarks (temporary file management); NIST SP 800-88 Rev 1
+  (Guidelines for Media Sanitization); Docker security best practices.*
+
+- **FR-084**: The guide MUST address the macOS certificate trust store
+  as a critical security boundary. An attacker who gains admin access
+  can install a root CA certificate in the System Keychain, enabling
+  man-in-the-middle interception of ALL HTTPS traffic from the Mac
+  Mini — including Apify API calls, LinkedIn authentication, SMTP relay
+  connections, Docker registry pulls, and Homebrew downloads. This
+  single action compromises every encrypted connection without
+  triggering certificate warnings. The section MUST cover:
+  - **Trust store attack**: installing a rogue root CA certificate
+    allows the attacker to generate valid-looking certificates for any
+    domain, intercepting and modifying HTTPS traffic. On macOS,
+    certificates can be installed via `security add-trusted-cert`
+    (requires admin) or via a configuration profile (FR-085). The guide
+    MUST explain this attack and why it is devastating — it silently
+    defeats TLS for every service the Mac Mini connects to
+  - **Trust store audit**: the guide MUST recommend periodically
+    auditing the System Keychain and System Roots keychain for
+    unexpected CA certificates. The command `security find-certificate
+    -a -p /Library/Keychains/System.keychain | openssl x509 -noout
+    -subject -fingerprint` lists all certificates with fingerprints.
+    The guide MUST provide instructions for comparing against a
+    known-good baseline
+  - **Trust store baseline**: after initial hardening, the operator
+    MUST record the list of trusted root CA certificates (subject and
+    SHA256 fingerprint) as a baseline. The audit script MUST compare
+    the current trust store against this baseline and flag any
+    additions (WARN for new certificates — could be legitimate macOS
+    updates or attacker-installed)
+  - **Certificate pinning awareness**: the guide MUST note that macOS
+    does not support user-configured certificate pinning for arbitrary
+    applications. Applications that use the system trust store (most
+    CLI tools, Docker, Homebrew) are vulnerable to rogue CA attack.
+    Some applications perform their own pinning (e.g., Apple services)
+    which provides partial protection
+  - **Post-incident trust store reset**: during incident recovery
+    (FR-031), the guide MUST recommend reviewing and resetting the
+    certificate trust store — removing any certificates that were not
+    part of the original baseline
+  - Verification: audit script compares current root CA certificate
+    count and fingerprints against baseline (WARN if certificates were
+    added since baseline creation)
+  *Source: Apple Platform Security Guide (Certificate Trust); CIS Apple
+  macOS Benchmarks (certificate management); MITRE ATT&CK T1553.004
+  (Subvert Trust Controls: Install Root Certificate); NIST SP 800-52
+  Rev 2 (TLS Implementation Guidelines).*
+
+- **FR-085**: The guide MUST address macOS configuration profiles
+  (.mobileconfig) as both a management tool and an attack vector.
+  Configuration profiles can modify virtually any macOS setting —
+  including disabling FileVault, installing root CA certificates
+  (bypassing FR-084), configuring VPN connections, changing DNS
+  settings, and adding email accounts. A malicious profile achieves
+  persistent system modification without requiring ongoing root access.
+  The section MUST cover:
+  - **Profile installation vectors**: profiles can be installed via
+    MDM (enterprise), downloaded from websites (user clicks to
+    install), sent via email attachments, or installed via `profiles
+    install` command line. The guide MUST warn that profiles downloaded
+    from untrusted sources can silently modify security settings
+  - **Profile audit**: the guide MUST recommend running `profiles list`
+    to enumerate all installed configuration profiles and their
+    payloads. Any profile the operator did not intentionally install
+    is suspicious and should be investigated
+  - **Lockdown Mode protection**: macOS Lockdown Mode (FR-062) blocks
+    configuration profile installation from untrusted sources. If
+    Lockdown Mode is enabled, this provides strong protection against
+    profile-based attacks
+  - **Profile-based attacks**: the guide MUST document specific attacks
+    that profiles can enable:
+    - Installing a root CA certificate for MITM (cross-ref FR-084)
+    - Disabling FileVault or modifying security settings silently
+    - Configuring a rogue VPN that routes all traffic through an
+      attacker-controlled server
+    - Adding an email account that syncs data to an attacker-controlled
+      server
+    - Modifying DNS configuration to redirect resolution to attacker
+      infrastructure
+  - **Baseline and monitoring**: after initial hardening, the operator
+    MUST record all installed profiles as a baseline. The audit script
+    MUST check for configuration profiles not in the baseline (WARN)
+  - **Profile removal**: the guide MUST document how to remove unwanted
+    profiles (`profiles remove -identifier <id>`) and verify that
+    system settings were restored to expected state after removal
+  - Verification: audit script checks for installed configuration
+    profiles (WARN if any profiles are installed that are not in the
+    operator's baseline, FAIL if a profile modifies security-critical
+    settings like FileVault or certificate trust)
+  *Source: Apple Platform Security Guide (Configuration Profiles); CIS
+  Apple macOS Benchmarks (MDM configuration); MITRE ATT&CK T1562
+  (Impair Defenses — profiles can disable security controls), T1553.004
+  (Install Root Certificate — via profile payload).*
+
+- **FR-086**: The guide MUST address macOS Spotlight indexing as a
+  privacy and security concern for the n8n data directory. Spotlight
+  indexes file contents, names, and metadata system-wide, making this
+  data searchable by any process on the system. If the n8n data
+  directory, backup archives, or credential files are indexed, an
+  attacker who gains user-level access can use Spotlight (`mdfind`) to
+  rapidly locate PII, credentials, and sensitive configuration without
+  knowing file paths. The section MUST cover:
+  - **Spotlight indexing risk**: Spotlight indexes file contents by
+    default. If n8n's database (containing PII lead data and encrypted
+    credentials), workflow export JSON files, or backup archives are
+    in an indexed location, their contents appear in Spotlight search
+    results and metadata queries. An attacker can use
+    `mdfind "linkedin"` or `mdfind "password"` to locate sensitive
+    data instantly without manual filesystem traversal
+  - **Spotlight exclusions**: the guide MUST recommend adding the
+    following directories to Spotlight's exclusion list:
+    - n8n data directory (bare-metal path)
+    - Docker volume mount points (if mounted on the host filesystem)
+    - Backup storage directories
+    - The Colima VM data directory (`~/.colima`)
+    - Any directory containing exported credentials or configuration
+  - **CLI configuration**: the guide MUST provide the `mdutil` command
+    to disable indexing for specific volumes (`mdutil -i off /path`)
+    and `defaults write` to configure Spotlight exclusions via CLI
+    (per FR-019 CLI-first principle)
+  - **Stale index data**: even after adding exclusions, previously
+    indexed data remains in the Spotlight database until it is rebuilt.
+    The guide MUST document how to force a Spotlight re-index
+    (`mdutil -E /`) to clear stale indexed data that may contain PII
+    or credential references
+  - **FR-061 cross-reference**: Spotlight Suggestions (sending queries
+    to Apple's servers) is already covered in FR-061. This FR
+    specifically addresses local Spotlight indexing of sensitive n8n
+    data as a lateral movement and data discovery aid
+  - Verification: audit script checks whether the n8n data directory
+    is excluded from Spotlight indexing (WARN if indexed)
+  *Source: Apple Platform Security Guide (Spotlight); CIS Apple macOS
+  Benchmarks (privacy settings); MITRE ATT&CK T1005 (Data from Local
+  System), T1083 (File and Directory Discovery).*
+
+- **FR-089**: The guide MUST address Docker image security beyond digest
+  pinning (FR-040) to cover image provenance verification and build
+  hygiene. While FR-040 covers supply chain integrity for pulling
+  images, this FR addresses how to verify that images are trustworthy
+  and how to avoid introducing vulnerabilities through custom image
+  builds. The section MUST cover:
+  - **Image provenance**: the guide MUST recommend verifying Docker
+    image provenance using Docker's built-in provenance attestations
+    (available for official images on Docker Hub). The guide MUST
+    document how to check attestations when available and explain that
+    provenance attestations confirm the image was built from a specific
+    source repository via a specific CI pipeline
+  - **Image vulnerability scanning**: the guide MUST recommend running
+    a vulnerability scan on the n8n Docker image before deployment.
+    Free options include:
+    - Trivy (`trivy image n8nio/n8n`, free, open source, installable
+      via Homebrew) — recommended as the primary scanner
+    - Docker Scout (`docker scout cves n8nio/n8n`, free tier available
+      with Docker Desktop or Docker Hub account)
+    - Grype (`grype n8nio/n8n`, free, open source)
+    - The guide MUST recommend scanning before first deployment and
+      after each image update, documenting the scan results alongside
+      the image digest
+  - **Custom Dockerfile security**: if the operator builds a custom
+    Docker image (e.g., adding system packages to the n8n image), the
+    guide MUST cover:
+    - Never put secrets in Dockerfile instructions (RUN, ENV, COPY) —
+      they persist in layer history visible via `docker history
+      --no-trunc`
+    - Use multi-stage builds to prevent build-time dependencies from
+      appearing in the final image
+    - Use `--mount=type=secret` for build-time secrets (Docker
+      BuildKit)
+    - Pin base image by digest in the FROM instruction
+    - Minimize installed packages to reduce attack surface
+  - **Layer history inspection**: the guide MUST show how to inspect
+    image layers (`docker history --no-trunc <image>`) to verify no
+    secrets are embedded in any layer. The guide MUST warn that secrets
+    in any layer — even intermediate layers from a multi-stage build
+    prior to the final stage — may be extractable if the intermediate
+    images are not cleaned up
+  - **Image scanning schedule**: the guide MUST recommend rescanning
+    images periodically (monthly or when the vulnerability database
+    updates) to catch newly discovered CVEs in previously deployed
+    images. This should be included in the maintenance schedule
+    (FR-020) alongside tool updates (FR-026)
+  - Verification: audit script checks whether the running n8n container
+    image is pinned by digest (cross-ref FR-040) and reports the image
+    age (WARN if the image is older than 90 days without a documented
+    scan)
+  *Source: Docker documentation (Image Provenance, Docker Scout); CIS
+  Docker Benchmark v1.6 (Section 4: Container Images and Build Files);
+  NIST SP 800-190 (Application Container Security Guide); Trivy
+  documentation.*
