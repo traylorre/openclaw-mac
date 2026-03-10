@@ -8,7 +8,31 @@ description: Detect context compaction in Claude session history, identify taint
 $ARGUMENTS
 ```
 
-If user input is empty, analyze the most recent non-current session. If user input is a session ID prefix (e.g., `6e2e7e61`), analyze that specific session.
+**Mode detection**: Check if `$ARGUMENTS` contains `--batch` or `--abort`.
+
+- **`--batch`**: Batch mode — auto-approve all reverts, no confirmation prompts. Used by recovery workflow.
+- **`--abort`**: Abort mode — clean up recovery state and exit (FR-032).
+- **No flag**: Interactive mode (default) — analyze the most recent non-current session, or a specific session if a session ID prefix is provided.
+
+### Abort Mode (`--abort`)
+
+If `--abort` is present:
+
+1. Delete `.claude/recovery-marker.json` if it exists
+2. Delete `.claude/recovery-interrupted-task.json` if it exists
+3. Delete `.claude/recovery-audit-complete` if it exists
+4. Report "Recovery state cleaned up. No /clear will be triggered."
+5. Stop — do not proceed with audit.
+
+### Batch Mode (`--batch`)
+
+If `--batch` is present, analyze the **current** session (not a previous one). The recovery workflow has injected context telling you that compaction just occurred in THIS session. Follow the batch-specific steps described in each section below. Key differences from interactive mode:
+
+- No confirmation prompts — auto-approve all reverts
+- Stash uncommitted changes before reverting (FR-037)
+- Produce progress output at each stage (FR-033)
+- Write recovery log and create sentinel file when done
+- Summarize output if >50 tainted edits (FR-068)
 
 ## Goal
 
@@ -134,9 +158,110 @@ After reverting, verify:
 - `git diff` shows only the intended reverts
 ```
 
-### 6. Offer to Execute Reverts
+### 6. Execute Reverts
 
-Ask the user before making any changes. List each revert individually and get confirmation. Never auto-revert.
+**Interactive mode**: Ask the user before making any changes. List each revert individually and get confirmation. Never auto-revert.
+
+**Batch mode** (`--batch`): Execute all reverts automatically using the following procedure:
+
+#### 6a. Pre-flight Checks (FR-034, FR-042, FR-059)
+
+Before any reverts:
+
+1. **Check `.git/index.lock`** — if it exists, another git operation may be in progress. Report this and skip git-based reverts. Provide manual revert instructions instead.
+2. **Detached HEAD** — `git checkout <commit> -- <file>` works fine in detached HEAD. Do NOT assume a branch is checked out (FR-042).
+
+#### 6b. Stash Uncommitted Changes (FR-037, FR-096)
+
+```bash
+# Check if working tree is dirty
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "⚠️ Working tree has uncommitted changes — stashing before reverts"
+    # Note: --keep-index preserves staged/unstaged distinction but may flatten on restore
+    git stash push --keep-index -m "recovery-auto-stash" || {
+        echo "⚠️ WARNING: git stash failed. Staged/unstaged distinction may be lost."
+        echo "Proceeding with reverts — files that would conflict will be skipped."
+    }
+    STASHED=true
+fi
+```
+
+If stash fails, warn that staged/unstaged distinction will be flattened and proceed (FR-096, D-003).
+
+#### 6c. Revert Loop (FR-033, FR-040, FR-041, FR-047, FR-048, FR-086)
+
+Identify the last clean commit hash (the commit before any tainted edits):
+
+```bash
+CLEAN_COMMIT=$(git log --format='%H' -1 HEAD)  # or the commit identified in the audit
+```
+
+**Infrastructure files first** (FR-047, FR-048): If any tainted files match these patterns, revert them FIRST:
+- `.claude/settings.json`, `.claude/commands/*`, `CLAUDE.md`, `.claude/*.json`
+
+For each tainted file:
+
+1. **Check if file is outside the git repo** — if so, skip with message "out-of-repo, manual review needed" (FR-086)
+2. **Check for external modification** (FR-040) — compare the file's current content against what the tainted tool call produced. If they differ, someone else modified it. Flag for manual review instead of reverting.
+3. **Modified files**: `git checkout <clean_commit> -- <file>` with `--no-verify` (FR-049)
+4. **Created files** (FR-041): `rm <file>` (file didn't exist before compaction)
+5. Report progress: `✓ <file> (<action>)` or `⚠ <file> (skipped: <reason>)`
+
+If >50 tainted edits, use summarized output only (FR-068):
+```
+Reverted 45 files, skipped 5. See recovery log for details.
+```
+
+#### 6d. Handle Partial Failure (FR-034)
+
+If a revert fails midway:
+- Log which files were successfully reverted and which remain
+- Update recovery marker with `stage: "reverts_partial"` and failure details
+- Do NOT delete the marker — leave it for diagnosis
+- Report what happened and what the developer should do
+
+#### 6e. Restore Stash (FR-037)
+
+```bash
+if [[ "${STASHED:-}" == true ]]; then
+    git stash pop || echo "⚠️ WARNING: stash pop failed — run 'git stash list' to recover"
+fi
+```
+
+#### 6f. Verification Summary (FR-039)
+
+After all reverts, produce:
+
+```
+## Verification
+- Last clean commit: <hash>
+- Files reverted: <count>
+- Files skipped: <count> (with reasons)
+- Current state diff: <summary of git diff against clean commit>
+```
+
+#### 6g. Write Recovery Log (FR-043)
+
+Update the recovery log file at `.claude/recovery-logs/recovery-<timestamp>.md` (the path is in the recovery marker's `recovery_log_file` field). Populate the Tainted Edits table, Warnings, and Verification sections per the recovery-log.md contract. Update the front matter counts.
+
+#### 6h. Create Sentinel and Update Marker
+
+```bash
+# Signal recovery-watcher.sh that audit is complete
+touch .claude/recovery-audit-complete
+
+# Update marker stage
+# (The marker file is at .claude/recovery-marker.json)
+```
+
+Read the current marker, update `stage` to `"reverts_complete"`, and write it back. Use jq:
+
+```bash
+jq '.stage = "reverts_complete"' .claude/recovery-marker.json > .claude/recovery-marker.json.tmp \
+    && mv .claude/recovery-marker.json.tmp .claude/recovery-marker.json
+```
+
+Report: "Recovery audit complete. Sentinel created. Waiting for /clear."
 
 ## Important Notes
 

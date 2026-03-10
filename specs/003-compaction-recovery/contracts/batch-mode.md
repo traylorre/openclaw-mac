@@ -32,7 +32,7 @@ and is visible in the command's `$ARGUMENTS` variable.
 1. Identify tainted edits (same as interactive)
 2. Check git working tree state:
    - If dirty: `git stash push --keep-index -m "recovery-auto-stash"` (FR-037, FR-096)
-   - If stash fails: warn and skip files that would conflict (FR-114)
+   - If stash fails: warn and skip files that would conflict
 3. Check for infrastructure files in tainted list (FR-047):
    - Flag and prioritize their revert
 4. Execute all reverts without confirmation:
