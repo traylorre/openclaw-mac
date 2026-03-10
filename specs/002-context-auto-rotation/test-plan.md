@@ -1,8 +1,9 @@
 # 002 Context Auto-Rotation — Test Plan
 
-**Date:** 2026-03-09
+**Date:** 2026-03-10 (updated from 2026-03-09)
 **Derived from:** `flowchart.md` junction analysis + spec.md FRs
-**Total tests:** 36 (13 MUST, 12 SHOULD, 11 boundary/edge)
+**Total tests:** 50 (19 MUST, 19 SHOULD, 12 boundary/edge)
+**Updates:** FR-033 compact suppression tests (T47–T48), FR-034 log retention (T49), TMUX_PANE guard (T50), FR-032 double-/clear guard tests (T43–T45), banner test (T46), T14 timeout 30s→60s
 
 ## Test Harness
 
@@ -300,18 +301,18 @@ Resolution: determine tmux capture-pane -p behavior:
 
 ### T14 — Poller timeout [SHOULD] {J7}
 
-**Junction:** TMO — elapsed >= 30s
-**FR:** FR-004
+**Junction:** TMO — elapsed >= 60s
+**FR:** FR-004 (timeout increased from 30s to 60s, 2026-03-10)
 
 ```text
 Given: Mock tmux capture-pane always returns non-matching content
-When:  Poller runs for 30+ seconds
+When:  Poller runs for 60+ seconds
 Then:  .claude/carryover-clear-needed created
-       Log entry: timeout error
+       Log entry: timeout error with elapsed time
        .claude/carryover-pending.claimed cleaned by EXIT trap
        Poller exits (not hung)
 
-Also test: exactly 30 iterations of 1s sleep = 30s boundary
+Also test: exactly 60 iterations of 1s sleep = 60s boundary
 ```
 
 ---
@@ -827,6 +828,177 @@ Then:  Loader does NOT load the .loaded file
 
 ---
 
+## FR-032 Double-/clear Guard + Banner Tests
+
+### T43 — Double-/clear detection: recent .loaded suppresses load [MUST] {FR-032}
+
+**Junction:** DBLCLR — .loaded mtime ≤60s
+**FR:** FR-032
+
+```text
+Given: Event = "clear"
+       $SPEC_DIR/CONTEXT-CARRYOVER-01.md.loaded exists, modified 15 seconds ago
+       No unconsumed CONTEXT-CARRYOVER-NN.md files
+       No .claude/carryover-pending
+When:  carryover-loader.sh runs
+Then:  EXIT 0, no additionalContext
+       Log: "double-/clear detected, carryover already loaded ≤60s ago"
+       No files renamed, no files deleted
+       This is the no-op path — carryover was already loaded in the first /clear
+```
+
+---
+
+### T44 — Double-/clear mtime boundary: 60s [SHOULD] {FR-032}
+
+**Junction:** DBLCLR — boundary test
+**FR:** FR-032
+
+```text
+Given: Event = "clear"
+       No unconsumed CONTEXT-CARRYOVER-NN.md files
+       No .claude/carryover-pending
+
+Boundary tests:
+  .loaded mtime = 59 seconds ago → double-/clear detected (≤60s), exit 0 no-op
+  .loaded mtime = 60 seconds ago → double-/clear detected (≤60s), exit 0 no-op
+  .loaded mtime = 61 seconds ago → NOT double-/clear (>60s), proceed to normal search
+  .loaded mtime = 300 seconds ago → NOT double-/clear, proceed normally
+  No .loaded files at all → NOT double-/clear, proceed normally
+```
+
+---
+
+### T45 — Double-/clear guard skipped for startup and compact [MUST] {FR-032}
+
+**Junction:** EVT — event type routing
+**FR:** FR-032
+
+```text
+Given: $SPEC_DIR/CONTEXT-CARRYOVER-01.md.loaded exists, modified 5 seconds ago
+       $SPEC_DIR/CONTEXT-CARRYOVER-02.md exists (unconsumed)
+
+Case 1: Event = "startup"
+Then:  FR-032 guard NOT applied
+       Carryover-02.md loaded normally (startup always loads if available)
+
+Case 2: Event = "compact"
+Then:  FR-032 guard NOT applied
+       Carryover-02.md loaded normally (compact always loads as fallback)
+
+Case 3: Event = "clear"
+       Also: .claude/carryover-pending exists (pending signal present)
+Then:  FR-032 guard check runs but condition NOT met (pending exists)
+       Carryover-02.md loaded normally
+
+The 60s guard only suppresses when ALL three conditions are true:
+  1. Recent .loaded (≤60s)
+  2. No unconsumed carryover files
+  3. No carryover-pending signal
+```
+
+---
+
+### T46 — Poller sends banner before /clear [MUST] {FR-004}
+
+**Junction:** BANNER → SEND (between CLAIM success and /clear)
+**FR:** FR-004
+
+```text
+Given: Poller detects prompt pattern
+       mv carryover-pending → .claimed succeeds
+When:  Poller prepares to send /clear
+Then:  FIRST: tmux send-keys sends banner text:
+         '' Enter '# ⏳ Auto-clearing context — do NOT type /clear' Enter
+       THEN: tmux send-keys sends '/clear' Enter
+       Banner is visible in pane before /clear fires
+       Order is guaranteed (sequential send-keys calls)
+
+Verify:
+  - Banner appears as a comment (# prefix) so Claude Code ignores it
+  - Banner includes the ⏳ emoji for visual prominence
+  - /clear follows AFTER banner (not interleaved)
+```
+
+---
+
+## FR-033 Compact Suppression + FR-034 Log Retention Tests
+
+### T47 — Compact event suppressed when recovery marker exists [MUST] {FR-033}
+
+**Junction:** COMPACT_REC — recovery-marker.json exists
+**FR:** FR-033
+
+```text
+Given: Event = "compact"
+       .claude/recovery-marker.json exists (003 recovery in progress)
+       $SPEC_DIR/CONTEXT-CARRYOVER-01.md exists (unconsumed)
+When:  carryover-loader.sh runs
+Then:  EXIT 0, no additionalContext
+       Log: "compact suppressed — recovery active"
+       CARRYOVER file NOT renamed to .loaded (preserved for post-recovery /clear)
+       No signal files modified
+
+Also test: recovery marker is empty file (0 bytes) — existence check only, not JSON parsing
+```
+
+---
+
+### T48 — Compact event loads carryover when no recovery marker [MUST] {FR-033}
+
+**Junction:** COMPACT_REC — recovery-marker.json absent
+**FR:** FR-033, FR-011
+
+```text
+Given: Event = "compact"
+       .claude/recovery-marker.json does NOT exist
+       $SPEC_DIR/CONTEXT-CARRYOVER-01.md exists
+When:  carryover-loader.sh runs
+Then:  Carryover loaded into additionalContext (normal compact fallback path)
+       Renamed to .loaded
+       This is the existing T23 behavior but explicitly gated by FR-033 check
+```
+
+---
+
+### T49 — Log file cleanup: delete files older than 7 days [SHOULD] {FR-034}
+
+**Junction:** After startup signal scan
+**FR:** FR-034
+
+```text
+Given: Event = "startup"
+       .claude/recovery-logs/ contains:
+         carryover-detect.2026-03-01T10:00:00.log  (9 days old)
+         carryover-loader.2026-03-02T10:00:00.log  (8 days old)
+         carryover-poller.2026-03-05T10:00:00.log  (5 days old)
+         carryover-loader.2026-03-09T10:00:00.log  (1 day old)
+When:  carryover-loader.sh runs
+Then:  First two files deleted (>7 days old)
+       Last two files kept (<7 days old)
+       No non-.log files affected
+
+Boundary: file exactly 7 days old → kept (mtime +7 means strictly older than 7 days)
+```
+
+---
+
+### T50 — Poller exits on empty TMUX_PANE [SHOULD] {FR-028}
+
+**Junction:** Poller initialization
+**FR:** FR-028
+
+```text
+Given: TMUX_PANE="" (empty string) or unset
+When:  carryover-poller.sh starts
+Then:  EXIT 1
+       Log error: "TMUX_PANE not set"
+       No tmux commands executed
+       No signal files created
+```
+
+---
+
 ## Gaps Found During Analysis
 
 Issues discovered that are NOT covered in the flowchart or spec.
@@ -852,15 +1024,17 @@ Listed for tracking; should be resolved before or during implementation.
 | Phase 1 — PostToolUse Hook | 5 + 2 missing | T01–T10 | All edges |
 | Phase 2a — Poller | 4 + 1 missing | T11–T18 | All edges |
 | Phase 2b — Non-tmux | 0 (linear) | T19 | Timeout behavior |
-| Phase 3 — Loader | 7 + 1 missing | T20–T35 | All edges |
+| Phase 3 — Loader | 8 + 1 missing | T20–T35 | All edges |
+| FR-032 + Banner | 2 new junctions | T43–T46 | Double-/clear guard + banner |
+| FR-033 + FR-034 + FR-028 | 3 new junctions | T47–T50 | Compact suppression + log retention + TMUX_PANE |
 | Crash Recovery | 4 points | T36–T39 | All crash states |
 | End-to-End | — | T40–T42 | Happy paths + SC-004 |
-| **Total** | **16 + 4 missing** | **42** | **All known edges** |
+| **Total** | **22 + 4 missing** | **50** | **All known edges** |
 
 ### Priority Breakdown
 
 | Priority | Count | Tests |
 |----------|-------|-------|
-| MUST | 15 | T01–T03, T05–T09, T11, T13, T15, T18, T20–T21, T25, T27–T28, T33, T35, T40–T42 |
-| SHOULD | 16 | T04, T14, T16–T17, T19, T22–T24, T26, T29–T32, T34, T36–T39 |
-| Boundary | 11 | Included within T05, T06, T27, T30, T31, T34 as sub-cases |
+| MUST | 19 | T01–T03, T05–T09, T11, T13, T15, T18, T20–T21, T25, T27–T28, T33, T35, T40–T43, T45–T48 |
+| SHOULD | 19 | T04, T14, T16–T17, T19, T22–T24, T26, T29–T32, T34, T36–T39, T44, T49–T50 |
+| Boundary | 12 | Included within T05, T06, T27, T30, T31, T34, T44 as sub-cases |
