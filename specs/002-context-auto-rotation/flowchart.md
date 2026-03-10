@@ -1,7 +1,8 @@
 # 002 Context Auto-Rotation — End-to-End Flowchart
 
-**Date:** 2026-03-09
+**Date:** 2026-03-10 (updated from 2026-03-09)
 **Covers:** All happy paths, unhappy paths, race conditions, and crash recovery (SIGKILL/lid close)
+**Updates:** FR-032 double-/clear guard, 60s poller timeout (was 30s), banner before /clear
 
 > Render with any Mermaid viewer (GitHub markdown, VS Code extension, mermaid.live).
 > Uses dark theme with high-contrast colors. If rendering in a light-themed viewer,
@@ -75,7 +76,7 @@ flowchart TD
 
         POLL --> SCAN{"Scan full pane for<br/>3 consecutive lines:<br/>^&boxh;{'{'}12,{'}'}<br/>^&rtrif; &lpar;U+276F&rpar;<br/>^&boxh;{'{'}12,{'}'}"}:::decide
 
-        SCAN -->|"No match"| TMO{"Elapsed &ge; 30s?"}:::decide
+        SCAN -->|"No match"| TMO{"Elapsed &ge; 60s?"}:::decide
         TMO -->|No| SLP["Sleep 1s"]:::proc
         SLP --> POLL
 
@@ -88,7 +89,8 @@ flowchart TD
 
         CLAIM -->|"mv fails &mdash; file gone"| RACE_OK["User already typed /clear<br/>Poller exits silently"]:::ok
 
-        CLAIM -->|"mv succeeds &mdash; poller owns /clear"| SEND["tmux send-keys '/clear' Enter"]:::proc
+        CLAIM -->|"mv succeeds &mdash; poller owns /clear"| BANNER["Send banner via send-keys:<br/># &x23F3; Auto-clearing context &mdash; do NOT type /clear"]:::proc
+        BANNER --> SEND["tmux send-keys '/clear' Enter"]:::proc
         SEND --> SEND_OK["EXIT &mdash; trap cleans .claimed"]:::ok
     end
 
@@ -125,14 +127,19 @@ flowchart TD
 
         JQ -->|OK| TRAPS["Install signal traps:<br/>SIGTERM, SIGINT, SIGHUP<br/>&rarr; undo .loaded rename on kill"]:::proc
 
-        TRAPS --> STARTUP{"Event == startup?"}:::decide
+        TRAPS --> EVT{"Event type?"}:::decide
 
-        STARTUP -->|Yes| LINEAR["FR-030 Linear signal scan:<br/>1. rm stale .claimed<br/>2. clear-needed &rarr; inject reminder<br/>3. pending checked below"]:::proc
+        EVT -->|startup| LINEAR["FR-030 Linear signal scan:<br/>1. rm stale .claimed<br/>2. clear-needed &rarr; inject reminder<br/>3. pending checked below"]:::proc
 
-        STARTUP -->|"No &lpar;clear or compact&rpar;"| SKIP_SIG["Skip signal file cleanup"]:::proc
+        EVT -->|compact| COMPACT_REC{"FR-033: recovery-marker.json<br/>exists?"}:::decide
+        COMPACT_REC -->|"Yes &rarr; recovery active"| COMPACT_SKIP["Log: compact suppressed<br/>Exit 0, no additionalContext"]:::ok
+        COMPACT_REC -->|No| BRANCH
+
+        EVT -->|clear| DBLCLR{"FR-032: .loaded mtime<br/>&le; 60s + no unconsumed<br/>+ no pending?"}:::decide
+        DBLCLR -->|"Yes &rarr; double-/clear"| DBLCLR_OK["Log: double-/clear detected<br/>carryover already loaded &le;60s ago<br/>Exit 0, no additionalContext"]:::ok
+        DBLCLR -->|No| BRANCH
 
         LINEAR --> BRANCH
-        SKIP_SIG --> BRANCH
 
         BRANCH["git branch --show-current<br/>&rarr; specs/$branch/"]:::proc
         BRANCH --> DIR{"Spec directory<br/>exists?"}:::decide
@@ -210,8 +217,9 @@ Every step where persistent state changes. "Disk state" is what survives a SIGKI
 | **Poller polling (before claim)** | P2 | `pending` + CARRYOVER file | Loader finds both, loads carryover | SELF-HEALS |
 | **After `mv pending → .claimed`, before `send-keys`** | P2 | `.claimed` + CARRYOVER file | FR-029 deletes `.claimed`, loader finds file, loads it | SELF-HEALS |
 | **After `send-keys`, before poller exit** | P2 | `/clear` already sent + `.claimed` | EXIT trap may not fire (SIGKILL). FR-029 cleans `.claimed`. `/clear` triggers loader normally | SELF-HEALS |
-| **Poller timeout, `clear-needed` written** | P2 | `clear-needed` + `pending` + CARRYOVER file | FR-030 linear scan: inject reminder, then load carryover | SELF-HEALS |
-| **Poller timeout, `clear-needed` written, no carryover** | P2 | `clear-needed` + `pending` | FR-030: inject reminder + inject "expected but missing" | WARNS (2x) |
+| **After banner sent, before /clear sent** | P2 | `.claimed` + CARRYOVER file, banner visible | EXIT trap may not fire. FR-029 cleans `.claimed`. Loader finds file, loads it | SELF-HEALS |
+| **Poller timeout (60s), `clear-needed` written** | P2 | `clear-needed` + `pending` + CARRYOVER file | FR-030 linear scan: inject reminder, then load carryover | SELF-HEALS |
+| **Poller timeout (60s), `clear-needed` written, no carryover** | P2 | `clear-needed` + `pending` | FR-030: inject reminder + inject "expected but missing" | WARNS (2x) |
 | **Loader: before `.loaded` rename** | P3 | CARRYOVER file unconsumed | On next startup/clear, loader finds and loads it | SELF-HEALS |
 | **Loader: after `.loaded` rename, before JSON output** | P3 | `.loaded` + `pending` (not yet deleted) | pending exists, no unconsumed file → "expected but missing" | WARNS |
 | **Loader: after JSON output** | P3 | `.loaded`, pending deleted | Success already committed to stdout | No impact |
@@ -228,6 +236,7 @@ Every possible end state of the system, classified by outcome:
 | Stale `.claimed` after poller SIGKILL | FR-029 deletes on startup, then loads carryover |
 | `/clear` sent but poller didn't clean up | Session already restarted; loader runs normally |
 | Carryover file exists from prior crashed rotation | Startup event triggers loader, file loaded if on correct branch |
+| Double-/clear from keystroke queuing (FR-032) | Loader detects `.loaded` mtime ≤60s, exits as no-op |
 
 ### Warns (pauses for human input)
 
@@ -258,10 +267,10 @@ Every possible end state of the system, classified by outcome:
 ## Verified Path Count
 
 - **Happy paths:** 2 (tmux zero-touch, non-tmux one-step)
-- **Unhappy logic branches:** 12 (jq x2, fast-path, not-carryover, recovery-active, no-tmux, capture-fail, timeout, race/user-typed-first, wrong-branch, no-file, empty-file, oversize)
-- **Crash recovery paths:** 11 (see matrix above)
-- **Total distinct terminal states:** 14
-- **Self-healing:** 4 scenarios
+- **Unhappy logic branches:** 15 (jq x2, fast-path, not-carryover, recovery-active-detect, recovery-active-compact FR-033, no-tmux, capture-fail, timeout, race/user-typed-first, wrong-branch, no-file, empty-file, oversize, double-/clear FR-032, banner before /clear)
+- **Crash recovery paths:** 12 (see matrix above, added banner crash point)
+- **Total distinct terminal states:** 17
+- **Self-healing:** 5 scenarios (added double-/clear detection)
 - **Warns:** 6 scenarios
 - **Blocks:** 2 scenarios (both: install jq)
 - **Silent failures:** 3 scenarios (all accepted risks with mitigations)
