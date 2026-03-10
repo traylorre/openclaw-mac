@@ -35,6 +35,7 @@ This session completed `/speckit.plan` for 002 and began `/speckit.clarify` (10 
 ### Plan Phase Completed
 
 Generated 7 new artifacts:
+
 1. **plan.md** — Architecture, 4-script design (hook-common.sh, carryover-detect.sh, carryover-poller.sh, carryover-loader.sh), cross-feature integration diagram, 003 refactoring impact table, settings.json hook configuration
 2. **research.md** — 8 decisions resolving all technical unknowns
 3. **data-model.md** — 6 entities with full lifecycle/state transitions
@@ -42,6 +43,7 @@ Generated 7 new artifacts:
 5. **quickstart.md** — Deployment and verification guide
 
 Updated 3 existing artifacts:
+
 1. **flowchart.md** — FR-032 guard, 60s timeout, banner step
 2. **test-plan.md** — 4 new tests (T43-T46), T14 timeout update
 3. **CLAUDE.md** — Auto-updated via update-agent-context.sh
@@ -57,6 +59,7 @@ User requested 10 rounds of clarification as principal engineer with 003 compati
 > Should carryover-loader.sh check for recovery-marker.json on compact events and suppress CARRYOVER injection when recovery is active?
 >
 > Options presented:
+>
 > - **A (Recommended):** Suppress on compact when recovery marker exists. CARRYOVER loads later on post-recovery /clear.
 > - **B:** Always inject but change preamble to passive ("for reference only").
 > - **C:** Remove compact matcher entirely — let 003 own compact events completely.
@@ -80,6 +83,7 @@ Priority-ordered questions identified but not yet asked:
 ## Architecture Summary (from plan.md)
 
 ### Scripts
+
 | Script | Hook Event | Purpose |
 |--------|-----------|---------|
 | `hook-common.sh` | (sourced) | Shared utilities extracted from recovery-common.sh |
@@ -88,6 +92,7 @@ Priority-ordered questions identified but not yet asked:
 | `carryover-loader.sh` | SessionStart (clear/compact/startup) | Load carryover into additionalContext |
 
 ### settings.json Changes
+
 | Hook Event | Matcher | Scripts |
 |------------|---------|---------|
 | PostToolUse | `.*` | **carryover-detect.sh** (NEW) |
@@ -96,11 +101,13 @@ Priority-ordered questions identified but not yet asked:
 | SessionStart | `startup` | **carryover-loader.sh** (NEW matcher) |
 
 ### hook-common.sh Refactoring (from recovery-common.sh)
+
 Functions moving to hook-common.sh: log_info/warn/error (with configurable HOOK_LOG_PREFIX), is_tmux(), project_root(), require_tool() (new), set_permissions(), iso_timestamp/full(), parse_stdin_json(), json_field/or_null()
 
 Functions staying in recovery-common.sh: All marker/task/log/abort/transcript functions
 
 ### Cross-Feature Integration Points
+
 1. `.claude/recovery-marker.json` — 002 READS (FR-016 suppress), 003 WRITES
 2. `.claude/recovery-logs/` — Shared log directory, both features WRITE
 3. `settings.json` — Platform runs all matching hooks in parallel, concatenates additionalContext

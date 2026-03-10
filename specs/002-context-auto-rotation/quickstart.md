@@ -124,10 +124,12 @@ cat .claude/recovery-logs/hooks.log
 
 1. Start a Claude Code session in tmux on a feature branch (e.g., `002-context-auto-rotation`)
 2. Manually create a test carryover file:
+
    ```bash
    echo -e "# Test Carryover\n\nThis is a test carryover file for smoke testing." \
      > specs/002-context-auto-rotation/CONTEXT-CARRYOVER-99.md
    ```
+
 3. Type `/clear` in the Claude Code session
 4. Observe: the model's first response should include the carryover content
 5. Verify: `ls specs/002-context-auto-rotation/CONTEXT-CARRYOVER-99.md.loaded` (file was consumed)
