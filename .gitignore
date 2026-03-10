@@ -27,3 +27,9 @@ local_audit_results.txt
 .bash_history
 .zsh_history
 
+# Recovery runtime artifacts (003-compaction-recovery)
+.claude/recovery-marker.json
+.claude/recovery-interrupted-task.json
+.claude/recovery-audit-complete
+.claude/recovery-logs/
+
