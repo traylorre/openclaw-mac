@@ -68,10 +68,10 @@ No output. Empty stdout. Exit 0.
 
 ### `clear` Events
 
-1. **FR-032 guard**: Check if any `.loaded` file in spec directory has mtime ≤60 seconds ago
+1. Derive spec directory from `git branch --show-current` → `specs/${branch}/` (already derived in entry point before event dispatch)
+2. **FR-032 guard**: Check if any `.loaded` file in spec directory has mtime ≤60 seconds ago
    - If recent `.loaded` exists AND no unconsumed CARRYOVER AND no `carryover-pending` → exit 0 (double-/clear no-op)
    - Log: `"double-/clear detected, carryover already loaded ≤60s ago"`
-2. Derive spec directory from `git branch --show-current` → `specs/${branch}/`
 3. Search for unconsumed `CONTEXT-CARRYOVER-NN.md` files
 4. Select highest NN (FR-026), check size, load, rename to `.loaded`, output
 
