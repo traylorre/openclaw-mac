@@ -175,7 +175,7 @@ If auto-compaction occurs despite the guardian (e.g., a single large tool result
 - The user runs Claude Code inside tmux for the fully automated (zero-touch) experience. Non-tmux environments receive a degraded but functional workflow.
 - The `$TMUX` environment variable is available inside hook execution to detect tmux presence.
 - The `tmux send-keys` command is available on the system when `$TMUX` is set.
-- CARRYOVER files are written to the active spec directory (`specs/<feature>/`). The search scope is limited to this directory, derived from the feature branch name or hook's `cwd`.
+- CARRYOVER files are written to the active spec directory (`specs/<feature>/`). The search scope is limited to this directory, derived from `git branch --show-current` (FR-006).
 - Only one CARRYOVER file should be loaded per `/clear` cycle. If multiple unconsumed files exist, the one with the highest sequence number (NN) is loaded.
 - The `jq` command-line tool is available on the system.
 - The `compact` event name for SessionStart hooks is correct. **UNVALIDATED** — must be confirmed empirically during implementation (Q38). If wrong, adjust FR-011.

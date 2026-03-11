@@ -1,8 +1,8 @@
 # 002 Context Auto-Rotation — End-to-End Flowchart
 
-**Date:** 2026-03-10 (updated from 2026-03-09)
-**Covers:** All happy paths, unhappy paths, race conditions, and crash recovery (SIGKILL/lid close)
-**Updates:** FR-032 double-/clear guard, 60s poller timeout (was 30s), banner before /clear
+**Date:** 2026-03-11 (updated from 2026-03-10)
+**Covers:** All happy paths, unhappy paths, race conditions, crash recovery (SIGKILL/lid close), and cross-system integration points
+**Updates:** Integration audit paths, session-scoped temp files, staleness window reduction, watcher SIGHUP protection, startup event coverage
 
 > Render with any Mermaid viewer (GitHub markdown, VS Code extension, mermaid.live).
 > Uses dark theme with high-contrast colors. If rendering in a light-themed viewer,
@@ -264,13 +264,39 @@ Every possible end state of the system, classified by outcome:
 | Carryover file partially written (crash mid-Write) | File may be truncated but >100 bytes, loaded as-is | Partial data is better than none; model can ask for clarification |
 | Concurrent sessions load wrong carryover | "Most recent unconsumed" heuristic — accepted risk | Rare edge case; not worth session-scoping complexity |
 
+## Integration Audit — 2026-03-11
+
+New paths discovered during live integration testing. These apply to the **pre-Phase-1 layer** (context-guardian.sh) and **cross-feature coordination** (003 recovery scripts).
+
+### Pre-Phase 1: Context Guardian Integration Points
+
+These paths exist in the currently deployed context-guardian.sh (PreToolUse hook) which operates upstream of the 002 carryover rotation system.
+
+| Path | Description | Resolution |
+|---|---|---|
+| **Session-scoped temp file** | context-monitor.sh writes to `/tmp/claude-context-usage.<session_id>` and guardian reads matching file. Prevents cross-session and test pollution. | **FIXED 2026-03-11**: Both scripts now use session-scoped paths with unsession-scoped fallback. |
+| **Stale Layer 1 data** | Guardian reads statusLine data from temp file. If file is >30s old, falls through to Layer 2 (JSONL size). | **FIXED 2026-03-11**: Staleness window reduced from 60s to 30s. |
+| **StatusLine polling gap** | statusLine runs every ~5s. If context jumps from 65% to 85% in one tool response, guardian reads stale % and allows next tool. | **ACCEPTED RISK**: 5-second gap is inherent to polling architecture. Mitigated by: (1) 30s staleness window triggers Layer 2 fallback, (2) 003 recovery system handles compaction if guardian misses it. |
+| **Guardian warn vs deny gap** | At 50-70%, guardian outputs `allow` with warning. Model may ignore soft warning and keep working. | **ACCEPTED RISK**: No enforcement between 50% and 70%. Hard block at 70% provides the safety net. |
+| **jq dependency** | Guardian now uses jq (was python3). If jq missing, all JSON parsing fails silently, guardian exits 0 (allows everything). | **FIXED 2026-03-11**: Replaced python3 with jq, consistent with all other scripts. jq is validated by recovery-health.sh. |
+
+### Cross-Feature Integration Points (003 Recovery)
+
+| Path | Description | Resolution |
+|---|---|---|
+| **Watcher SIGHUP protection** | recovery-detect.sh spawns watcher with nohup/disown, preventing premature death if parent shell exits. | **FIXED 2026-03-11**: `nohup ... </dev/null >/dev/null 2>&1 & disown`. |
+| **Startup event coverage** | recovery-loader.sh now fires on ALL SessionStart events (via `.*` matcher), not just `clear`. Allows recovery preamble injection on fresh `claude` invocations. | **FIXED 2026-03-11**: Added `.*` catch-all matcher + compact event guard in recovery-loader.sh. |
+| **Loader compact guard** | recovery-loader.sh skips compact events (recovery-detect.sh handles those). Prevents double-injection of conflicting context. | **FIXED 2026-03-11**: `if SOURCE == "compact" then exit 0`. |
+| **Watcher /clear race with user input** | If user is typing when watcher sends `/clear` via tmux send-keys, keystrokes interleave. 002 poller has banner protection; 003 watcher does not. | **ACCEPTED RISK**: 003 watcher polls for idle state before sending /clear. Interleaving is unlikely but possible. |
+
 ## Verified Path Count
 
 - **Happy paths:** 2 (tmux zero-touch, non-tmux one-step)
-- **Unhappy logic branches:** 15 (jq x2, fast-path, not-carryover, recovery-active-detect, recovery-active-compact FR-033, no-tmux, capture-fail, timeout, race/user-typed-first, wrong-branch, no-file, empty-file, oversize, double-/clear FR-032, banner before /clear)
+- **Unhappy logic branches:** 19 (original 15 + session-scoped file miss, stale Layer 1 fallback, guardian soft-warn ignore, compact guard skip)
 - **Crash recovery paths:** 12 (see matrix above, added banner crash point)
-- **Total distinct terminal states:** 17
+- **Total distinct terminal states:** 21
 - **Self-healing:** 5 scenarios (added double-/clear detection)
 - **Warns:** 6 scenarios
 - **Blocks:** 2 scenarios (both: install jq)
 - **Silent failures:** 3 scenarios (all accepted risks with mitigations)
+- **Accepted risks:** 3 scenarios (polling gap, soft-warn gap, watcher input race)

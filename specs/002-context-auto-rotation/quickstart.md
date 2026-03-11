@@ -116,8 +116,8 @@ echo "Exit: $?"
 echo '{"source":"clear","session_id":"test"}' | ~/bin/carryover-loader.sh
 echo "Exit: $?"
 
-# Check log file was created
-cat .claude/recovery-logs/hooks.log
+# Check per-invocation log files were created
+ls -lt .claude/recovery-logs/carryover-*.log 2>/dev/null || echo "No logs yet (expected on first run)"
 ```
 
 ## Step 5: End-to-end smoke test
@@ -138,10 +138,10 @@ cat .claude/recovery-logs/hooks.log
 
 | Symptom | Check | Fix |
 |---------|-------|-----|
-| Hook never fires | `cat .claude/recovery-logs/hooks.log` | Verify settings.json syntax, script permissions |
+| Hook never fires | `ls .claude/recovery-logs/carryover-detect.*.log` | Verify settings.json syntax, script permissions |
 | "jq not found" | `which jq` | `brew install jq` / `apt install jq` |
 | "hook-common.sh not found" | `ls -la ~/bin/hook-common.sh` | Re-run symlink setup |
 | Poller not spawning | `echo $TMUX` (should be non-empty in tmux) | Run inside tmux session |
 | Wrong pane targeted | `echo $TMUX_PANE` | Verify pane ID matches Claude Code pane |
 | Carryover not loaded | `git branch --show-current` → check `specs/<branch>/` exists | Switch to feature branch |
-| Double-/clear warning | Check `.claude/recovery-logs/hooks.log` for "double-/clear detected" | Normal — FR-032 guard working |
+| Double-/clear warning | `ls .claude/recovery-logs/carryover-loader.*.log` then check for "double-/clear detected" | Normal — FR-032 guard working |
