@@ -289,14 +289,77 @@ These paths exist in the currently deployed context-guardian.sh (PreToolUse hook
 | **Loader compact guard** | recovery-loader.sh skips compact events (recovery-detect.sh handles those). Prevents double-injection of conflicting context. | **FIXED 2026-03-11**: `if SOURCE == "compact" then exit 0`. |
 | **Watcher /clear race with user input** | If user is typing when watcher sends `/clear` via tmux send-keys, keystrokes interleave. 002 poller has banner protection; 003 watcher does not. | **ACCEPTED RISK**: 003 watcher polls for idle state before sending /clear. Interleaving is unlikely but possible. |
 
+## Integration Audit — 2026-03-11 (Round 2)
+
+Second-pass integration testing with dry-run validation of all deployed scripts. Focused on end-to-end flow verification, edge cases, and ground-truth reconciliation.
+
+### Implementation Status
+
+| Component | Status | Notes |
+|---|---|---|
+| **context-guardian.sh** (PreToolUse) | DEPLOYED | Blocks at 70%, warns at 50%, carryover write exception |
+| **context-monitor.sh** (statusLine) | DEPLOYED | Writes context % to temp file every ~5s |
+| **recovery-precompact.sh** (PreCompact) | DEPLOYED | Captures interrupted task before compaction |
+| **recovery-detect.sh** (SessionStart compact) | DEPLOYED | Injects HALT instructions, spawns watcher |
+| **recovery-loader.sh** (SessionStart clear/.*) | DEPLOYED | Loads 003 recovery context after /clear |
+| **recovery-watcher.sh** (background) | DEPLOYED | Sends /clear after audit sentinel appears |
+| **recovery-common.sh** + **hook-common.sh** | DEPLOYED | Shared libraries for all hooks |
+| **carryover-detect.sh** (PostToolUse) | NOT IMPLEMENTED | 002 tasks T005 — auto-detect CARRYOVER writes |
+| **carryover-poller.sh** (background) | NOT IMPLEMENTED | 002 tasks T006 — idle detection + auto-/clear |
+| **carryover-loader.sh** (SessionStart) | NOT IMPLEMENTED | 002 tasks T007a/T007b — load CARRYOVER files into fresh session |
+
+### New Blind Spots Found (Round 2)
+
+| ID | Path | Description | Resolution |
+|---|---|---|---|
+| **BS-R2-01** | session_id path mismatch | `context-monitor.sh` reads `.session.session_id` (nested) but Claude Code statusLine JSON provides `session_id` at top level. Session-scoped temp file never created; all sessions share unsession-scoped `/tmp/claude-context-usage`. | **BUG — FIX NEEDED**: Change jq path from `.session.session_id` to `.session_id` in context-monitor.sh. Also update `.session.session_id` fallback for backwards compatibility. |
+| **BS-R2-02** | No carryover auto-loading | After guardian blocks at 70% and model writes CARRYOVER file, no hook loads that file after /clear. 002 carryover-loader.sh (T005-T009) not implemented. recovery-loader.sh only handles 003 recovery markers. | **GAP — 002 NOT YET IMPLEMENTED**: Carryover files persist on disk but are not automatically injected. User must manually instruct model to read the file. |
+| **BS-R2-03** | Loader fires on "resume" events | `.*` SessionStart matcher fires recovery-loader.sh on session resume. If stale recovery marker exists, injects recovery context into a resumed session that already has its own context. | **BUG — FIX NEEDED**: Add `if [[ "${SOURCE:-}" == "resume" ]]; then exit 0; fi` guard in recovery-loader.sh, analogous to the compact guard. |
+| **BS-R2-04** | TMUX_PANE inheritance uncertainty | recovery-detect.sh spawns recovery-watcher.sh which requires `$TMUX_PANE`. Claude Code's hook environment may not inherit this variable. $TMUX_PANE is present in Bash tool environment but hook env is untested. | **UNVERIFIED**: Cannot test without triggering actual compaction. If TMUX_PANE is missing, watcher fails with error log and exits. Non-fatal — user can manually /clear. |
+| **BS-R2-05** | Text generation without tools | Guardian only blocks tool calls. Model can continue generating text responses at 70%+, consuming context tokens toward compaction. Guardian has no mechanism to halt text-only output. | **ACCEPTED RISK**: Model is instructed via denial reason to stop all work. Text-only generation is lower token consumption than tool calls. 003 recovery system is the safety net. |
+| **BS-R2-06** | Watcher idle detection fragility | recovery-watcher.sh uses `grep -qE '(^> \|^\$ \|^❯ \|claude\|Claude)'` — matches "Claude" anywhere in last tmux line, causing false positives. The 002 spec's 3-line separator pattern is more robust but not used in 003's watcher. | **ACCEPTED RISK**: False positive causes premature /clear send, which is benign (triggers loader). False negative causes timeout (60s) then exits — user must manually /clear. |
+| **BS-R2-07** | Guardian malformed JSON fail-open | When guardian receives malformed JSON on stdin, jq fails silently, TOOL_NAME becomes empty, guardian exits 0 (allows tool). Fail-open behavior. | **ACCEPTED RISK**: Hook system should always send valid JSON. Fail-open is preferred over fail-closed (which would block all tools). |
+| **BS-R2-08** | Double-hook dedup uncertainty | Both "clear" and `.*` matchers fire recovery-loader.sh on /clear. Claude Code deduplicates identical commands, but behavior unverified. If not deduped, second invocation finds no marker (consumed by first) and exits 0. | **ACCEPTED RISK**: Benign worst case — second invocation is a no-op. Both entries have identical command and timeout (30s). |
+
+### Dry-Run Test Results Summary
+
+| Test | Input | Expected | Actual | Status |
+|---|---|---|---|---|
+| Guardian: low context (Read tool) | 29% context, Read tool | Silent allow | exit 0 | PASS |
+| Guardian: carryover Write | Write to CARRYOVER file | Allow (exception) | exit 0 | PASS |
+| Guardian: 75% deny | 75% context, Bash tool | Deny | permissionDecision: deny | PASS |
+| Guardian: 55% warn | 55% context, Bash tool | Allow with warning | permissionDecision: allow + warning | PASS |
+| Guardian: 75% + carryover Write | 75% context, Write CARRYOVER | Allow (exception overrides) | exit 0 | PASS |
+| Guardian: stale context file | 80% but file >30s old | Fall through to Layer 2 | exit 0 (no JSONL) | PASS |
+| Guardian: empty session_id | 60%, unsession-scoped fallback | Warn via fallback | permissionDecision: allow + warning | PASS |
+| Guardian: malformed JSON | Invalid stdin | Fail-open allow | exit 0 | PASS |
+| Guardian: boundary 70% | Exactly 70% | Deny | deny | PASS |
+| Guardian: boundary 69% | Exactly 69% | Allow with warning | allow | PASS |
+| Guardian: Edit to CARRYOVER | Edit (not Write) to CARRYOVER | Allow | exit 0 | PASS |
+| Guardian: case-insensitive match | Write to lowercase carryover | Allow | exit 0 | PASS |
+| Monitor: writes context % | 42% with session_id | Write session-scoped file | CTX 42% + file created | PASS |
+| Monitor: no session_id | Missing session field | Write unsession-scoped file | CTX 42% + fallback file | PASS |
+| PreCompact: dry-run | Valid JSON + --dry-run | Log stages, no writes | All stages logged | PASS |
+| PreCompact: malformed JSON | Invalid stdin | Graceful error exit | exit 1 with error log | PASS |
+| Detect: dry-run (no marker) | compact event, no existing marker | Create marker + inject HALT | HALT context injected | PASS |
+| Detect: re-entrant (same session) | compact event, same session marker | Skip creation, still inject | Skipped + HALT injected | PASS |
+| Loader: no marker (normal /clear) | clear event, no marker | Silent exit | exit 0 | PASS |
+| Loader: with marker | clear event, valid marker | Inject recovery context | Recovery context injected | PASS |
+| Loader: compact guard | compact event | Skip entirely | exit 0 | PASS |
+| Loader: startup event | startup, no marker | Silent exit | exit 0 | PASS |
+| Loader: resume event + stale marker | resume, old marker present | **Should skip** | **Injects stale context** | **FAIL (BS-R2-03)** |
+| Health check | All scripts + hooks | 14/14 pass | 14/14 pass | PASS |
+
 ## Verified Path Count
 
 - **Happy paths:** 2 (tmux zero-touch, non-tmux one-step)
-- **Unhappy logic branches:** 19 (original 15 + session-scoped file miss, stale Layer 1 fallback, guardian soft-warn ignore, compact guard skip)
+- **Unhappy logic branches:** 23 (previous 19 + session_id path fallback, resume event injection, text-only generation gap, double-hook dedup)
 - **Crash recovery paths:** 12 (see matrix above, added banner crash point)
-- **Total distinct terminal states:** 21
+- **Total distinct terminal states:** 25
 - **Self-healing:** 5 scenarios (added double-/clear detection)
 - **Warns:** 6 scenarios
 - **Blocks:** 2 scenarios (both: install jq)
 - **Silent failures:** 3 scenarios (all accepted risks with mitigations)
-- **Accepted risks:** 3 scenarios (polling gap, soft-warn gap, watcher input race)
+- **Accepted risks:** 7 scenarios (previous 3 + text generation, watcher idle, malformed JSON, double-hook)
+- **Bugs requiring fix:** 2 (session_id path BS-R2-01, resume guard BS-R2-03)
+- **Implementation gaps:** 1 (carryover auto-loading BS-R2-02, blocked on 002 tasks T005-T009)

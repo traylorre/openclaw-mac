@@ -33,3 +33,8 @@ local_audit_results.txt
 .claude/recovery-audit-complete
 .claude/recovery-logs/
 
+# Carryover runtime artifacts (002-context-auto-rotation)
+.claude/carryover-pending
+.claude/carryover-pending.claimed
+.claude/carryover-clear-needed
+
