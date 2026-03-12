@@ -37,4 +37,6 @@ local_audit_results.txt
 .claude/carryover-pending
 .claude/carryover-pending.claimed
 .claude/carryover-clear-needed
+.claude/sessionstart-canary.last
+*.loaded
 
