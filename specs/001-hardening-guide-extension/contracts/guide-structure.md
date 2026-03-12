@@ -145,11 +145,11 @@ and CIS Benchmark pattern):
 
 #### Verification
 
-```bash
+~~~bash
 # Command to verify this control is active
 command_here
 # Expected output: [what PASS looks like]
-```
+~~~
 
 #### Edge Cases and Warnings
 

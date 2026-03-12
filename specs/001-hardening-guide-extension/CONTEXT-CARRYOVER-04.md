@@ -55,7 +55,8 @@ must patch these before running `/speckit.tasks`.
 
 ### CRITICAL
 
-**BS-01: WSL2 dev environment vs macOS target**
+#### BS-01: WSL2 dev environment vs macOS target
+
 - Dev is on WSL2; audit script uses macOS-only commands
 - RESOLUTION: User has a fresh Sonoma MacBook (freshly wiped, nothing installed)
 - MacBook is the perfect US-1 test environment
@@ -64,7 +65,8 @@ must patch these before running `/speckit.tasks`.
 
 ### HIGH
 
-**BS-02: HARDENING.md as single ~5,000-line file**
+#### BS-02: HARDENING.md as single ~5,000-line file
+
 - Spec itself had to be split at 3,100 lines for context limits
 - Guide will be bigger than the spec
 - NEEDED: Multi-PR delivery strategy; consider splitting guide or implementing section-by-section
@@ -72,59 +74,71 @@ must patch these before running `/speckit.tasks`.
 
 ### MEDIUM
 
-**BS-03: Missing deliverable — entrypoint wrapper script**
+#### BS-03: Missing deliverable — entrypoint wrapper script
+
 - Research R-001 says docker-compose needs entrypoint wrapper for N8N_ENCRYPTION_KEY
 - `scripts/templates/n8n-entrypoint.sh` not in project structure
 - PATCH: Add to plan.md project structure
 
-**BS-04: Docker Compose `secrets:` requires file source, not Swarm**
+#### BS-04: Docker Compose `secrets:` requires file source, not Swarm
+
 - Standalone `docker compose` (Colima) only supports `file:` source secrets
 - Swarm-mode `external: true` won't work
 - PATCH: Add research note R-012; ensure compose template uses `file:` source
 
-**BS-05: iptables persistence inside Colima VM**
+#### BS-05: iptables persistence inside Colima VM
+
 - iptables rules don't survive `colima stop/start` or `colima delete`
 - No Colima mechanism to inject rules at VM boot
 - PATCH: Add research note R-013; document persistence strategy (Lima config override or provisioning script)
 
-**BS-06: `set -euo pipefail` vs failing check commands**
+#### BS-06: `set -euo pipefail` vs failing check commands
+
 - Constitution mandates strict bash; but check commands intentionally fail
 - PATCH: Add design decision to audit contract — check functions use subshell trap pattern
 
 ### LOW-MEDIUM
 
-**BS-08: No FR → guide section mapping**
+#### BS-08: No FR → guide section mapping
+
 - 90 FRs across 4 modules, ~45 guide subsections, no allocation table
 - PATCH: Create FR → §X.Y mapping table (can be in plan.md or separate file)
 
 ### LOW
 
-**BS-07: Guide §3.3 title says "pf + LuLu" — misleading for containerized path**
+#### BS-07: Guide §3.3 title says "pf + LuLu" — misleading for containerized path
+
 - PATCH: Rename to "§3.3 Outbound Filtering" (discuss tools within by path)
 
-**BS-09: Audit script SKIP status missing from contract**
+#### BS-09: Audit script SKIP status missing from contract
+
 - Spec says SKIP when lacking admin privileges; contract only has PASS/FAIL/WARN
 - PATCH: Add SKIP to audit contract output format and JSON schema
 
-**BS-10: SONOMA-HARDENING.md left dangling**
+#### BS-10: SONOMA-HARDENING.md left dangling
+
 - New guide covers Sonoma; old addendum becomes dead content
 - PATCH: Add deprecation note or redirect to plan
 
-**BS-11: n8n version targeting undefined**
+#### BS-11: n8n version targeting undefined
+
 - Major v1.x vs v2.0 differences; plan doesn't state minimum version
 - PATCH: Add minimum n8n version (v2.0+) to plan technical context
 
-**BS-12: Constitution Article V tension with educational FRs**
+#### BS-12: Constitution Article V tension with educational FRs
+
 - FR-083, FR-087, FR-044 say "Verification: not automated — educational"
 - Article V says unverifiable = no control
 - PATCH: Acknowledge in constitution check as known exceptions
 
-**BS-13: Notification setup assumes SMTP relay access**
+#### BS-13: Notification setup assumes SMTP relay access
+
 - msmtp needs SMTP relay (Gmail app passwords, SendGrid, etc.)
 - Not a simple config step; has its own security implications
 - PATCH: Note in plan as dependency
 
-**BS-14: Data model Credential relationship wrong**
+#### BS-14: Data model Credential relationship wrong
+
 - Says `Credential 1──1 Deployment Path` but most credentials exist in both paths
 - Entity already has per-path storage fields, contradicting the relationship
 - PATCH: Change to `Credential *──* Deployment Path` or note per-path storage
@@ -141,6 +155,7 @@ User has a fresh Sonoma MacBook. Recommended approach:
 6. Clone repo on Mac only when needed for audit script testing
 
 This approach means:
+
 - Each PR adds one guide section (manageable diff, reviewable)
 - Each section is validated on real hardware before merging
 - Context window is never overwhelmed (one section at a time)

@@ -33,8 +33,6 @@
 
 **Independent Test**: Read the threat model section and verify it names the specific platform (Mac Mini), workload (n8n + Apify), assets (credentials, PII, system integrity), and adversaries per FR-001
 
-### Implementation
-
 - [ ] T005 [US1] Write guide preamble in `docs/HARDENING.md`: purpose and scope, how to use this guide, deployment path decision tree (containerized vs bare-metal), cross-reference notation conventions (`SS X.Y`, `CHK-*`)
 - [ ] T006 [US1] Write SS1 Threat Model in `docs/HARDENING.md`: platform description (Mac Mini + n8n + Apify + LinkedIn lead gen), assets to protect, adversary profiles, attack surface map, scope exclusions per FR-001
 - [ ] T007 [US1] Write prioritized quick-start checklist in `docs/HARDENING.md` preamble: Immediate/Follow-up/Ongoing tiers with ordering constraints (SSH key before disabling password auth, Screen Sharing before disabling other remote access, FileVault authrestart before enabling FileVault, n8n auth before binding to network) and lockout warnings per FR-009
@@ -48,8 +46,6 @@
 **Goal**: Harden the macOS operating system foundation (FileVault, firewall, SIP, Gatekeeper, screen lock, guest/sharing, lockdown mode, recovery mode)
 
 **Independent Test**: Follow SS2 on a fresh Sonoma MacBook and verify FileVault enabled, firewall on + stealth mode, SIP verified, guest disabled, auto-login off, sharing services disabled
-
-### Implementation
 
 - [ ] T008 [P] [US1] Write SS2.1 FileVault, SS2.2 Firewall, SS2.3 SIP in `docs/HARDENING.md` -- each with threat justification, canonical source citation, copy-pasteable CLI commands, verification command, and edge cases (FileVault `fdesetup authrestart` for headless reboot)
 - [ ] T009 [P] [US1] Write SS2.4 Gatekeeper/XProtect, SS2.5 Software Updates in `docs/HARDENING.md` -- Tahoe vs Sonoma differences per research.md R-010, XProtect signature freshness check
@@ -67,8 +63,6 @@
 
 **Independent Test**: Follow SS3 on MacBook. Verify SSH key auth only, encrypted DNS via Quad9, Bluetooth hardened, no unexpected listeners via `lsof -iTCP -sTCP:LISTEN`
 
-### Implementation
-
 - [ ] T013 [P] [US1] Write SS3.1 SSH Hardening, SS3.2 DNS Security in `docs/HARDENING.md` -- SSH lockout warning BEFORE disabling password auth (ordering dependency from FR-009), DoH/DoT via Quad9, DNS query logging for exfiltration detection per SC-038
 - [ ] T014 [P] [US1] Write SS3.3 Outbound Filtering in `docs/HARDENING.md` -- separate approaches by deployment path: macOS pf rules for bare-metal, iptables inside Colima VM for containerized per research.md R-008/R-013; LuLu for host-level; Little Snitch `[PAID]` ~$59 comparison; Lima provisioning script for iptables persistence
 - [ ] T015 [P] [US1] Write SS3.4 Bluetooth, SS3.5 IPv6, SS3.6 Service Binding and Port Exposure in `docs/HARDENING.md` -- Bluetooth "keep on but harden" path for keyboard/mouse, IPv6 disable or dual-stack pf rules, listening service baseline creation per SC-037
@@ -83,8 +77,6 @@
 **Goal**: Deploy n8n in a hardened Docker container via Colima with security annotations, Docker secrets, and localhost-only binding
 
 **Independent Test**: Run `colima start && docker compose up` using the reference compose file. From inside the container, verify host filesystem not accessible, host network services not reachable, credentials provided via Docker secrets (not env vars visible in `docker inspect`)
-
-### Implementation
 
 - [ ] T017 [US5] Write SS4.1 Colima Setup, SS4.2 Docker Security Principles in `docs/HARDENING.md` -- Colima install via Homebrew, minimal security defaults per research.md R-007, VM security, Docker socket never mounted per SC-017
 - [ ] T018 [US5] Create `scripts/templates/docker-compose.yml` with security annotations per SC-027: non-root user, `read_only: true`, `cap_drop: ALL`, `security_opt: no-new-privileges`, localhost-only port mapping (`127.0.0.1:5678:5678`), Docker secrets via `file:` source per research.md R-012, named volumes for persistence, no Docker socket mount
@@ -102,8 +94,6 @@
 
 **Independent Test**: Default n8n install hardened per SS5. Verify n8n bound to 127.0.0.1, auth enabled with TOTP 2FA, encryption key secured, API disabled or authenticated, dangerous nodes blocked via NODES_EXCLUDE
 
-### Implementation
-
 - [ ] T022 [P] [US4] Write SS5.1 Binding and Authentication, SS5.2 User Management in `docs/HARDENING.md` -- N8N_HOST=127.0.0.1, auth enable, native TOTP 2FA per research.md R-002, multi-user caveats (no workflow-level isolation between users)
 - [ ] T023 [P] [US4] Write SS5.3 Security Environment Variables, SS5.4 REST API Security in `docs/HARDENING.md` -- comprehensive env var reference per SC-028 with corrected names: `N8N_PUBLIC_API_DISABLED=true` (not ENABLED), `EXECUTIONS_PROCESS` removed in v2.0, `N8N_BLOCK_ENV_ACCESS_IN_NODE` defaults true per research.md R-003; API disable or auth per SC-020
 - [ ] T024 [P] [US4] Write SS5.5 Webhook Security, SS5.6 Execution Model and Node Isolation in `docs/HARDENING.md` -- webhook auth methods (None/Basic/Header/JWT) per research.md R-005, Apify URL tokens (no HMAC) per research.md R-009, NODES_EXCLUDE per research.md R-004, Code node env access attack chain, n8n process isolation limitations
@@ -120,8 +110,6 @@
 
 **Independent Test**: Create `_n8n` service account, restrict permissions, run n8n via launchd. Verify n8n process cannot access operator's home directory, Keychain, or SSH keys per SC-015
 
-### Implementation
-
 - [ ] T027 [P] [US1] Write SS6.1 Dedicated Service Account, SS6.2 Keychain Integration in `docs/HARDENING.md` -- `sysadminctl -addUser _n8n` with no home directory shell, separate Keychain with explicit ACLs, headless Keychain prompt behavior
 - [ ] T028 [P] [US1] Write SS6.3 launchd Execution, SS6.4 Filesystem Permissions in `docs/HARDENING.md` -- launchd plist running n8n as `_n8n` user, restrictive directory permissions (700/600), temp file isolation, no command-line secrets per SC-043
 - [ ] T029 [US1] Add SS6 audit checks to `scripts/hardening-audit.sh`: CHK-SERVICE-ACCOUNT, CHK-SERVICE-HOME-PERMS, CHK-SERVICE-DATA-PERMS (3 bare-metal-only checks)
@@ -135,8 +123,6 @@
 **Goal**: Protect credentials, defend against injection from scraped LinkedIn data, secure PII, prevent SSRF and data exfiltration, harden supply chain
 
 **Independent Test**: Audit a test n8n workflow with scraped data flowing to a Code node. Verify injection patterns identified per SC-012 checklist. Confirm credential storage uses Docker secrets (containerized) or Keychain (bare-metal), not env vars visible in process listings
-
-### Implementation
 
 - [ ] T030 [P] [US7] Write SS7.1 Credential Management, SS7.2 Credential Lifecycle in `docs/HARDENING.md` -- credential inventory template (cross-ref Appendix B), per-path storage (Docker secrets vs Keychain), rotation schedule for all credential types per SC-019, credential reuse warning per SC-023
 - [ ] T031 [P] [US7] Write SS7.3 Scraped Data Input Security (Injection Defense) in `docs/HARDENING.md` -- concrete attack chain: scraped LinkedIn profile with shell metacharacters in job title flows to Code node via string interpolation = RCE; node type audit checklist (Code, Execute Command, LLM with tool-calling); safe patterns; monitoring for injection indicators per SC-012
@@ -155,8 +141,6 @@
 
 **Independent Test**: Install Santa, BlockBlock, LuLu per SS8. Create persistence and listener baselines. Verify tool comparisons include `[PAID]` tags with approximate costs and free alternatives per SC-005
 
-### Implementation
-
 - [ ] T036 [P] [US3] Write SS8.1 IDS Tools in `docs/HARDENING.md` -- Santa (`northpolesec/santa` per research.md R-006), BlockBlock, LuLu, KnockKnock (all Apple Silicon per research.md R-011); ClamAV (free) vs SentinelOne `[PAID]` ~$5/mo comparison per US-3; cross-ref tool comparison matrix in Appendix D
 - [ ] T037 [P] [US1] Write SS8.2 Launch Daemon Auditing, SS8.3 Workflow Integrity Monitoring in `docs/HARDENING.md` -- comprehensive persistence audit covering ALL types (launch daemons/agents, cron, login items, authorization plugins, shell profiles, periodic scripts, XPC services, config profiles) per SC-032; workflow baseline hashing per SC-021
 - [ ] T038 [P] [US1] Write SS8.4 macOS Logging, SS8.5 Credential Exposure Monitoring, SS8.6 iCloud and Cloud Service Exposure, SS8.7 Certificate Trust Monitoring in `docs/HARDENING.md` -- unified log predicates, DNS query logging and anomalous pattern detection per SC-038, iCloud services disable (except Find My Mac) per SC-034, certificate trust baseline per SC-040, log integrity (hash chain, permissions, external forwarding) per SC-039
@@ -171,8 +155,6 @@
 **Goal**: Provide actionable incident response runbook, credential rotation procedures, backup/recovery, restore testing, and physical security guidance
 
 **Independent Test**: Simulate a compromise (add unauthorized launch agent, modify an n8n workflow). Follow IR runbook. Verify containment, evidence preservation, and recovery to known-good state per SC-025
-
-### Implementation
 
 - [ ] T040 [P] [US9] Write SS9.1 Incident Response Runbook in `docs/HARDENING.md` -- triage steps for uncertain incidents, severity classification, containment (stop n8n + network isolation), evidence preservation (logs, filesystem snapshots), cross-reference to SS8 detection sources, breach notification obligations (GDPR/CCPA/LinkedIn ToS timelines) per SC-025
 - [ ] T041 [P] [US9] Write SS9.2 Credential Rotation Procedures in `docs/HARDENING.md` -- emergency rotation runbook: dependency-ordered rotation for every credential in inventory (N8N_ENCRYPTION_KEY must re-encrypt DB first), per-credential instructions (where to change, what breaks, how to verify), 2-hour completion target per SC-035
@@ -190,8 +172,6 @@
 
 **Independent Test**: Configure launchd audit job and notification per SS10. Deliberately disable firewall. Wait for scheduled audit. Verify FAIL notification received listing which checks failed and which guide sections to consult per US-8 acceptance scenarios
 
-### Implementation
-
 - [ ] T045 [US8] Write SS10.1 Automated Audit Scheduling in `docs/HARDENING.md` -- launchd plist configuration, `StartCalendarInterval` behavior during sleep (runs at next wake), timestamped log output, `launchctl load` instructions
 - [ ] T046 [US8] Create `scripts/launchd/com.openclaw.audit.plist` -- launchd plist template for scheduled weekly audit runs, configurable schedule, log output to timestamped file in audit log directory
 - [ ] T047 [US8] Write SS10.2 Notification Setup in `docs/HARDENING.md` -- msmtp for email alerts (SMTP relay dependency: Gmail app passwords, SendGrid, etc. per plan.md BS-13), macOS Notification Center fallback via `osascript`, FAIL-only active alerts (no WARN notifications) per alert fatigue prevention, local log fallback when email fails
@@ -208,8 +188,6 @@
 **Goal**: Complete audit script documentation, finalize all checks, and provide operator reference appendices
 
 **Independent Test**: Run `hardening-audit.sh` on unhardened MacBook. Verify it reports FAIL for every critical control, SKIP for missing tools, correct guide section references for remediation, and `--json` output matches schema per US-2 acceptance scenarios
-
-### Implementation
 
 - [ ] T051 [US2] Write SS11.1 Running the Audit Script, SS11.2 Check Reference Table, SS11.3 JSON Output Schema, SS11.4 Interpreting Results in `docs/HARDENING.md` -- document every CHK-* ID with severity, deployment path, description, and guide section reference; JSON schema per `contracts/audit-script-cli.md`; interpretation guidance (all-PASS does not mean uncompromised per SC-036)
 - [ ] T052 [US2] Finalize `scripts/hardening-audit.sh`: verify all checks from SS2-SS10 are wired up, JSON output validates against documented schema, `--section` filter correctly limits checks, exit codes correct (0=all pass, 1=any fail, 2=script error), audit script limitations disclosure per FR-065, validation guidance per FR-056

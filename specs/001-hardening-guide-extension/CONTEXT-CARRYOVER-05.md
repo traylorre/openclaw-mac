@@ -39,19 +39,22 @@ All 14 blind spots from CONTEXT-CARRYOVER-04.md have been applied:
 ### 2. Fixed Two 002 Context Auto-Rotation Bugs
 
 User reported three issues from previous session:
+
 1. `/clear` did not auto-fire despite running in tmux
 2. After manual `/clear`, context was not auto-loaded
 3. Had to manually specify next steps
 
 **Root causes found and fixed:**
 
-**Bug 1: Poller stale prompt detection (0s elapsed)**
+#### Bug 1: Poller stale prompt detection (0s elapsed)
+
 - The poller spawns BEFORE `continue:false` is output by detect hook
 - First `tmux capture-pane` matches stale prompt from previous interaction
 - `/clear` sent prematurely while model still processing the stop
 - **Fix:** Added `sleep 3` before poll loop in `~/dotfiles/scripts/bin/carryover-poller.sh`
 
-**Bug 2: Loader uses branch-derived spec dir, misses SPECIFY_FEATURE override**
+#### Bug 2: Loader uses branch-derived spec dir, misses SPECIFY_FEATURE override
+
 - Loader derives `specs/002-context-auto-rotation/` from branch name
 - CARRYOVER was written to `specs/001-hardening-guide-extension/` (via SPECIFY_FEATURE)
 - Loader never finds the carryover file
@@ -64,6 +67,7 @@ User reported three issues from previous session:
 User requested: "deep dive and cross-reference spec vs plan for gaps and over-engineering"
 
 **What was read before guardian blocked:**
+
 - spec.md: FULL (1399 lines) — all user stories, edge cases, meta-FRs, FR index, key entities, success criteria, assumptions
 - spec-n8n-platform.md: FULL (393 lines) — FR-011, FR-038, FR-039, FR-044, FR-054, FR-055, FR-059, FR-064, FR-066, FR-067
 - spec-data-security.md: FULL (653 lines) — FR-012, FR-013, FR-021, FR-040, FR-043, FR-047, FR-049, FR-057, FR-060, FR-071, FR-083, FR-087, FR-090
@@ -71,10 +75,12 @@ User requested: "deep dive and cross-reference spec vs plan for gaps and over-en
 - spec-audit-ops.md: NOT READ
 
 **What was NOT read:**
+
 - spec-macos-platform.md lines 200+: FR-035, FR-036, FR-041, FR-042, FR-048, FR-050-053, FR-058, FR-061-062, FR-068-070, FR-073, FR-076, FR-079-080, FR-082, FR-084-086, FR-089
 - spec-audit-ops.md: ALL FRs — FR-007, FR-018, FR-020, FR-022-027, FR-031, FR-037, FR-045-046, FR-056, FR-063, FR-065, FR-072, FR-074-075, FR-077-078, FR-081, FR-088
 
 **All plan artifacts were already read in full:**
+
 - plan.md (with all BS patches applied)
 - research.md (with R-012, R-013 added)
 - data-model.md (with BS-14 fix)
@@ -114,6 +120,7 @@ The spec is extremely thorough — 90 FRs, 43 success criteria, 9 user stories, 
 ## Git Status (uncommitted)
 
 Modified in openclaw-mac:
+
 - `CLAUDE.md` (minor)
 - `specs/001-hardening-guide-extension/plan.md` (BS patches)
 - `specs/001-hardening-guide-extension/research.md` (R-012, R-013)
@@ -124,6 +131,7 @@ Modified in openclaw-mac:
 - New: `specs/001-hardening-guide-extension/CONTEXT-CARRYOVER-05.md` (this file)
 
 Modified in ~/dotfiles/scripts/bin/:
+
 - `carryover-detect.sh` (bug fix)
 - `carryover-poller.sh` (bug fix)
 - `carryover-loader.sh` (bug fix)

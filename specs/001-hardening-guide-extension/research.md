@@ -152,7 +152,7 @@ supported on Apple Silicon. No compatibility issues found.
 **Impact on guide**: Update all Santa references to use `northpolesec/santa`
 as the canonical source. The `google/santa` repo is archived.
 
-**Sources**: https://github.com/northpolesec/santa, https://santa.dev/
+**Sources**: <https://github.com/northpolesec/santa>, <https://santa.dev/>
 
 ---
 
@@ -349,8 +349,8 @@ provision:
       iptables -A OUTPUT -j DROP
 ```
 
-3. Document that `colima delete` destroys the config — backup strategy needed
-4. Note that `colima template` can set defaults for new profiles
+1. Document that `colima delete` destroys the config — backup strategy needed
+1. Note that `colima template` can set defaults for new profiles
 
 **Alternatives considered**:
 
