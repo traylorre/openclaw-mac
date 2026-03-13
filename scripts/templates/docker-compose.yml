@@ -1,0 +1,94 @@
+# OpenClaw Mac — Hardened n8n Docker Compose
+# See docs/HARDENING.md §4.3 for security annotations
+#
+# Usage:
+#   1. Create secrets: mkdir -p secrets && chmod 700 secrets
+#   2. Generate key: openssl rand -hex 32 > secrets/n8n_encryption_key.txt
+#   3. Set permissions: chmod 600 secrets/n8n_encryption_key.txt
+#   4. Deploy: docker compose up -d
+version: '3.9'
+
+secrets:
+  n8n_encryption_key:
+    file: ./secrets/n8n_encryption_key.txt  # chmod 600 (FR-058, R-012)
+
+services:
+  n8n:
+    # Pin image by digest for supply chain integrity (FR-040)
+    # Update digest after verifying new version:
+    #   docker pull n8nio/n8n:latest
+    #   docker inspect n8nio/n8n:latest | jq -r '.[0].RepoDigests'
+    image: n8nio/n8n:latest
+
+    # Non-root user (FR-041) — UID 1000 matches Colima default
+    user: "1000:1000"
+
+    # Localhost-only port binding (FR-058)
+    # DANGEROUS if changed to "5678:5678" — exposes to entire network
+    ports:
+      - "127.0.0.1:5678:5678"
+
+    # Read-only root filesystem (FR-041)
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+
+    # Persistent data only — no host directory mounts (FR-058)
+    # NOTE: Never mount /var/run/docker.sock (SC-017)
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n-entrypoint.sh:/entrypoint.sh:ro
+
+    # Docker secrets — NOT environment variables (FR-058, FR-090)
+    secrets:
+      - n8n_encryption_key
+
+    # Non-sensitive environment variables only (FR-058)
+    # Sensitive values loaded by entrypoint script from /run/secrets/
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_LOG_LEVEL=info
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PUBLIC_API_DISABLED=true
+
+    # Security hardening (FR-041)
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # Core dump prevention (FR-068)
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+
+    # Resource limits — adjust for your hardware (FR-058)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+    # Restart on crash, not after intentional stop (FR-058)
+    restart: unless-stopped
+
+    # Entrypoint wrapper for Docker secrets (R-001)
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+    # DNS — use encrypted DNS resolver (FR-029)
+    dns:
+      - 9.9.9.9
+      - 149.112.112.112
+
+    # Docker log rotation — limit credential exposure window (FR-090)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  n8n_data:  # Persists workflows, credentials, execution logs

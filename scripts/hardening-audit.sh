@@ -499,6 +499,134 @@ check_spotlight() {
     fi
 }
 
+# --- §4 Container Isolation Checks (T024) ---
+
+check_container_root() {
+    local id="CHK-CONTAINER-ROOT"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local user
+    user=$(docker inspect "$container_id" --format '{{.Config.User}}' 2>/dev/null) || true
+    if [[ -n "$user" && "$user" != "0" && "$user" != "root" ]]; then
+        report_result "$id" "Container Security" "Container runs as non-root (${user})" "PASS" "4.3"
+    else
+        report_result "$id" "Container Security" "Container runs as root" "FAIL" "4.3" \
+            "Set user: '1000:1000' in docker-compose.yml"
+    fi
+}
+
+check_container_readonly() {
+    local id="CHK-CONTAINER-READONLY"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local readonly_fs
+    readonly_fs=$(docker inspect "$container_id" --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null) || true
+    if [[ "$readonly_fs" == "true" ]]; then
+        report_result "$id" "Container Security" "Container filesystem is read-only" "PASS" "4.3"
+    else
+        report_result "$id" "Container Security" "Container filesystem is writable" "WARN" "4.3" \
+            "Set read_only: true in docker-compose.yml with tmpfs for write paths"
+    fi
+}
+
+check_container_caps() {
+    local id="CHK-CONTAINER-CAPS"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local cap_drop
+    cap_drop=$(docker inspect "$container_id" --format '{{.HostConfig.CapDrop}}' 2>/dev/null) || true
+    if echo "$cap_drop" | grep -qi "all"; then
+        report_result "$id" "Container Security" "All capabilities dropped" "PASS" "4.3"
+    else
+        report_result "$id" "Container Security" "Capabilities not fully dropped" "WARN" "4.3" \
+            "Set cap_drop: [ALL] in docker-compose.yml"
+    fi
+}
+
+check_container_privileged() {
+    local id="CHK-CONTAINER-PRIVILEGED"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local privileged
+    privileged=$(docker inspect "$container_id" --format '{{.HostConfig.Privileged}}' 2>/dev/null) || true
+    if [[ "$privileged" == "false" ]]; then
+        report_result "$id" "Container Security" "Container is not privileged" "PASS" "4.3"
+    else
+        report_result "$id" "Container Security" "Container is running in privileged mode" "FAIL" "4.3" \
+            "Remove privileged: true from docker-compose.yml immediately"
+    fi
+}
+
+check_docker_socket() {
+    local id="CHK-DOCKER-SOCKET"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local mounts
+    mounts=$(docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
+    if echo "$mounts" | grep -q "docker.sock"; then
+        report_result "$id" "Container Security" "Docker socket is mounted — host escape possible" "FAIL" "4.3" \
+            "Remove /var/run/docker.sock volume mount immediately"
+    else
+        report_result "$id" "Container Security" "Docker socket is not mounted" "PASS" "4.3"
+    fi
+}
+
+check_secrets_env() {
+    local id="CHK-SECRETS-ENV"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local env_vars
+    env_vars=$(docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
+    if echo "$env_vars" | grep -qiE 'ENCRYPTION_KEY=|PASSWORD=|SECRET=|TOKEN=.*[a-zA-Z0-9]{8}|API_KEY='; then
+        report_result "$id" "Container Security" "Secrets found in container environment" "WARN" "4.3" \
+            "Use Docker secrets instead of environment variables — see §4.3"
+    else
+        report_result "$id" "Container Security" "No secrets in container environment" "PASS" "4.3"
+    fi
+}
+
+check_colima_mounts() {
+    local id="CHK-COLIMA-MOUNTS"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local mounts
+    mounts=$(docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
+    if echo "$mounts" | grep -qE '"/Users/|"/home/|"/root"'; then
+        report_result "$id" "Container Security" "Home directory mounted in container" "WARN" "4.3" \
+            "Remove home directory mount — use named volumes instead"
+    else
+        report_result "$id" "Container Security" "No home directory mounts" "PASS" "4.3"
+    fi
+}
+
 # --- §3 Network Security Checks (T019) ---
 
 check_ssh_key_only() {
@@ -743,8 +871,18 @@ main() {
     run_check check_ipv6
     run_check check_listeners_baseline
 
+    # §4 Container Isolation checks (T024) — containerized only
+    if [[ "$deployment" == "containerized" ]]; then
+        run_check check_container_root
+        run_check check_container_readonly
+        run_check check_container_caps
+        run_check check_container_privileged
+        run_check check_docker_socket
+        run_check check_secrets_env
+        run_check check_colima_mounts
+    fi
+
     # Additional check groups added by later tasks:
-    # T024: Container Isolation checks
     # T029: n8n Platform checks
     # T032: Bare-Metal checks
     # T038: Data Security checks
