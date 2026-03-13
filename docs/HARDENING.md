@@ -2868,6 +2868,7 @@ exec /usr/local/bin/n8n start
 ```
 
 > **WARNING**: The Keychain unlock password file (`/opt/n8n/.keychain-password`) must be:
+>
 > - Owned by `_n8n:_n8n` with permissions `400` (read-only by owner)
 > - NOT the same password as the macOS login or any other credential
 > - Backed up securely (§9.3) — if lost, you must recreate the Keychain and re-enter all credentials
