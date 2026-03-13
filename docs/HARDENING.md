@@ -261,43 +261,814 @@ This guide does **not** cover:
 
 ### 2.1 Disk Encryption (FileVault)
 
-<!-- Content: T009 -->
+**Threat**: Physical attacker or insider extracts credentials and PII from disk without authentication
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple Platform Security — FileVault](https://support.apple.com/guide/security/volume-encryption-with-filevault-sec4c6dc1b6e/web), [CIS Apple macOS Benchmark — 2.6.1](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+Without FileVault, anyone with physical access to the Mac Mini can boot from external media and read all files — n8n encryption keys, LinkedIn session tokens, Apify API keys, scraped PII, and SSH private keys. FileVault uses XTS-AES-128 encryption with a 256-bit key derived from your login password, making data unreadable without authentication.
+
+#### How to Harden
+
+**Check current status:**
+
+```bash
+sudo fdesetup status
+```
+
+**Enable FileVault:**
+
+```bash
+sudo fdesetup enable
+```
+
+Save the recovery key printed to the terminal in a secure, offline location (not on the Mac itself). The recovery key is the only way to unlock the disk if you forget your password.
+
+**Configure headless reboot (critical for servers):**
+
+Before enabling FileVault on a headless server, configure authenticated restart so the server can reboot unattended without someone typing the FileVault password at the physical console:
+
+```bash
+# Verify authrestart is supported
+sudo fdesetup supportsauthrestart
+
+# Perform an authenticated restart (caches unlock credentials for one reboot)
+sudo fdesetup authrestart
+```
+
+> **WARNING**: Without `fdesetup authrestart`, a FileVault-encrypted headless server will hang at the pre-boot login screen after every reboot, requiring physical console access. Always test `authrestart` before relying on remote reboots.
+
+**Verify swap encryption (automatic with FileVault):**
+
+```bash
+sysctl vm.swapusage
+# Swap files in /private/var/vm/ are encrypted when FileVault is active
+```
+
+#### Verification
+
+```bash
+# Expected: "FileVault is On."
+sudo fdesetup status
+
+# Confirm recovery key is escrowed (institutional) or saved
+sudo fdesetup haspersonalrecoverykey
+```
+
+#### Edge Cases and Warnings
+
+- **Recovery key loss**: If you lose both the login password and recovery key, data is unrecoverable. Store the recovery key in a separate physical location or Bitwarden vault.
+- **Performance**: Modern Apple Silicon and Intel Macs with T2 chip handle FileVault encryption in hardware — no measurable performance impact.
+- **Hibernation images**: The sleep image (`/private/var/vm/sleepimage`) contains a full RAM snapshot. FileVault encrypts it at rest, but see §2.10 for additional hibernation hardening.
+- **Time Machine backups**: FileVault does not encrypt Time Machine backups — configure backup encryption separately (§9.3).
+
+**Audit check**: `CHK-FILEVAULT` (FAIL) → §2.1
 
 ### 2.2 Firewall
 
-<!-- Content: T009 -->
+**Threat**: Network attacker discovers and exploits services listening on open ports
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple — Use the application firewall](https://support.apple.com/en-us/102445), [CIS Apple macOS Benchmark — 2.2.1](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+macOS ships with the application firewall disabled. Without it, any application can accept incoming connections — exposing n8n, debugging ports, and system services to the local network. Stealth mode makes the Mac Mini invisible to port scans by not responding to ICMP probes or closed-port connection attempts.
+
+#### How to Harden
+
+**Enable the application firewall:**
+
+```bash
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+```
+
+**Enable stealth mode:**
+
+```bash
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
+```
+
+**Enable logging:**
+
+```bash
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setloggingmode on
+```
+
+**Block all incoming connections (strictest — optional):**
+
+```bash
+# Only enable if you manage the server exclusively via SSH
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setblockall on
+```
+
+> **NOTE**: The application firewall controls incoming connections per application. For outbound filtering, see §3.3 (pf rules, LuLu, or Little Snitch).
+
+#### Verification
+
+```bash
+# Expected: "Firewall is enabled. (State = 1)"
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+
+# Expected: "Stealth mode enabled"
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode
+
+# List application-specific rules
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
+```
+
+#### Edge Cases and Warnings
+
+- **macOS updates can reset firewall state**: After macOS upgrades, verify the firewall is still enabled (§10.3 post-update checklist).
+- **Application-level vs packet-level**: The macOS application firewall operates at the application level. For packet-level filtering (IP/port rules), use `pf` (§3.3).
+- **Signed applications bypass**: By default, signed applications can receive incoming connections. Use `--setallowsigned off` for stricter control, but test first — this can break macOS services.
+
+**Audit checks**: `CHK-FIREWALL` (FAIL), `CHK-STEALTH` (WARN) → §2.2
 
 ### 2.3 System Integrity Protection (SIP)
 
-<!-- Content: T009 -->
+**Threat**: Malware or attacker with root access modifies protected system files, kernel extensions, or runtime protections
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple — About System Integrity Protection](https://support.apple.com/en-us/102149), [CIS Apple macOS Benchmark — 5.1.2](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+SIP prevents even the root user from modifying protected system directories (`/System`, `/usr` except `/usr/local`, `/sbin`, `/bin`), loading unsigned kernel extensions, and attaching to system processes. Without SIP, a compromised root account can install persistent rootkits, modify system binaries, and disable all other security controls. On Tahoe (macOS 26), SIP protects additional components behind the signed system volume.
+
+#### How to Harden
+
+SIP is enabled by default. Verify it has not been disabled:
+
+```bash
+csrutil status
+```
+
+If SIP is disabled, re-enable it:
+
+1. Restart the Mac and boot into Recovery Mode:
+   - **Apple Silicon**: Hold the power button until "Loading startup options" appears → Options → Startup Security Utility
+   - **Intel**: Hold Cmd+R during boot
+2. Open Terminal from the Utilities menu
+3. Run: `csrutil enable`
+4. Restart
+
+#### Verification
+
+```bash
+# Expected: "System Integrity Protection status: enabled."
+csrutil status
+```
+
+#### Edge Cases and Warnings
+
+- **Cannot enable/disable from normal boot**: SIP changes require Recovery Mode — this is by design.
+- **Tahoe vs Sonoma**: Tahoe (macOS 26) extends SIP to protect more system volume components. The same `csrutil status` command works on both versions.
+- **Some developer tools request SIP disable**: Never disable SIP on a production server. Developer workflows requiring SIP changes should use a separate development machine.
+- **Single User Mode**: Disabled by SIP on macOS Catalina and later. Unavailable on Apple Silicon.
+
+**Audit check**: `CHK-SIP` (FAIL) → §2.3
 
 ### 2.4 Gatekeeper and XProtect
 
-<!-- Content: T009 -->
+**Threat**: Supply-chain attacker distributes malicious or tampered applications that execute without verification
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple Platform Security — Gatekeeper and runtime protection](https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web), [CIS Apple macOS Benchmark — 2.6.4](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+Gatekeeper verifies that applications are signed by identified developers and notarized by Apple (scanned for malware) before allowing execution. XProtect provides signature-based malware detection on file open, while XProtect Remediator (Ventura and later) automatically removes known malware. Together, these form the first line of defense against trojanized tools — relevant because this deployment relies on Homebrew packages, Docker images, and npm modules.
+
+#### How to Harden
+
+**Verify Gatekeeper is enabled:**
+
+```bash
+spctl --status
+# Expected: "assessments enabled"
+```
+
+**Enable Gatekeeper if disabled:**
+
+```bash
+sudo spctl --master-enable
+```
+
+**Verify automatic security updates (includes XProtect signature updates):**
+
+```bash
+# Check if automatic checks are enabled
+defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled
+# Expected: 1
+
+# Check if XProtect/MRT updates install automatically
+defaults read /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall
+# Expected: 1
+```
+
+**Check XProtect signature freshness:**
+
+```bash
+# Find latest XProtect update date
+system_profiler SPInstallHistoryDataType 2>/dev/null | grep -A 2 "XProtect"
+```
+
+**macOS defense stack summary:**
+
+| Layer | Function | Update Method |
+|-------|----------|---------------|
+| **Gatekeeper** | Blocks unsigned/un-notarized apps | Built-in, always active |
+| **XProtect** | Signature-based malware scan on file open | Silent background updates |
+| **XProtect Remediator** | Automated known-malware removal (Ventura+) | Silent background updates |
+| **MRT** | Legacy malware removal (pre-Ventura) | Replaced by Remediator |
+| **Notarization** | Apple pre-scans apps for malware before distribution | Developer-side |
+
+#### Verification
+
+```bash
+# Gatekeeper status
+spctl --status
+
+# XProtect version (Sonoma/Tahoe)
+system_profiler SPInstallHistoryDataType 2>/dev/null | grep -A 5 "XProtect" | tail -6
+```
+
+#### Edge Cases and Warnings
+
+- **Homebrew tools**: Some Homebrew-installed CLI tools are not notarized. Gatekeeper may flag them as "damaged" or block execution. Use `xattr -d com.apple.quarantine /path/to/binary` on verified tools only — never blindly remove quarantine attributes.
+- **Tahoe vs Sonoma**: Tahoe (macOS 26) enforces stricter Gatekeeper runtime checks and flags apps "damaged" more aggressively. Verify Homebrew tools still work after upgrading.
+- **Notarization is not a guarantee**: Apple scans for known malware at notarization time. A clean notarization does not mean the app is safe — it means Apple didn't detect anything at submission time.
+- **XProtect is baseline only**: XProtect's signature database is much smaller than ClamAV. Install additional antivirus for broader coverage (§8.1).
+
+**Audit checks**: `CHK-GATEKEEPER` (FAIL), `CHK-XPROTECT-FRESH` (WARN) → §2.4
 
 ### 2.5 Software Updates
 
-<!-- Content: T009 -->
+**Threat**: Known vulnerabilities remain unpatched, allowing exploitation of publicly disclosed CVEs
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple — Keep your Mac up to date](https://support.apple.com/en-us/108382), [CIS Apple macOS Benchmark — 1.1](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+Delayed software updates leave known vulnerabilities exploitable. Apple releases Rapid Security Responses for critical issues between major updates. On a server running n8n with internet-facing webhooks and scraped PII, an unpatched kernel or framework vulnerability can lead to remote code execution or privilege escalation.
+
+#### How to Harden
+
+**Enable all automatic update categories:**
+
+```bash
+# Enable automatic checking
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true
+
+# Download updates automatically
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool true
+
+# Install macOS updates automatically
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool true
+
+# Install critical/security updates automatically (Rapid Security Responses)
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true
+
+# Install XProtect/MRT/config data updates automatically
+sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool true
+```
+
+**Check for pending updates manually:**
+
+```bash
+softwareupdate --list
+```
+
+**Install all available updates:**
+
+```bash
+sudo softwareupdate --install --all --restart
+```
+
+#### Verification
+
+```bash
+# Verify all auto-update settings
+defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled
+defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload
+defaults read /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall
+# All should return: 1
+
+# Check last successful update
+softwareupdate --history | head -5
+```
+
+#### Edge Cases and Warnings
+
+- **Reboot required**: Major macOS updates require a reboot. On a headless server with FileVault, use `fdesetup authrestart` (§2.1) to avoid hanging at the pre-boot screen.
+- **Post-update verification**: macOS updates can reset firewall settings, sharing services, and other security controls. Run the audit script after every update (§10.3).
+- **n8n downtime**: Plan update windows around workflow schedules. Stop n8n gracefully before restarting.
+- **NTP synchronization**: Verify time sync is active — accurate timestamps are essential for TLS certificate validation, log correlation, and credential expiry detection:
+
+```bash
+# Verify NTP is active
+systemsetup -getusingnetworktime
+# Expected: "Network Time: On"
+
+# Check time server
+systemsetup -getnetworktimeserver
+# Expected: "time.apple.com" (default, supports NTS on newer macOS)
+
+# Verify clock is not skewed
+sntp time.apple.com
+```
+
+**Audit checks**: `CHK-AUTO-UPDATES` (WARN), `CHK-NTP` (WARN) → §2.5
 
 ### 2.6 Screen Lock and Login Security
 
-<!-- Content: T009 -->
+**Threat**: Unattended Mac Mini accessed physically or via Screen Sharing without authentication; automatic login bypasses all user-level security controls
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmark — 2.10, 6.1.2](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+Automatic login and disabled screen lock let anyone with physical access or Screen Sharing reach the desktop without credentials — giving full access to n8n, Keychain, SSH keys, and scraped PII. On a headless server, these controls also prevent unauthorized remote sessions.
+
+#### How to Harden
+
+**Disable automatic login:**
+
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser -string ""
+sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || true
+```
+
+**Require password immediately after sleep/screen saver:**
+
+```bash
+# Require password immediately (0 seconds delay)
+defaults write com.apple.screensaver askForPassword -int 1
+defaults write com.apple.screensaver askForPasswordDelay -int 0
+```
+
+**Set screen saver to activate after 5 minutes of inactivity:**
+
+```bash
+defaults write com.apple.screensaver idleTime -int 300
+```
+
+**Configure login window to show name and password fields (not user list):**
+
+```bash
+# Don't reveal valid usernames at login screen
+sudo defaults write /Library/Preferences/com.apple.loginwindow SHOWFULLNAME -bool true
+```
+
+**Disable login window password hints:**
+
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow RetriesUntilHint -int 0
+```
+
+**Set display sleep on a headless server:**
+
+```bash
+# Display sleep after 5 minutes (saves power, triggers screen lock)
+sudo pmset -a displaysleep 5
+```
+
+**Multi-operator shared Mac Mini:** If multiple people manage the server, designate one as the security owner responsible for audit reviews. Create non-admin accounts for daily use; reserve the admin account for system changes only.
+
+#### Verification
+
+```bash
+# Verify auto-login is disabled (should return error or empty)
+defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>&1
+# Expected: error or empty string
+
+# Verify password required immediately
+defaults read com.apple.screensaver askForPassword
+# Expected: 1
+defaults read com.apple.screensaver askForPasswordDelay
+# Expected: 0
+
+# Verify login window shows name+password (not user list)
+sudo defaults read /Library/Preferences/com.apple.loginwindow SHOWFULLNAME
+# Expected: 1
+```
+
+#### Edge Cases and Warnings
+
+- **FileVault implies no auto-login**: When FileVault is enabled, macOS disables automatic login. This control is defense-in-depth.
+- **Headless servers**: Screen lock still matters — Screen Sharing sessions inherit the screen state. If the screen is unlocked, a Screen Sharing connection gets immediate access.
+- **Memory and swap security**: See §2.10 for hibernation mode, core dump, and swap encryption controls that protect credentials in volatile storage.
+
+**Audit checks**: `CHK-AUTO-LOGIN` (FAIL), `CHK-SCREEN-LOCK` (WARN) → §2.6
 
 ### 2.7 Guest Account and Sharing Services
 
-<!-- Content: T009 -->
+**Threat**: Guest account provides unauthenticated local access; sharing services expose file systems, remote execution, and network services to LAN attackers
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmark — 6.1.3, 2.3.*](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+The macOS guest account allows anyone to log in without a password and access the network. Sharing services (File Sharing, Remote Apple Events, Internet Sharing, AirPlay) each add attack surface — Remote Apple Events alone enables external applications to execute code on your Mac. On a server handling credentials and PII, every unnecessary service is a potential entry point.
+
+#### How to Harden
+
+**Disable the guest account:**
+
+```bash
+sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false
+```
+
+**Disable all sharing services:**
+
+```bash
+# File Sharing (SMB/AFP) — use scp/rsync over SSH instead
+sudo launchctl disable system/com.apple.smbd
+
+# Remote Apple Events — allows external code execution
+sudo systemsetup -setremoteappleevents off
+
+# Internet Sharing — turns Mac into NAT gateway
+sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.nat NAT -dict-add Enabled -bool false
+
+# Content Caching
+sudo AssetCacheManagerUtil deactivate 2>/dev/null || true
+
+# AirPlay Receiver
+defaults write com.apple.controlcenter AirplayRecieverEnabled -bool false
+
+# Bluetooth Sharing
+defaults -currentHost write com.apple.bluetooth PrefKeyServicesEnabled -bool false
+
+# Printer Sharing
+cupsctl --no-share-printers
+
+# Media Sharing
+defaults write com.apple.amp.mediasharingd home-sharing-enabled -bool false
+```
+
+**Screen Sharing / VNC hardening (if Screen Sharing must stay enabled):**
+
+> **WARNING**: On a headless server, verify SSH is working BEFORE disabling Screen Sharing.
+
+```bash
+# Preferred: Disable Screen Sharing entirely if managing via SSH
+sudo launchctl disable system/com.apple.screensharing
+
+# If Screen Sharing is needed:
+# 1. Require macOS account authentication (not legacy VNC password)
+sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysStartOnConsole -bool true
+
+# 2. Access via SSH tunnel for encryption:
+#    From client: ssh -L 5900:localhost:5900 user@mac-mini
+#    Then connect VNC to localhost:5900
+```
+
+**Disable AirDrop and Handoff:**
+
+```bash
+# AirDrop — file transfer between nearby devices
+defaults write com.apple.NetworkBrowser DisableAirDrop -bool true
+
+# Handoff — cross-device clipboard and activity sharing
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool false
+```
+
+**Verify Remote Login (SSH) status:**
+
+```bash
+# Check current status (managed separately in §3.1)
+sudo systemsetup -getremotelogin
+```
+
+#### Verification
+
+```bash
+# Guest account disabled
+sudo defaults read /Library/Preferences/com.apple.loginwindow GuestEnabled
+# Expected: 0
+
+# File Sharing disabled
+launchctl print system/com.apple.smbd 2>&1 | grep -c "state = " || echo "disabled"
+
+# Remote Apple Events disabled
+sudo systemsetup -getremoteappleevents
+# Expected: "Remote Apple Events: Off"
+
+# Screen Sharing disabled (or hardened)
+launchctl print system/com.apple.screensharing 2>&1 | grep "state" || echo "disabled"
+
+# AirDrop disabled
+defaults read com.apple.NetworkBrowser DisableAirDrop 2>/dev/null
+# Expected: 1
+```
+
+#### Edge Cases and Warnings
+
+- **macOS updates can re-enable sharing services**: After every macOS update, re-run the audit script to verify all sharing services remain disabled (§10.3).
+- **VNC password weakness**: Legacy VNC passwords are limited to 8 characters with weak DES encryption. Always use macOS account authentication and SSH tunneling.
+- **Remote Apple Events**: This is one of the most dangerous services — it allows external applications to send Apple Events, which can execute arbitrary commands. Always disable it.
+- **mDNS/Bonjour**: macOS advertises services via mDNS (Bonjour). Disabling sharing services reduces mDNS advertisements but does not fully stop mDNS. See §3.6 for mDNS restriction.
+
+**Audit checks**: `CHK-GUEST` (FAIL), `CHK-SHARING-FILE` (FAIL), `CHK-SHARING-REMOTE-EVENTS` (FAIL), `CHK-SHARING-INTERNET` (FAIL), `CHK-SHARING-SCREEN` (WARN), `CHK-AIRDROP` (WARN) → §2.7
 
 ### 2.8 Lockdown Mode
 
-<!-- Content: T009 -->
+**Threat**: Advanced attacker exploits broad attack surface including JIT JavaScript, message attachments, wired connections, and configuration profiles
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple — About Lockdown Mode](https://support.apple.com/en-us/105120)
+
+#### Why This Matters
+
+Lockdown Mode is Apple's highest security setting, designed to protect against targeted attacks by nation-state-level adversaries. It dramatically reduces the attack surface by disabling JIT JavaScript compilation, blocking most message attachment types, restricting wired connections, and preventing configuration profile installation. For a headless server managed exclusively via SSH, the tradeoffs are minimal.
+
+#### How to Harden
+
+`[EDUCATIONAL]` — Lockdown Mode is an optional advanced control. Evaluate compatibility before enabling.
+
+**Enable Lockdown Mode (requires restart):**
+
+```bash
+# Via System Settings > Privacy & Security > Lockdown Mode > Turn On
+# No CLI-only method is available — requires interactive confirmation
+```
+
+**Compatibility assessment for n8n deployments:**
+
+| Feature | Impact | Workaround |
+|---------|--------|------------|
+| JIT JavaScript disabled | n8n web UI may load slowly if accessed from local Safari | Access n8n UI from a separate machine, or use SSH tunneling |
+| Message attachments blocked | No impact on headless server | N/A |
+| Incoming FaceTime blocked | No impact | N/A |
+| Wired connections restricted | Test Docker/Colima USB-C connectivity | Verify before enabling |
+| Configuration profiles blocked | Cannot install profiles from untrusted sources | Benefit: blocks profile-based attacks (§2.10) |
+
+**Recommendation**: Enable Lockdown Mode if you manage the Mac Mini exclusively via SSH from a separate machine. Test on a non-production instance first if you access the n8n web UI locally.
+
+#### Verification
+
+```bash
+# No CLI command to check Lockdown Mode status reliably
+# Check via System Settings > Privacy & Security > Lockdown Mode
+```
+
+#### Edge Cases and Warnings
+
+- **Not reversible without restart**: Enabling or disabling Lockdown Mode requires a system restart.
+- **Docker/Colima**: Compatibility with Docker and Colima is undocumented by Apple. Test container operations before enabling on a production server.
+- **Webhook ingress**: Lockdown Mode blocks incoming connections from unknown devices. If n8n receives webhooks from the internet, use a reverse proxy (§5.8) to avoid issues.
+- **Homebrew tools**: JIT restrictions may affect some tools. Verify critical CLI tools work after enabling.
 
 ### 2.9 Recovery Mode Password
 
-<!-- Content: T009 -->
+**Threat**: Physical attacker boots into Recovery Mode to reset passwords, disable FileVault, or modify the system volume
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple Platform Security — Startup security](https://support.apple.com/guide/security/startup-security-sec1ea214c99/web)
+
+#### Why This Matters
+
+Recovery Mode provides powerful administrative capabilities — resetting user passwords, disabling SIP, modifying the system volume, and on Intel Macs without a firmware password, accessing Target Disk Mode to read the drive directly. Startup security settings prevent unauthorized use of these capabilities.
+
+#### How to Harden
+
+`[EDUCATIONAL]` — Recovery Mode hardening depends on hardware generation.
+
+**Apple Silicon (M1/M2/M3/M4):**
+
+Apple Silicon Macs require administrator authentication to enter Recovery Mode — this is enforced by the Secure Enclave and cannot be bypassed via software.
+
+```bash
+# Verify Secure Boot is set to Full Security
+# Boot to Recovery > Startup Security Utility
+# Ensure "Full Security" is selected (default)
+```
+
+Full Security ensures:
+
+- Only the current, signed macOS version can boot
+- External boot media is blocked unless explicitly allowed
+- Recovery Mode requires administrator authentication
+
+**Intel Macs:**
+
+Set a firmware password to prevent unauthorized Recovery Mode access, Target Disk Mode, and external media boot:
+
+```bash
+# Boot to Recovery Mode (Cmd+R during startup)
+# Open Utilities > Startup Security Utility (or Firmware Password Utility)
+# Set a strong firmware password
+```
+
+> **WARNING**: If you forget the firmware password on an Intel Mac, there is no self-service recovery. Apple Store or Authorized Service Provider intervention is required.
+
+**Target Disk Mode / Mac Sharing Mode:**
+
+| Feature | Intel | Apple Silicon |
+|---------|-------|---------------|
+| Target Disk Mode | Prevented by firmware password; FileVault encrypts disk | Replaced by Mac Sharing Mode |
+| Mac Sharing Mode | N/A | Requires administrator authentication |
+| DFU Mode | N/A | Erases all data; Activation Lock (Find My Mac) is defense |
+
+#### Verification
+
+```bash
+# Apple Silicon: verify startup security (must check in Recovery Mode)
+# No reliable CLI check from normal boot
+
+# Intel: check firmware password status
+sudo firmwarepasswd -check 2>/dev/null || echo "Not applicable (Apple Silicon)"
+# Expected (Intel): "Password Enabled: Yes"
+```
+
+#### Edge Cases and Warnings
+
+- **DFU Mode (Apple Silicon)**: Device Firmware Update mode allows firmware-level restore and erases all data. It bypasses all software security. Defense: FileVault protects data at rest, and Find My Mac's Activation Lock (§9.5) prevents the device from being set up by a thief.
+- **Single User Mode**: Disabled by SIP on Catalina and later. Unavailable on Apple Silicon.
+- **Firmware password vs FileVault**: A firmware password prevents booting from external media. FileVault prevents reading data from the disk. Both are needed on Intel Macs.
+
+**Audit check**: `CHK-STARTUP-SECURITY` (WARN) → §2.9
 
 ### 2.10 System Privacy and TCC
 
-<!-- Content: T009 -->
+**Threat**: Consumer-oriented features leak data to Apple servers; excessive TCC permissions give n8n (or an attacker exploiting n8n) access to the camera, microphone, contacts, and full disk; configuration profiles silently modify security settings; Spotlight indexes expose PII to rapid search
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [Apple — Control app access to files, folders, and more](https://support.apple.com/guide/mac-help/control-access-to-files-and-folders-on-mac-mchld5a35146/mac), [CIS Apple macOS Benchmark — 2.5, 2.6](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+macOS privacy features (Spotlight Suggestions, Siri, diagnostics sharing, Location Services) send data to Apple's servers — unnecessary on a headless server and potentially leaking information about installed tools and usage patterns. TCC (Transparency, Consent, and Control) governs which applications can access sensitive resources. If n8n runs under an account with Full Disk Access, a Code node exploit can read any file on the system. Configuration profiles can silently modify security settings including FileVault and certificate trust. Spotlight indexes all file contents by default, letting any process rapidly search for credentials and PII.
+
+#### How to Harden
+
+**Disable unnecessary privacy-leaking features:**
+
+```bash
+# Disable Spotlight Suggestions (sends search queries to Apple)
+defaults write com.apple.spotlight orderedItems -array \
+  '{"enabled" = 0; "name" = "MENU_SPOTLIGHT_SUGGESTIONS";}' \
+  '{"enabled" = 0; "name" = "MENU_WEBSEARCH";}'
+
+# Disable diagnostics sharing with Apple
+defaults write /Library/Application\ Support/CrashReporter/DiagnosticMessagesHistory.plist AutoSubmit -bool false
+
+# Disable Siri (no function on headless server)
+defaults write com.apple.assistant.support "Assistant Enabled" -bool false
+
+# Disable Location Services (unless needed for Find My Mac)
+# Note: Find My Mac requires Location Services — see §9.5
+sudo launchctl unload -w /System/Library/LaunchDaemons/com.apple.locationd.plist 2>/dev/null || true
+
+# Disable ad tracking
+defaults write com.apple.AdLib forceLimitAdTracking -bool true
+```
+
+**Audit and restrict TCC permissions:**
+
+```bash
+# List all TCC permission grants (requires Full Disk Access for the terminal)
+# Bare-metal: verify n8n service account has NO sensitive permissions
+sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db \
+  "SELECT client, service, auth_value FROM access WHERE auth_value = 2;" 2>/dev/null || \
+  echo "TCC database requires Full Disk Access to read"
+
+# Reset permissions for a specific application
+tccutil reset All com.example.appbundleid
+```
+
+**TCC by deployment path:**
+
+- **Containerized**: Docker containers do not interact with TCC directly — container isolation provides the boundary. Verify the Colima VM user does not have unnecessary TCC grants.
+- **Bare-metal**: n8n inherits the TCC permissions of the user account running it. If running as a dedicated service account (§6.1), that account should have zero TCC permissions granted.
+
+> **Tahoe (macOS 26)**: TCC enforcement is stricter. Terminal with Full Disk Access grants FDA to all scripts run from that terminal. Avoid granting FDA to Terminal on production servers.
+
+**Disable core dumps:**
+
+```bash
+# Disable core dumps system-wide (prevents credential leakage via process memory dumps)
+sudo launchctl limit core 0
+
+# Verify no existing core files
+ls -la /cores/ 2>/dev/null
+# Expected: empty or "No such file or directory"
+```
+
+**Containerized core dump prevention:**
+
+Add to `docker-compose.yml` (see §4.3):
+
+```yaml
+ulimits:
+  core:
+    soft: 0
+    hard: 0
+```
+
+**Audit configuration profiles:**
+
+```bash
+# List installed configuration profiles
+profiles list 2>/dev/null || echo "No profiles installed"
+
+# WARN: Any unexpected profile is suspicious
+# Profiles can modify FileVault, install root CAs, change DNS, configure VPN
+# Remove unauthorized profiles:
+# sudo profiles remove -identifier <profile-id>
+```
+
+**Exclude sensitive directories from Spotlight indexing:**
+
+```bash
+# Disable Spotlight indexing for n8n data directory
+# Bare-metal:
+sudo mdutil -i off /path/to/n8n/data
+
+# Docker volume mount points (if mounted on host):
+sudo mdutil -i off /path/to/docker/volumes
+
+# Colima VM data:
+sudo mdutil -i off ~/.colima
+
+# Rebuild index to remove previously indexed sensitive data
+sudo mdutil -E /
+```
+
+**Harden hibernation (headless servers):**
+
+```bash
+# Disable hibernation (prevents RAM image writes to disk)
+sudo pmset -a hibernatemode 0
+
+# Remove existing sleep image
+sudo rm -f /private/var/vm/sleepimage
+
+# Create empty, immutable file to prevent recreation
+sudo touch /private/var/vm/sleepimage
+sudo chflags uchg /private/var/vm/sleepimage
+```
+
+**Harden temp file and cache security:**
+
+```bash
+# Verify /tmp permissions
+ls -la /private/tmp
+# Expected: drwxrwxrwt (sticky bit set)
+
+# Bare-metal: restrict n8n service account temp directory
+# (Created by macOS in /var/folders/ — permissions inherited from account)
+
+# Clear browser cache if n8n UI was accessed locally
+# Use Private Browsing when accessing n8n web UI from the Mac itself
+```
+
+#### Verification
+
+```bash
+# Verify Siri is disabled
+defaults read com.apple.assistant.support "Assistant Enabled" 2>/dev/null
+# Expected: 0
+
+# Verify diagnostics sharing is disabled
+defaults read /Library/Application\ Support/CrashReporter/DiagnosticMessagesHistory.plist AutoSubmit 2>/dev/null
+# Expected: 0
+
+# Verify no core files exist
+ls /cores/ 2>/dev/null | wc -l
+# Expected: 0
+
+# Verify core dumps disabled
+launchctl limit core 2>/dev/null
+# Expected: core 0 0
+
+# Check for configuration profiles
+profiles list 2>/dev/null
+# Expected: empty or only known/expected profiles
+
+# Verify Spotlight exclusions
+mdutil -s /path/to/n8n/data 2>/dev/null
+# Expected: "Indexing disabled."
+```
+
+#### Edge Cases and Warnings
+
+- **Location Services and Find My Mac**: Disabling Location Services disables Find My Mac. If physical security (§9.5) relies on Find My Mac for remote wipe, keep Location Services enabled but restrict it to only Find My Mac.
+- **TCC database access**: Reading the TCC database requires Full Disk Access for the querying process. The audit script will attempt to check TCC but may report SKIP if permissions are insufficient.
+- **Spotlight exclusion timing**: Adding Spotlight exclusions does not remove previously indexed data. You must rebuild the index (`mdutil -E /`) to purge stale entries containing PII.
+- **Configuration profiles**: Legitimate management software (MDM) may install profiles. Verify with your IT department before removing profiles you don't recognize.
+- **Tahoe TCC changes**: On Tahoe, the Local Network Privacy prompt is more strictly enforced, which may affect network operations. Test after upgrading.
+- **Docker build cache**: If using custom Dockerfiles, `docker builder prune` removes cached layers that may contain sensitive data. See §4.4.
+
+**Audit checks**: `CHK-TCC` (WARN), `CHK-CORE-DUMPS` (WARN), `CHK-PRIVACY` (WARN), `CHK-PROFILES` (WARN), `CHK-SPOTLIGHT` (WARN) → §2.10
 
 ---
 
