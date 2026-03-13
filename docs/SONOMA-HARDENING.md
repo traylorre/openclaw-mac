@@ -4,7 +4,7 @@
 > [macOS Hardening Guide](HARDENING.md). See §2 for OS foundation controls
 > covering both Sonoma and Tahoe.
 
-> *"You're on Sonoma? Fine. But don't let your guard down just because it's not Tahoe yet!"*
+*"You're on Sonoma? Fine. But don't let your guard down just because it's not Tahoe yet!"*
 
 This guide focuses on the specific security gaps in **macOS Sonoma** compared
 to the newer Tahoe/Sequoia architectures. Use these steps to close the
