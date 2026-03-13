@@ -113,13 +113,14 @@ template) live under `scripts/` to keep `docs/` clean.
 
 **Post-design gate result**: PASS — no new violations introduced.
 
-**Known Article V exceptions**: FR-083 (firmware password awareness),
-FR-087 (USB/Thunderbolt policy), and FR-044 (PII classification) are
-marked "Verification: not automated — educational" in the spec. Per
-Article V ("Every Recommendation Verifiable"), these are educational
-guidance items rather than enforceable controls. They are documented in
-the guide for completeness but excluded from automated audit checks.
-The guide marks them with an `[EDUCATIONAL]` tag instead of a `CHK-*` ID.
+**Known Article V exceptions**: FR-083 (secure deletion limitations on macOS),
+FR-087 (clipboard security), and FR-076 (recovery mode/startup security —
+firmware password on Intel) are marked "Verification: not automated —
+educational" in the spec. Per Article V ("Every Recommendation Verifiable"),
+these are educational guidance items rather than enforceable controls. They
+are documented in the guide for completeness but excluded from automated
+audit checks. The guide marks them with an `[EDUCATIONAL]` tag instead of
+a `CHK-*` ID.
 
 ### Research-Driven Corrections
 
@@ -187,65 +188,67 @@ mapped to their primary guide section.
 | Guide Section | Primary FRs | Count |
 |---------------|-------------|-------|
 | §1 Threat Model | FR-001 | 1 |
-| §2.1 FileVault | FR-011 | 1 |
-| §2.2 Firewall | FR-013 | 1 |
-| §2.3 SIP | FR-014 | 1 |
-| §2.4 Gatekeeper/XProtect | FR-015, FR-034 | 2 |
-| §2.5 Software Updates | FR-016 | 1 |
-| §2.6 Screen Lock/Login | FR-025, FR-026, FR-090 | 3 |
-| §2.7 Guest/Sharing | FR-027, FR-028 | 2 |
-| §2.8 Lockdown Mode | FR-033 | 1 |
-| §2.9 Recovery Mode | FR-083 | 1 |
-| §3.1 SSH Hardening | FR-029 | 1 |
-| §3.2 DNS Security | FR-031 | 1 |
+| §2.1 FileVault | *(FR-002 control area)* | 0 |
+| §2.2 Firewall | *(FR-002 control area)* | 0 |
+| §2.3 SIP | *(FR-002 control area)* | 0 |
+| §2.4 Gatekeeper/XProtect | FR-072 | 1 |
+| §2.5 Software Updates | FR-072 | 1 |
+| §2.6 Screen Lock/Login | FR-068, FR-069 | 2 |
+| §2.7 Guest/Sharing | FR-073 | 1 |
+| §2.8 Lockdown Mode | FR-062 | 1 |
+| §2.9 Recovery Mode | FR-076 | 1 |
+| §2.10 System Privacy/TCC | FR-050, FR-061, FR-074 | 3 |
+| §3.1 SSH Hardening | FR-028 | 1 |
+| §3.2 DNS Security | FR-029 | 1 |
 | §3.3 Outbound Filtering | FR-030, FR-032 | 2 |
-| §3.4 Bluetooth | FR-035 | 1 |
-| §3.5 IPv6 | FR-036 | 1 |
-| §3.6 Service Binding | FR-037 | 1 |
-| §4.1 Colima Setup | FR-017 | 1 |
-| §4.2 Docker Security | FR-018 | 1 |
-| §4.3 docker-compose.yml | FR-058 | 1 |
+| §3.4 Bluetooth | *(FR-002 control area)* | 0 |
+| §3.5 IPv6 | FR-052 | 1 |
+| §3.6 Service Binding | FR-075, FR-079 | 2 |
+| §4.1 Colima Setup | FR-017, FR-048 | 2 |
+| §4.2 Docker Security | FR-016 | 1 |
+| §4.3 docker-compose.yml | FR-058, FR-090 | 2 |
 | §4.4 Advanced Hardening | FR-041, FR-042 | 2 |
-| §4.5 Container Networking | FR-040 | 1 |
-| §5.1 Binding/Auth | FR-019, FR-020, FR-067 | 3 |
-| §5.2 User Management | FR-066 | 1 |
+| §4.5 Container Networking | FR-042 | 1 |
+| §5.1 Binding/Auth | FR-011, FR-067 | 2 |
+| §5.2 User Management | FR-067 | 1 |
 | §5.3 Security Env Vars | FR-059 | 1 |
-| §5.4 REST API | FR-061 | 1 |
+| §5.4 REST API | FR-038 | 1 |
 | §5.5 Webhook Security | FR-039, FR-060 | 2 |
-| §5.6 Execution/Nodes | FR-021, FR-062, FR-063 | 3 |
-| §5.7 Community Nodes | FR-064 | 1 |
-| §5.8 Reverse Proxy | FR-065 | 1 |
-| §5.9 Update Security | FR-068 | 1 |
-| §6.1 Service Account | FR-046 | 1 |
-| §6.2 Keychain | FR-047 | 1 |
-| §6.3 launchd | FR-048 | 1 |
-| §6.4 File Permissions | FR-049 | 1 |
+| §5.6 Execution/Nodes | FR-021, FR-044 | 2 |
+| §5.7 Community Nodes | FR-054 | 1 |
+| §5.8 Reverse Proxy | FR-055 | 1 |
+| §5.9 Update Security | FR-064 | 1 |
+| §6.1 Service Account | FR-036 | 1 |
+| §6.2 Keychain | FR-051 | 1 |
+| §6.3 launchd | FR-036 | 1 |
+| §6.4 File Permissions | FR-036 | 1 |
 | §7.1 Credential Mgmt | FR-012, FR-043, FR-057 | 3 |
-| §7.2 Credential Lifecycle | FR-050, FR-051 | 2 |
-| §7.3 Injection Defense | FR-052, FR-053 | 2 |
-| §7.4 PII Protection | FR-044, FR-054 | 2 |
-| §7.5 SSRF | FR-055 | 1 |
-| §7.6 Data Exfiltration | FR-069 | 1 |
-| §7.7 Supply Chain | FR-070, FR-071 | 2 |
-| §7.8 Apify Security | FR-060, FR-072 | 2 |
-| §7.9 Secure Deletion | FR-073 | 1 |
-| §7.10 Clipboard | FR-074 | 1 |
-| §8.1 IDS Tools | FR-032, FR-075 | 2 |
-| §8.2 Launch Daemon Audit | FR-076 | 1 |
-| §8.3 Workflow Integrity | FR-077 | 1 |
-| §8.4 macOS Logging | FR-078, FR-079 | 2 |
-| §8.5 Credential Exposure | FR-080 | 1 |
-| §8.6 iCloud Exposure | FR-081 | 1 |
-| §8.7 Certificate Trust | FR-082 | 1 |
-| §9.1 IR Runbook | FR-084 | 1 |
-| §9.2 Credential Rotation | FR-085 | 1 |
-| §9.3 Backup/Recovery | FR-038, FR-086 | 2 |
-| §9.4 Restore Testing | FR-088 | 1 |
-| §9.5 Physical Security | FR-087, FR-089 | 2 |
+| §7.2 Credential Lifecycle | FR-043 | 1 |
+| §7.3 Injection Defense | FR-021 | 1 |
+| §7.4 PII Protection | FR-013, FR-086 | 2 |
+| §7.5 SSRF | FR-047 | 1 |
+| §7.6 Data Exfiltration | FR-049 | 1 |
+| §7.7 Supply Chain | FR-040, FR-089 | 2 |
+| §7.8 Apify Security | FR-060 | 1 |
+| §7.9 Secure Deletion | FR-082, FR-083 | 2 |
+| §7.10 Clipboard | FR-087 | 1 |
+| §8.1 IDS Tools | FR-032 | 1 |
+| §8.2 Persistence Audit | FR-033, FR-070, FR-085 | 3 |
+| §8.3 Workflow Integrity | FR-046 | 1 |
+| §8.4 macOS Logging | FR-035, FR-063, FR-081 | 3 |
+| §8.5 Credential Exposure | FR-080, FR-088 | 2 |
+| §8.6 iCloud Exposure | FR-071 | 1 |
+| §8.7 Certificate Trust | FR-084 | 1 |
+| §9.1 IR Runbook | FR-031 | 1 |
+| §9.2 Credential Rotation | FR-077 | 1 |
+| §9.3 Backup/Recovery | FR-018, FR-045 | 2 |
+| §9.4 Restore Testing | FR-037 | 1 |
+| §9.5 Physical Security | FR-034, FR-053 | 2 |
 | §10.1 Audit Scheduling | FR-022 | 1 |
-| §10.2 Notifications | FR-024 | 1 |
-| §10.3 Tool Maintenance | FR-016, FR-068 | 2 |
-| §10.4 Log Retention | FR-079 | 1 |
-| §10.5 Troubleshooting | (derived) | 0 |
-| §11 Audit Script Ref | FR-007, FR-023, FR-056 | 3 |
-| Meta (guide-wide) | FR-002–FR-010 | 9 |
+| §10.2 Notifications | FR-024, FR-025 | 2 |
+| §10.3 Tool Maintenance | FR-020, FR-026 | 2 |
+| §10.4 Log Retention | FR-027 | 1 |
+| §10.5 Troubleshooting | FR-066 | 1 |
+| §10.6 Validation Tests | FR-078 | 1 |
+| §11 Audit Script Ref | FR-007, FR-023, FR-056, FR-065 | 4 |
+| Meta (guide-wide) | FR-002–FR-010, FR-014, FR-015, FR-019 | 13 |
