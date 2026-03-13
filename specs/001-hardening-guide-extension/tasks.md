@@ -19,11 +19,11 @@
 
 **Purpose**: Create project directory structure, guide skeleton, audit script framework, and check ID registry
 
-- [ ] T001 Create directory structure: `scripts/templates/` and `scripts/launchd/` directories per plan.md project structure
-- [ ] T002 Create `docs/HARDENING.md` skeleton with preamble placeholder, all section heading stubs (§1-§11), and appendix headings (A-E) per `contracts/guide-structure.md`; include explicit table of contents at top for 30-second navigation per SC-011; migrate any still-accurate content from existing 68-line `docs/HARDENING.md` per FR-015
-- [ ] T003 [P] Create `scripts/hardening-audit.sh` framework with `set -euo pipefail`, CLI argument parsing (`--json`, `--section`, `--quiet`, `--no-color`, `--help`, `--version`), colored status output functions (PASS/FAIL/WARN/SKIP), deployment detection logic, `run_check` wrapper using subshell trap pattern, summary counters, and JSON output skeleton per `contracts/audit-script-cli.md`; incorporate existing 5-check verification script from current HARDENING.md per FR-015
-- [ ] T004 [P] Add deprecation header to `docs/SONOMA-HARDENING.md` redirecting to `docs/HARDENING.md` §2 per plan.md
-- [ ] T005 [P] Create `scripts/CHK-REGISTRY.md` check ID registry -- central list tracking every CHK-* ID, severity (FAIL/WARN), deployment path (both/containerized/bare-metal), guide section reference, and owning task; each subsequent audit task must update this file when adding checks
+- [x] T001 Create directory structure: `scripts/templates/` and `scripts/launchd/` directories per plan.md project structure
+- [x] T002 Create `docs/HARDENING.md` skeleton with preamble placeholder, all section heading stubs (§1-§11), and appendix headings (A-E) per `contracts/guide-structure.md`; include explicit table of contents at top for 30-second navigation per SC-011; migrate any still-accurate content from existing 68-line `docs/HARDENING.md` per FR-015
+- [x] T003 [P] Create `scripts/hardening-audit.sh` framework with `set -euo pipefail`, CLI argument parsing (`--json`, `--section`, `--quiet`, `--no-color`, `--help`, `--version`), colored status output functions (PASS/FAIL/WARN/SKIP), deployment detection logic, `run_check` wrapper using subshell trap pattern, summary counters, and JSON output skeleton per `contracts/audit-script-cli.md`; incorporate existing 5-check verification script from current HARDENING.md per FR-015
+- [x] T004 [P] Add deprecation header to `docs/SONOMA-HARDENING.md` redirecting to `docs/HARDENING.md` §2 per plan.md
+- [x] T005 [P] Create `scripts/CHK-REGISTRY.md` check ID registry -- central list tracking every CHK-* ID, severity (FAIL/WARN), deployment path (both/containerized/bare-metal), guide section reference, and owning task; each subsequent audit task must update this file when adding checks
 
 **Checkpoint**: Guide skeleton, audit script framework, and check ID registry ready. All subsequent phases build on these files.
 
@@ -35,9 +35,9 @@
 
 **Independent Test**: Read the threat model section and verify it names the specific platform (Mac Mini), workload (n8n + Apify), assets (credentials, PII, system integrity), and adversaries per FR-001
 
-- [ ] T006 [P] [US1] Write guide preamble in `docs/HARDENING.md`: purpose and scope, how to use this guide, deployment path decision tree (containerized vs bare-metal), cross-reference notation conventions (`§X.Y`, `CHK-*`)
-- [ ] T007 [P] [US1] Write §1 Threat Model in `docs/HARDENING.md`: platform description (Mac Mini + n8n + Apify + LinkedIn lead gen), assets to protect, adversary profiles, attack surface map, scope exclusions per FR-001
-- [ ] T008 [P] [US1] Write prioritized quick-start checklist in `docs/HARDENING.md` preamble: Immediate/Follow-up/Ongoing tiers per FR-009 with all 39 control areas assigned to exactly one tier, ordering constraints (SSH key before disabling password auth, Screen Sharing before disabling other remote access, FileVault authrestart before enabling FileVault, n8n auth before binding to network), and lockout warnings; NOTE: FR-009 is ~50 lines of spec text with specific tier-to-control mappings -- implementer must read full FR-009 from spec.md
+- [x] T006 [P] [US1] Write guide preamble in `docs/HARDENING.md`: purpose and scope, how to use this guide, deployment path decision tree (containerized vs bare-metal), cross-reference notation conventions (`§X.Y`, `CHK-*`)
+- [x] T007 [P] [US1] Write §1 Threat Model in `docs/HARDENING.md`: platform description (Mac Mini + n8n + Apify + LinkedIn lead gen), assets to protect, adversary profiles, attack surface map, scope exclusions per FR-001
+- [x] T008 [P] [US1] Write prioritized quick-start checklist in `docs/HARDENING.md` preamble: Immediate/Follow-up/Ongoing tiers per FR-009 with all 39 control areas assigned to exactly one tier, ordering constraints (SSH key before disabling password auth, Screen Sharing before disabling other remote access, FileVault authrestart before enabling FileVault, n8n auth before binding to network), and lockout warnings; NOTE: FR-009 is ~50 lines of spec text with specific tier-to-control mappings -- implementer must read full FR-009 from spec.md
 
 **Checkpoint**: Guide has navigable structure and threat context. MacBook operator can understand the deployment before hardening.
 
