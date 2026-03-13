@@ -113,14 +113,17 @@ template) live under `scripts/` to keep `docs/` clean.
 
 **Post-design gate result**: PASS — no new violations introduced.
 
-**Known Article V exceptions**: FR-083 (secure deletion limitations on macOS),
-FR-087 (clipboard security), and FR-076 (recovery mode/startup security —
-firmware password on Intel) are marked "Verification: not automated —
-educational" in the spec. Per Article V ("Every Recommendation Verifiable"),
-these are educational guidance items rather than enforceable controls. They
-are documented in the guide for completeness but excluded from automated
+**Known Article V exceptions**: FR-076 (recovery mode/startup security —
+firmware password on Intel), FR-077 (emergency credential rotation runbook),
+FR-083 (secure deletion limitations on macOS), and FR-087 (clipboard
+security) are marked "Verification: not automated — educational/procedural"
+in the spec. Per Article V ("Every Recommendation Verifiable"), these are
+educational or procedural guidance items rather than enforceable controls.
+They are documented in the guide for completeness but excluded from automated
 audit checks. The guide marks them with an `[EDUCATIONAL]` tag instead of
-a `CHK-*` ID.
+a `CHK-*` ID. Note: FR-007 appears in both §11 and Meta rows (audit script
+has a dedicated section but is also a guide-wide concern); this is
+intentional.
 
 ### Research-Driven Corrections
 
@@ -251,4 +254,4 @@ mapped to their primary guide section.
 | §10.5 Troubleshooting | FR-066 | 1 |
 | §10.6 Validation Tests | FR-078 | 1 |
 | §11 Audit Script Ref | FR-007, FR-023, FR-056, FR-065 | 4 |
-| Meta (guide-wide) | FR-002–FR-010, FR-014, FR-015, FR-019 | 13 |
+| Meta (guide-wide) | FR-002–FR-010, FR-014, FR-015, FR-019 | 12 |
