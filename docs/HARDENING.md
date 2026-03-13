@@ -1076,27 +1076,612 @@ mdutil -s /path/to/n8n/data 2>/dev/null
 
 ### 3.1 SSH Hardening
 
-<!-- Content: T014 -->
+**Threat**: LAN attacker brute-forces SSH passwords or exploits weak SSH configuration to gain remote shell access
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmark — 2.3.3](https://www.cisecurity.org/benchmark/apple_os), [NIST SP 800-123 §4.2](https://csrc.nist.gov/publications/detail/sp/800-123/final)
+
+#### Why This Matters
+
+SSH is the primary remote management path for a headless Mac Mini. Default macOS SSH configuration allows password authentication, which is vulnerable to brute force attacks from any device on the LAN. A compromised SSH session gives full shell access — equivalent to sitting at the keyboard.
+
+#### How to Harden
+
+> **WARNING**: Install and test your SSH key BEFORE disabling password authentication. If you disable password auth without a working key, you are locked out of a headless server and must use physical access or Screen Sharing to recover.
+
+**Step 1 — Generate an ed25519 key on your client machine:**
+
+```bash
+# On your management workstation (NOT the Mac Mini)
+ssh-keygen -t ed25519 -C "operator@mac-mini"
+```
+
+**Step 2 — Copy the public key to the Mac Mini:**
+
+```bash
+ssh-copy-id -i ~/.ssh/id_ed25519.pub user@mac-mini-ip
+```
+
+**Step 3 — Test key-based login before changing anything:**
+
+```bash
+ssh -i ~/.ssh/id_ed25519 user@mac-mini-ip
+```
+
+**Step 4 — Harden sshd_config:**
+
+```bash
+sudo cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+sudo tee /etc/ssh/sshd_config.d/hardening.conf > /dev/null << 'SSHEOF'
+# Key-only authentication (disable password brute force)
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM no
+
+# Disable root login
+PermitRootLogin no
+
+# Restrict to specific users
+AllowUsers your-username
+
+# Modern key exchange and ciphers
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com
+
+# Idle session timeout (5 minutes)
+ClientAliveInterval 300
+ClientAliveCountMax 0
+
+# Disable agent and X11 forwarding (not needed on server)
+AllowAgentForwarding no
+X11Forwarding no
+SSHEOF
+```
+
+**Step 5 — Restart the SSH daemon:**
+
+```bash
+sudo launchctl stop com.openssh.sshd
+sudo launchctl start com.openssh.sshd
+```
+
+**Step 6 — Test from a NEW terminal (keep current session open as fallback):**
+
+```bash
+ssh -i ~/.ssh/id_ed25519 user@mac-mini-ip
+```
+
+**If SSH is not needed** (manage exclusively via Screen Sharing or physical access):
+
+```bash
+sudo systemsetup -setremotelogin off
+```
+
+**Containerized path**: Never enable SSH inside containers. Use `docker exec` from the host for container management.
+
+#### Verification
+
+```bash
+# Verify password auth is disabled
+sshd -T 2>/dev/null | grep passwordauthentication
+# Expected: passwordauthentication no
+
+# Verify root login is disabled
+sshd -T 2>/dev/null | grep permitrootlogin
+# Expected: permitrootlogin no
+
+# Verify SSH is listening (if enabled)
+sudo lsof -iTCP:22 -sTCP:LISTEN -P -n 2>/dev/null
+```
+
+#### Edge Cases and Warnings
+
+- **Lockout recovery**: If locked out, boot into Recovery Mode, mount the disk, and edit `/etc/ssh/sshd_config.d/hardening.conf` to re-enable password auth temporarily. Or use Screen Sharing if it was left enabled.
+- **macOS updates**: Major macOS updates can reset sshd_config. Using a `.d/` drop-in file (`sshd_config.d/hardening.conf`) is more resilient than editing the main config.
+- **Multiple operators**: If multiple people need SSH access, add all usernames to `AllowUsers` separated by spaces.
+- **Port changes**: Changing the SSH port from 22 is not recommended — it adds minimal security (trivially discovered by port scanning) and complicates tooling.
+
+**Audit checks**: `CHK-SSH-KEY-ONLY` (FAIL), `CHK-SSH-ROOT` (FAIL) → §3.1
 
 ### 3.2 DNS Security
 
-<!-- Content: T014 -->
+**Threat**: LAN attacker observes DNS queries to map services in use, or spoofs DNS responses to redirect traffic to attacker infrastructure; compromised n8n exfiltrates data via DNS tunneling
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-81 Rev 2](https://csrc.nist.gov/publications/detail/sp/800-81/2/final), [Apple Platform Security — Encrypted DNS](https://support.apple.com/guide/security/networking-sec9230ff994/web)
+
+#### Why This Matters
+
+Without encrypted DNS, any device on the LAN can observe every DNS query the Mac Mini makes — revealing which APIs it calls (LinkedIn, Apify, SMTP relay), which tools it updates (Homebrew, npm), and what services it communicates with. A LAN attacker can also spoof DNS responses to redirect traffic to malicious endpoints. DNS tunneling is a data exfiltration technique that bypasses most outbound filtering because DNS traffic is typically allowed.
+
+#### How to Harden
+
+**Configure encrypted DNS (DoH/DoT) via Quad9:**
+
+macOS Monterey and later support encrypted DNS natively via configuration profiles. Create and install a DNS profile:
+
+```bash
+# Create a DNS profile for Quad9 DoH
+cat > /tmp/quad9-doh.mobileconfig << 'DNSEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>HTTPS</string>
+                <key>ServerURL</key>
+                <string>https://dns.quad9.net/dns-query</string>
+                <key>ServerAddresses</key>
+                <array>
+                    <string>9.9.9.9</string>
+                    <string>149.112.112.112</string>
+                </array>
+            </dict>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadIdentifier</key>
+            <string>com.openclaw.dns</string>
+            <key>PayloadUUID</key>
+            <string>A1B2C3D4-E5F6-7890-ABCD-EF1234567890</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Quad9 Encrypted DNS</string>
+    <key>PayloadIdentifier</key>
+    <string>com.openclaw.dns.profile</string>
+    <key>PayloadUUID</key>
+    <string>F1E2D3C4-B5A6-7890-1234-567890ABCDEF</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+DNSEOF
+
+# Install the profile (will prompt for confirmation)
+open /tmp/quad9-doh.mobileconfig
+# Then approve in System Settings > Privacy & Security > Profiles
+```
+
+**DNS provider comparison:**
+
+| Provider | Protocol | Malware Blocking | Cost | Privacy |
+|----------|----------|-----------------|------|---------|
+| **Quad9** (recommended) | DoH, DoT | Yes — blocks known malicious domains | Free | Swiss privacy law, no logging |
+| Cloudflare 1.1.1.1 | DoH, DoT | Optional (1.1.1.2 for malware blocking) | Free | Fast, minimal logging |
+
+**Container DNS configuration:**
+
+Docker containers resolve DNS through the Colima VM's resolver by default. To ensure containers use encrypted DNS, configure the DNS servers in `docker-compose.yml`:
+
+```yaml
+services:
+  n8n:
+    dns:
+      - 9.9.9.9
+      - 149.112.112.112
+```
+
+**Enable DNS query logging for exfiltration detection:**
+
+```bash
+# Enable detailed DNS logging (mDNSResponder)
+sudo log config --subsystem com.apple.mDNSResponder --mode level:debug
+
+# Query DNS logs for anomalous patterns
+log show --predicate 'subsystem == "com.apple.mDNSResponder"' --last 1h --info \
+  | grep -E 'query.*\.' | head -20
+```
+
+**DNS exfiltration indicators to watch for:**
+
+- High volume of queries to a single uncommon domain
+- Subdomain labels longer than 30 characters with high-entropy content (base64/hex)
+- Repeated queries to newly registered or uncommon TLDs
+- Queries from n8n containers to domains not in the expected list (LinkedIn, Apify, SMTP relay)
+
+> **NOTE**: Encrypted DNS (DoH/DoT) protects queries in transit from LAN eavesdroppers but does NOT prevent DNS exfiltration — the queries still reach the DNS provider who resolves them normally.
+
+#### Verification
+
+```bash
+# Check configured DNS servers
+scutil --dns | grep nameserver | head -5
+
+# Verify DNS profile is installed
+profiles list 2>/dev/null | grep -i dns
+
+# Test encrypted DNS is working (should resolve without leaking to LAN)
+nslookup example.com
+```
+
+#### Edge Cases and Warnings
+
+- **DNS profile and Lockdown Mode**: If Lockdown Mode (§2.8) is enabled, configuration profile installation from untrusted sources is blocked. Install the DNS profile before enabling Lockdown Mode.
+- **Split-horizon DNS**: If your network uses internal DNS for local resources, the encrypted DNS profile may break local name resolution. Configure split DNS via the profile's `SupplementalMatchDomains`.
+- **Container DNS isolation**: Docker containers bypass the host's DNS profile by default. Always configure DNS explicitly in `docker-compose.yml`.
+
+**Audit checks**: `CHK-DNS-ENCRYPTED` (WARN) → §3.2
 
 ### 3.3 Outbound Filtering
 
-<!-- Content: T014 -->
+**Threat**: Compromised n8n exfiltrates credentials or PII via outbound connections to attacker-controlled servers; compromised Mac Mini pivots to other LAN devices
+**Layer**: Prevent
+**Deployment**: Both (different approaches per deployment path)
+**Source**: [NIST SP 800-41 Rev 1](https://csrc.nist.gov/publications/detail/sp/800-41/rev-1/final), [MITRE ATT&CK T1041 — Exfiltration Over C2 Channel](https://attack.mitre.org/techniques/T1041/)
+
+#### Why This Matters
+
+The macOS application firewall (§2.2) blocks **inbound** connections only — it provides zero protection against outbound data theft. If an attacker compromises n8n via injection (§5.6), they will attempt to exfiltrate credentials, PII, and workflow data through outbound HTTP/HTTPS connections to attacker-controlled servers. Without outbound filtering, nothing stops this. Additionally, a compromised Mac Mini becomes a pivot point for lateral movement to other LAN devices.
+
+#### How to Harden
+
+##### Bare-Metal Path
+
+**Option 1 — macOS pf (packet filter) for outbound allowlisting:**
+
+Create a starter pf ruleset that allows only known required destinations:
+
+```bash
+sudo tee /etc/pf.anchors/openclaw-outbound > /dev/null << 'PFEOF'
+# OpenClaw outbound filtering rules
+# Allow loopback
+pass out quick on lo0 all
+
+# Allow established connections
+pass out quick flags S/SA keep state
+
+# Allow DNS (to encrypted DNS resolver)
+pass out quick proto udp to 9.9.9.9 port 53
+pass out quick proto udp to 149.112.112.112 port 53
+pass out quick proto tcp to 9.9.9.9 port 443
+pass out quick proto tcp to 149.112.112.112 port 443
+
+# Allow HTTPS to known services
+# Adjust these IPs/ranges for your specific providers
+pass out quick proto tcp to any port 443
+
+# Allow SSH outbound (for git, remote management)
+pass out quick proto tcp to any port 22
+
+# Allow NTP
+pass out quick proto udp to any port 123
+
+# Block and log everything else
+block out log all
+PFEOF
+
+# Load the anchor into pf.conf
+sudo cp /etc/pf.conf /etc/pf.conf.backup
+echo 'anchor "openclaw-outbound"' | sudo tee -a /etc/pf.conf
+echo 'load anchor "openclaw-outbound" from "/etc/pf.anchors/openclaw-outbound"' | sudo tee -a /etc/pf.conf
+
+# Enable pf
+sudo pfctl -ef /etc/pf.conf
+```
+
+> **NOTE**: The starter ruleset above is permissive (allows all port 443). Tighten it by replacing `to any port 443` with specific IP ranges for LinkedIn, Apify, your SMTP relay, and Homebrew CDNs as you identify them in production.
+
+**Option 2 — LuLu (free, open source, interactive):**
+
+LuLu provides per-application outbound filtering with interactive allow/deny prompts. Recommended for operators who prefer interactive control over static pf rules.
+
+```bash
+# Install LuLu via Homebrew
+brew install --cask lulu
+```
+
+LuLu alerts on every new outbound connection attempt and lets you allow or block per application. After an initial learning period, it builds an allowlist of legitimate traffic.
+
+**Option 3 — Little Snitch `[PAID]` ~$59 one-time:**
+
+Little Snitch provides advanced per-application outbound filtering with network visualization, per-connection rules, and automatic profile switching. It adds over LuLu:
+
+- Real-time network traffic visualization map
+- Per-connection rules (not just per-application)
+- Silent mode for automatic allow/deny based on rules
+- Network profile switching (e.g., different rules for home vs office)
+
+Use Little Snitch if you need granular per-connection rules or the network visualization for monitoring.
+
+##### Containerized Path
+
+macOS pf **cannot** directly filter container traffic — container traffic is NAT'd through the Colima VM's networking stack. For containerized deployments, configure outbound filtering **inside the Colima VM** using iptables via a Lima provisioning script:
+
+```bash
+# Edit Colima configuration
+# Location: ~/.colima/default/colima.yaml (or ~/.colima/<profile>/colima.yaml)
+```
+
+Add a provisioning script to `colima.yaml`:
+
+```yaml
+provision:
+  - mode: system
+    script: |
+      # Allow established connections
+      iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+      # Allow loopback
+      iptables -A OUTPUT -o lo -j ACCEPT
+      # Allow DNS
+      iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
+      # Allow HTTPS to external services
+      iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+      # Allow container-to-host communication (Docker bridge)
+      iptables -A OUTPUT -d 192.168.5.0/24 -j ACCEPT
+      # Block RFC 1918 ranges (SSRF defense — prevent container reaching LAN)
+      iptables -A OUTPUT -d 10.0.0.0/8 -j DROP
+      iptables -A OUTPUT -d 172.16.0.0/12 -j DROP
+      iptables -A OUTPUT -d 192.168.0.0/16 -j DROP
+      # Allow everything else (tighten as needed)
+      iptables -A OUTPUT -j ACCEPT
+```
+
+> **WARNING**: `colima delete` destroys this configuration. Back up your `colima.yaml` in version control.
+
+LuLu on the host can also monitor the Colima/QEMU process for a coarse all-or-nothing view of container network activity.
+
+**Lateral movement defense (both paths):**
+
+Outbound filtering is your primary defense against a compromised Mac Mini pivoting to LAN devices. The pf rules (bare-metal) or iptables rules (containerized) above block access to RFC 1918 ranges. Additionally:
+
+- **Network segmentation**: Place the Mac Mini on a dedicated VLAN or subnet if your router supports it — this is the single most effective lateral movement control. If VLANs are unavailable, the pf/iptables rules above are the fallback.
+- **Wi-Fi vs Ethernet**: Use wired Ethernet — Wi-Fi adds attack surface (deauthentication attacks, evil twin APs, WPA key compromise) unnecessary for a headless server.
+
+```bash
+# If Wi-Fi is not needed, disable it
+networksetup -setairportpower en0 off
+```
+
+#### Verification
+
+```bash
+# Verify pf is enabled and rules are loaded (bare-metal)
+sudo pfctl -sr 2>/dev/null | head -20
+
+# Verify LuLu is running
+pgrep -f LuLu
+
+# Check iptables rules inside Colima VM (containerized)
+colima ssh -- sudo iptables -L -n 2>/dev/null
+```
+
+#### Edge Cases and Warnings
+
+- **pf persistence**: pf rules are lost on reboot unless loaded from `/etc/pf.conf`. The configuration above persists across reboots.
+- **Colima restart**: iptables rules inside the VM persist across `colima stop/start` but are lost on `colima delete`. The provisioning script re-applies them on every `colima start`.
+- **SSRF defense**: The iptables rules blocking RFC 1918 ranges prevent n8n containers from reaching internal LAN services via SSRF. See §7.5 for additional SSRF controls.
+- **macOS updates**: Verify pf rules survive macOS upgrades — back up `/etc/pf.anchors/` and `/etc/pf.conf`.
+- **mDNS/Bonjour**: Disabling outbound mDNS reduces the Mac Mini's visibility on the LAN. mDNS uses UDP port 5353 — the pf rules above block it by default when the final `block out log all` rule is active.
+
+**Audit checks**: `CHK-OUTBOUND-FILTER` (WARN) → §3.3
 
 ### 3.4 Bluetooth
 
-<!-- Content: T014 -->
+**Threat**: Nearby attacker exploits Bluetooth vulnerabilities or uses Bluetooth sharing to transfer malicious files
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmark — 2.1.1](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+Bluetooth adds wireless attack surface within physical proximity (~30 feet). Historical Bluetooth vulnerabilities (BlueBorne, KNOB attack) have enabled remote code execution without user interaction. On a headless server, Bluetooth is unnecessary unless a wireless keyboard or mouse is attached.
+
+#### How to Harden
+
+**If Bluetooth keyboard/mouse is needed** (keep on, reduce attack surface):
+
+```bash
+# Disable Bluetooth Sharing
+defaults -currentHost write com.apple.bluetooth PrefKeyServicesEnabled -bool false
+
+# Disable Bluetooth discoverability (prevents new device pairing prompts)
+sudo defaults write /Library/Preferences/com.apple.Bluetooth DiscoverableState -bool false
+
+# Disable Handoff (uses Bluetooth LE for cross-device features)
+defaults -currentHost write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
+```
+
+**If no Bluetooth peripherals are needed:**
+
+```bash
+# Disable Bluetooth entirely
+sudo defaults write /Library/Preferences/com.apple.Bluetooth ControllerPowerState -int 0
+sudo killall -HUP bluetoothd
+```
+
+#### Verification
+
+```bash
+# Check Bluetooth power state
+defaults read /Library/Preferences/com.apple.Bluetooth ControllerPowerState 2>/dev/null
+# Expected: 0 (off) or 1 (on)
+
+# Check discoverability
+sudo defaults read /Library/Preferences/com.apple.Bluetooth DiscoverableState 2>/dev/null
+# Expected: 0
+```
+
+#### Edge Cases and Warnings
+
+- **Wireless keyboard/mouse**: If using Bluetooth input devices on the Mac Mini, keep Bluetooth enabled but disable discoverability and sharing. New device pairing requires re-enabling discoverability temporarily.
+- **macOS updates**: Bluetooth settings may reset after macOS updates. Re-verify after upgrades.
+
+**Audit check**: `CHK-BLUETOOTH` (WARN) → §3.4
 
 ### 3.5 IPv6
 
-<!-- Content: T014 -->
+**Threat**: Attacker bypasses IPv4-only firewall rules by communicating over IPv6; rogue router advertisements (RA) redirect traffic
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-119](https://csrc.nist.gov/publications/detail/sp/800-119/final), [MITRE ATT&CK T1557.002 — ARP Cache Poisoning (IPv6 RA variant)](https://attack.mitre.org/techniques/T1557/002/)
+
+#### Why This Matters
+
+macOS application firewall and many pf rulesets filter only IPv4 traffic by default. If IPv6 is enabled without corresponding firewall rules, the entire firewall is bypassed for IPv6 traffic. IPv6 router advertisement (RA) attacks can redirect traffic through an attacker on the LAN without any authentication. For most home/office server deployments, IPv6 is not required.
+
+#### How to Harden
+
+**Recommended: Disable IPv6 if not required (safest default):**
+
+```bash
+# List active network interfaces
+networksetup -listallnetworkservices
+
+# Disable IPv6 on each active interface
+networksetup -setv6off "Ethernet"
+networksetup -setv6off "Wi-Fi"
+```
+
+**If IPv6 is required** (ISP mandates it or specific services need it):
+
+```bash
+# Add IPv6 pf rules alongside your IPv4 rules
+# In your pf anchor file (e.g., /etc/pf.anchors/openclaw-outbound):
+# Use 'inet6' address family for IPv6 rules
+# block in quick on en0 inet6 from any to any
+# pass out quick inet6 proto tcp to any port 443
+
+# Disable IPv6 privacy extensions (simplifies logging/forensics)
+sudo sysctl -w net.inet6.ip6.use_tempaddr=0
+
+# Disable IPv6 router advertisement acceptance (if using static IPv6)
+sudo sysctl -w net.inet6.ip6.accept_rtadv=0
+```
+
+**Container implications**: Docker on Colima uses IPv4 by default for container networking. Verify IPv6 is not creating an unfiltered path:
+
+```bash
+colima ssh -- sysctl net.ipv6.conf.all.disable_ipv6 2>/dev/null
+# Expected: 1 (disabled) — Colima VMs typically have IPv6 disabled
+```
+
+#### Verification
+
+```bash
+# Verify IPv6 is disabled on Ethernet
+networksetup -getv6 "Ethernet"
+# Expected: "IPv6: Off"
+
+# If IPv6 is enabled, verify pf has IPv6 rules
+sudo pfctl -sr 2>/dev/null | grep inet6
+```
+
+#### Edge Cases and Warnings
+
+- **ISP requires IPv6**: Some ISPs require IPv6 for connectivity. Disable only if your network functions properly without it.
+- **RA attacks**: IPv6 router advertisements are accepted by default and unauthenticated — a LAN attacker can become the default gateway. Disable RA acceptance if using static IPv6.
+- **Dual-stack firewall**: If running dual-stack, ensure every IPv4 pf rule has an IPv6 equivalent. A common mistake is filtering only IPv4 while leaving IPv6 wide open.
+
+**Audit check**: `CHK-IPV6` (WARN) → §3.5
 
 ### 3.6 Service Binding and Port Exposure
 
-<!-- Content: T014 -->
+**Threat**: Unexpected services listen on network interfaces, exposing them to LAN attackers or the internet; services bound to 0.0.0.0 instead of 127.0.0.1 are accessible from any network
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmark — 2.3](https://www.cisecurity.org/benchmark/apple_os), [MITRE ATT&CK T1046 — Network Service Discovery](https://attack.mitre.org/techniques/T1046/)
+
+#### Why This Matters
+
+An attacker's first step is port scanning to discover what services are running. Any listening service is a potential entry point. Services that bind to `0.0.0.0` (all interfaces) are accessible from the entire LAN — and potentially the internet if the router forwards ports. Creating a listening service baseline after hardening lets you detect new services introduced by software installs, macOS updates, or attackers.
+
+#### How to Harden
+
+**Create a listening service baseline after initial hardening:**
+
+```bash
+# TCP listeners
+sudo lsof -iTCP -sTCP:LISTEN -P -n > ~/baseline-listeners-tcp.txt
+
+# UDP listeners
+sudo lsof -iUDP -P -n > ~/baseline-listeners-udp.txt
+
+# Cross-check with netstat
+sudo netstat -an | grep LISTEN >> ~/baseline-listeners-tcp.txt
+
+# Store baseline securely (restrict permissions)
+chmod 600 ~/baseline-listeners-*.txt
+```
+
+**Expected services by deployment path:**
+
+| Service | Port | Binding | Containerized | Bare-Metal |
+|---------|------|---------|---------------|------------|
+| SSH (if enabled) | 22 | 0.0.0.0 (hardened per §3.1) | Expected | Expected |
+| n8n | 5678 | 127.0.0.1 only | Via Docker port mapping | Direct |
+| Colima/Docker | Various | 127.0.0.1 | Expected | N/A |
+
+Any service not in this table is unexpected and requires investigation.
+
+**Investigate unexpected listeners:**
+
+```bash
+# Find what process owns a specific port
+sudo lsof -i :PORT_NUMBER
+
+# Check process details
+ps aux | grep PID_NUMBER
+```
+
+**Triage procedure for unexpected services:**
+
+1. Identify the process name and path
+2. Determine if it's a macOS system service, installed tool, or unknown binary
+3. If unknown or suspicious → follow incident response (§9.1)
+4. If legitimate but unnecessary → disable and document
+
+**Container port binding verification:**
+
+```bash
+# Verify all Docker port mappings bind to 127.0.0.1
+docker port $(docker ps -q --filter "name=n8n") 2>/dev/null
+# Expected: 5678/tcp -> 127.0.0.1:5678
+
+# FAIL if any port shows 0.0.0.0
+docker inspect --format='{{range $p, $conf := .NetworkSettings.Ports}}{{$p}} -> {{(index $conf 0).HostIp}}:{{(index $conf 0).HostPort}}{{"\n"}}{{end}}' $(docker ps -q --filter "name=n8n") 2>/dev/null
+```
+
+**Reduce LAN discoverability:**
+
+```bash
+# Disable AirDrop (already done in §2.7, verify here)
+defaults read com.apple.NetworkBrowser DisableAirDrop 2>/dev/null
+# Expected: 1
+
+# Verify mDNS advertisement is minimal
+# mDNS is used by Bonjour — disabling sharing services (§2.7) reduces advertisements
+# but mDNSResponder still runs. No supported way to fully disable mDNSResponder.
+```
+
+#### Verification
+
+```bash
+# Compare current listeners against baseline
+diff <(sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | awk '{print $1, $9}' | sort) \
+     <(cat ~/baseline-listeners-tcp.txt | awk '{print $1, $9}' | sort) || echo "Changes detected"
+
+# Quick check: any service on 0.0.0.0 that shouldn't be?
+sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep '0.0.0.0\|*:' | grep -v sshd
+# Expected: empty (n8n should be on 127.0.0.1, not 0.0.0.0)
+```
+
+#### Edge Cases and Warnings
+
+- **Baseline maintenance**: Recreate the baseline after legitimate software installations or configuration changes.
+- **Ephemeral ports**: Some services use ephemeral ports that change on restart. Focus baseline comparison on the process name and well-known ports.
+- **macOS updates**: New macOS versions can introduce new listening services. Re-baseline after upgrades.
+- **Docker default behavior**: Docker binds to `0.0.0.0` by default. Always specify `127.0.0.1:` in port mappings (§4.3).
+
+**Audit checks**: `CHK-LISTENERS-BASELINE` (WARN) → §3.6
 
 ---
 
