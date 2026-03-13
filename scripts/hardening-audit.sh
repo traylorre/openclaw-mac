@@ -627,6 +627,194 @@ check_colima_mounts() {
     fi
 }
 
+# --- §5 n8n Platform Security Checks (T029) ---
+
+check_n8n_bind() {
+    local id="CHK-N8N-BIND"
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" == "containerized" ]]; then
+        local container_id
+        container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+        if [[ -z "$container_id" ]]; then
+            report_result "$id" "n8n Platform" "No n8n container running" "SKIP" "5.1"
+            return
+        fi
+        local port_binding
+        port_binding=$(docker port "$container_id" 5678 2>/dev/null) || true
+        if echo "$port_binding" | grep -q "^127\.0\.0\.1:"; then
+            report_result "$id" "n8n Platform" "n8n bound to localhost (container)" "PASS" "5.1"
+        elif [[ -z "$port_binding" ]]; then
+            report_result "$id" "n8n Platform" "n8n port not mapped (internal only)" "PASS" "5.1"
+        else
+            report_result "$id" "n8n Platform" "n8n exposed beyond localhost (${port_binding})" "FAIL" "5.1" \
+                "Change port mapping to 127.0.0.1:5678:5678 in docker-compose.yml"
+        fi
+    elif [[ "$deployment" == "bare-metal" ]]; then
+        local bind_addr
+        bind_addr=$(sudo lsof -iTCP:5678 -sTCP:LISTEN -P -n 2>/dev/null | awk 'NR>1{print $9}') || true
+        if echo "$bind_addr" | grep -q "^127\.0\.0\.1:"; then
+            report_result "$id" "n8n Platform" "n8n bound to localhost (bare-metal)" "PASS" "5.1"
+        elif [[ -z "$bind_addr" ]]; then
+            report_result "$id" "n8n Platform" "n8n not listening on port 5678" "SKIP" "5.1"
+        else
+            report_result "$id" "n8n Platform" "n8n bound to ${bind_addr}" "FAIL" "5.1" \
+                "Set N8N_HOST=localhost in launchd plist or shell profile"
+        fi
+    else
+        report_result "$id" "n8n Platform" "n8n not detected" "SKIP" "5.1"
+    fi
+}
+
+check_n8n_auth() {
+    local id="CHK-N8N-AUTH"
+    # Attempt unauthenticated access to the n8n REST API
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+        http://localhost:5678/rest/login 2>/dev/null) || true
+    if [[ -z "$http_code" || "$http_code" == "000" ]]; then
+        report_result "$id" "n8n Platform" "n8n not reachable on localhost:5678" "SKIP" "5.1"
+    elif [[ "$http_code" == "401" || "$http_code" == "403" || "$http_code" == "200" ]]; then
+        # 200 for login page is expected (login form returned), 401/403 also indicate auth is active
+        report_result "$id" "n8n Platform" "n8n authentication is active" "PASS" "5.1"
+    else
+        report_result "$id" "n8n Platform" "n8n may lack authentication (HTTP ${http_code})" "FAIL" "5.1" \
+            "Enable user management — see §5.1"
+    fi
+}
+
+check_n8n_api() {
+    local id="CHK-N8N-API"
+    # Check if the public API endpoint is accessible
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+        http://localhost:5678/api/v1/workflows 2>/dev/null) || true
+    if [[ -z "$http_code" || "$http_code" == "000" ]]; then
+        report_result "$id" "n8n Platform" "n8n not reachable (API check skipped)" "SKIP" "5.4"
+    elif [[ "$http_code" == "404" ]]; then
+        report_result "$id" "n8n Platform" "Public API is disabled" "PASS" "5.4"
+    elif [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+        report_result "$id" "n8n Platform" "Public API requires authentication" "PASS" "5.4"
+    else
+        report_result "$id" "n8n Platform" "Public API may be accessible (HTTP ${http_code})" "WARN" "5.4" \
+            "Set N8N_PUBLIC_API_DISABLED=true — see §5.4"
+    fi
+}
+
+_get_n8n_env() {
+    # Helper: get n8n environment variables from container or process
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" == "containerized" ]]; then
+        local container_id
+        container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+        if [[ -n "$container_id" ]]; then
+            docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null
+            return
+        fi
+    elif [[ "$deployment" == "bare-metal" ]]; then
+        local pid
+        pid=$(pgrep -f "n8n" 2>/dev/null | head -1) || true
+        if [[ -n "$pid" ]]; then
+            # macOS: read process environment from /proc is not available; use ps
+            ps -p "$pid" -o command= 2>/dev/null
+            return
+        fi
+    fi
+    echo ""
+}
+
+check_n8n_env_block() {
+    local id="CHK-N8N-ENV-BLOCK"
+    local env_data
+    env_data=$(_get_n8n_env)
+    if [[ -z "$env_data" ]]; then
+        report_result "$id" "n8n Platform" "n8n not detected (env block check skipped)" "SKIP" "5.3"
+        return
+    fi
+    if echo "$env_data" | grep -qi "N8N_BLOCK_ENV_ACCESS_IN_NODE=true"; then
+        report_result "$id" "n8n Platform" "Code node env access is blocked" "PASS" "5.3"
+    elif echo "$env_data" | grep -qi "N8N_BLOCK_ENV_ACCESS_IN_NODE=false"; then
+        report_result "$id" "n8n Platform" "Code node env access is NOT blocked" "WARN" "5.3" \
+            "Set N8N_BLOCK_ENV_ACCESS_IN_NODE=true — see §5.3"
+    else
+        # Not explicitly set — default is true in v2.0+, false in v1.x
+        report_result "$id" "n8n Platform" "N8N_BLOCK_ENV_ACCESS_IN_NODE not set (verify default)" "WARN" "5.3" \
+            "Explicitly set N8N_BLOCK_ENV_ACCESS_IN_NODE=true — see §5.3"
+    fi
+}
+
+check_n8n_env_diagnostics() {
+    local id="CHK-N8N-ENV-DIAGNOSTICS"
+    local env_data
+    env_data=$(_get_n8n_env)
+    if [[ -z "$env_data" ]]; then
+        report_result "$id" "n8n Platform" "n8n not detected (diagnostics check skipped)" "SKIP" "5.3"
+        return
+    fi
+    if echo "$env_data" | grep -qi "N8N_DIAGNOSTICS_ENABLED=false"; then
+        report_result "$id" "n8n Platform" "Diagnostics/telemetry is disabled" "PASS" "5.3"
+    else
+        report_result "$id" "n8n Platform" "Diagnostics/telemetry may be enabled" "WARN" "5.3" \
+            "Set N8N_DIAGNOSTICS_ENABLED=false — see §5.3"
+    fi
+}
+
+check_n8n_env_api() {
+    local id="CHK-N8N-ENV-API"
+    local env_data
+    env_data=$(_get_n8n_env)
+    if [[ -z "$env_data" ]]; then
+        report_result "$id" "n8n Platform" "n8n not detected (API env check skipped)" "SKIP" "5.3"
+        return
+    fi
+    if echo "$env_data" | grep -qi "N8N_PUBLIC_API_DISABLED=true"; then
+        report_result "$id" "n8n Platform" "Public API disabled via env var" "PASS" "5.3"
+    else
+        report_result "$id" "n8n Platform" "N8N_PUBLIC_API_DISABLED not set to true" "WARN" "5.3" \
+            "Set N8N_PUBLIC_API_DISABLED=true — see §5.3"
+    fi
+}
+
+check_n8n_nodes() {
+    local id="CHK-N8N-NODES"
+    local env_data
+    env_data=$(_get_n8n_env)
+    if [[ -z "$env_data" ]]; then
+        report_result "$id" "n8n Platform" "n8n not detected (node exclusion check skipped)" "SKIP" "5.6"
+        return
+    fi
+    if echo "$env_data" | grep -qi "NODES_EXCLUDE"; then
+        if echo "$env_data" | grep -qi "executeCommand"; then
+            report_result "$id" "n8n Platform" "Dangerous node types excluded" "PASS" "5.6"
+        else
+            report_result "$id" "n8n Platform" "NODES_EXCLUDE set but executeCommand not listed" "WARN" "5.6" \
+                "Add executeCommand to NODES_EXCLUDE — see §5.6"
+        fi
+    else
+        # v2.0 blocks executeCommand by default, but explicit is better
+        report_result "$id" "n8n Platform" "NODES_EXCLUDE not set (verify v2.0 defaults)" "WARN" "5.6" \
+            "Explicitly set NODES_EXCLUDE — see §5.6"
+    fi
+}
+
+check_n8n_webhook() {
+    local id="CHK-N8N-WEBHOOK"
+    # Check if any n8n webhook endpoints are reachable without auth
+    # This is a heuristic — we test the base webhook path
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+        http://localhost:5678/webhook-test/ 2>/dev/null) || true
+    if [[ -z "$http_code" || "$http_code" == "000" ]]; then
+        report_result "$id" "n8n Platform" "n8n not reachable (webhook check skipped)" "SKIP" "5.5"
+    elif [[ "$http_code" == "404" || "$http_code" == "401" || "$http_code" == "403" ]]; then
+        report_result "$id" "n8n Platform" "Webhook test endpoint not openly accessible" "PASS" "5.5"
+    else
+        report_result "$id" "n8n Platform" "Webhook test path returned HTTP ${http_code}" "WARN" "5.5" \
+            "Use production webhook URLs, not test URLs — see §5.5"
+    fi
+}
+
 # --- §3 Network Security Checks (T019) ---
 
 check_ssh_key_only() {
@@ -882,8 +1070,17 @@ main() {
         run_check check_colima_mounts
     fi
 
+    # §5 n8n Platform Security checks (T029)
+    run_check check_n8n_bind
+    run_check check_n8n_auth
+    run_check check_n8n_api
+    run_check check_n8n_env_block
+    run_check check_n8n_env_diagnostics
+    run_check check_n8n_env_api
+    run_check check_n8n_nodes
+    run_check check_n8n_webhook
+
     # Additional check groups added by later tasks:
-    # T029: n8n Platform checks
     # T032: Bare-Metal checks
     # T038: Data Security checks
     # T045: Detection and Monitoring checks

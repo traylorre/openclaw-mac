@@ -40,4 +40,12 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-DOCKER-SOCKET | FAIL | containerized | §4.3 | T024 |
 | CHK-SECRETS-ENV | WARN | containerized | §4.3 | T024 |
 | CHK-COLIMA-MOUNTS | WARN | containerized | §4.3 | T024 |
-<!-- New checks added by T029, T032, T038, T045, T050, T058 -->
+| CHK-N8N-BIND | FAIL | both | §5.1 | T029 |
+| CHK-N8N-AUTH | FAIL | both | §5.1 | T029 |
+| CHK-N8N-API | WARN | both | §5.4 | T029 |
+| CHK-N8N-ENV-BLOCK | WARN | both | §5.3 | T029 |
+| CHK-N8N-ENV-DIAGNOSTICS | WARN | both | §5.3 | T029 |
+| CHK-N8N-ENV-API | WARN | both | §5.3 | T029 |
+| CHK-N8N-NODES | WARN | both | §5.6 | T029 |
+| CHK-N8N-WEBHOOK | WARN | both | §5.5 | T029 |
+<!-- New checks added by T032, T038, T045, T050, T058 -->

@@ -46,12 +46,26 @@ services:
 
     # Non-sensitive environment variables only (FR-058)
     # Sensitive values loaded by entrypoint script from /run/secrets/
+    # See docs/HARDENING.md §5.3 for full reference
     environment:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_LOG_LEVEL=info
+      # Security hardening (§5.3)
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true        # Prevent Code nodes from reading env vars
+      - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/.n8n  # Restrict Code node filesystem access
+      - N8N_PUBLIC_API_DISABLED=true              # Disable REST API unless needed
+      - N8N_MFA_ENABLED=true                      # Enable TOTP 2FA support
+      # Dangerous node exclusion (§5.6)
+      - NODES_EXCLUDE=["n8n-nodes-base.executeCommand","n8n-nodes-base.ssh","n8n-nodes-base.localFileTrigger"]
+      # Telemetry/information leakage (§5.3)
       - N8N_DIAGNOSTICS_ENABLED=false
-      - N8N_PUBLIC_API_DISABLED=true
+      - N8N_TEMPLATES_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=false
+      - N8N_PERSONALIZATION_ENABLED=false
+      # Execution data retention
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
 
     # Security hardening (FR-041)
     cap_drop:
