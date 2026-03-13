@@ -10,12 +10,13 @@ readonly SCRIPT_NAME="$(basename "$0")"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Auto-disable colors when stdout is not a terminal
 if [[ ! -t 1 ]]; then
-    RED='' GREEN='' YELLOW='' BOLD='' NC=''
+    RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
 fi
 
 # --- Counters ---
@@ -33,6 +34,9 @@ NO_COLOR=false
 
 # --- JSON accumulator ---
 JSON_RESULTS="[]"
+
+# --- Current section for grouped output ---
+CURRENT_SECTION=""
 
 # --- Platform Check ---
 check_platform() {
@@ -66,20 +70,31 @@ Usage: ${SCRIPT_NAME} [OPTIONS]
 macOS hardening audit for n8n + Apify deployments.
 
 Options:
-  --json         Output results as JSON
-  --section SEC  Run only checks for the given section (e.g., "os", "network")
-  --quiet        Suppress PASS and WARN results (show only FAIL)
-  --no-color     Disable colored output
+  --json         Output results in JSON format (FR-023)
+  --section SEC  Run checks for a specific section only
+  --quiet        Suppress PASS output, show only FAIL/WARN
+  --no-color     Disable colored output (for piping/logging)
   --version      Show version and exit
   --help         Show this help message and exit
 
 Exit Codes:
-  0  All checks passed
-  1  One or more checks failed
-  2  Script error
+  0  All checks passed (zero FAIL results)
+  1  One or more FAIL results
+  2  Script error (missing dependency, permission denied)
 
 See docs/HARDENING.md §11 for full documentation.
 EOF
+}
+
+# --- Section Header ---
+# Prints a section header for grouped human-readable output
+print_section_header() {
+    local section="$1"
+    if ! $JSON_OUTPUT && [[ "$section" != "$CURRENT_SECTION" ]]; then
+        CURRENT_SECTION="$section"
+        echo ""
+        echo "[Section: ${section}]"
+    fi
 }
 
 # --- Result Reporting ---
@@ -108,7 +123,7 @@ report_result() {
     # JSON accumulation
     if $JSON_OUTPUT; then
         local json_entry
-        json_entry=$(printf '{"id":"%s","section":"%s","description":"%s","status":"%s","guide_ref":"%s"' \
+        json_entry=$(printf '{"id":"%s","section":"%s","description":"%s","status":"%s","guide_ref":"§%s"' \
             "$id" "$section" "$description" "$status" "$guide_ref")
         if [[ -n "$remediation" ]]; then
             json_entry="${json_entry},\"remediation\":\"${remediation}\"}"
@@ -124,10 +139,13 @@ report_result() {
         return
     fi
 
-    # Quiet mode: suppress PASS and WARN
-    if $QUIET && [[ "$status" == "PASS" || "$status" == "WARN" ]]; then
+    # Quiet mode: suppress PASS output, show FAIL/WARN
+    if $QUIET && [[ "$status" == "PASS" ]]; then
         return
     fi
+
+    # Print section header if new section
+    print_section_header "$section"
 
     # Terminal output
     local color=""
@@ -135,10 +153,10 @@ report_result() {
         PASS) color="$GREEN" ;;
         FAIL) color="$RED" ;;
         WARN) color="$YELLOW" ;;
-        SKIP) color="" ;;
+        SKIP) color="$CYAN" ;;
     esac
 
-    printf "${color}[%s]${NC} %-8s %s -> §%s\n" "$status" "$id" "$description" "$guide_ref"
+    printf "  ${color}%-4s${NC}  %-44s → §%s\n" "$status" "$description" "$guide_ref"
 }
 
 # --- Check Runner ---
@@ -154,49 +172,49 @@ run_check() {
 # Checks are added by implementation tasks (T009, T014, T019, etc.)
 
 check_sip() {
-    local id="CHK-OS-001"
+    local id="CHK-SIP"
     local output
     output=$(csrutil status 2>&1) || true
     if echo "$output" | grep -q "enabled"; then
-        report_result "$id" "os" "System Integrity Protection enabled" "PASS" "2.3"
+        report_result "$id" "System Integrity Protection" "SIP is enabled" "PASS" "2.3"
     else
-        report_result "$id" "os" "System Integrity Protection disabled" "FAIL" "2.3" \
+        report_result "$id" "System Integrity Protection" "SIP is disabled" "FAIL" "2.3" \
             "Enable SIP: boot to Recovery Mode and run 'csrutil enable'"
     fi
 }
 
 check_filevault() {
-    local id="CHK-OS-002"
+    local id="CHK-FILEVAULT"
     local output
     output=$(fdesetup status 2>&1) || true
     if echo "$output" | grep -q "On"; then
-        report_result "$id" "os" "FileVault disk encryption enabled" "PASS" "2.1"
+        report_result "$id" "Disk Encryption" "FileVault is enabled" "PASS" "2.1"
     else
-        report_result "$id" "os" "FileVault disk encryption disabled" "FAIL" "2.1" \
+        report_result "$id" "Disk Encryption" "FileVault is disabled" "FAIL" "2.1" \
             "Enable FileVault: sudo fdesetup enable"
     fi
 }
 
 check_firewall() {
-    local id="CHK-OS-003"
+    local id="CHK-FIREWALL"
     local output
     output=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1) || true
     if echo "$output" | grep -q "enabled"; then
-        report_result "$id" "os" "Application firewall enabled" "PASS" "2.2"
+        report_result "$id" "Firewall" "Application firewall is enabled" "PASS" "2.2"
     else
-        report_result "$id" "os" "Application firewall disabled" "FAIL" "2.2" \
+        report_result "$id" "Firewall" "Application firewall is disabled" "FAIL" "2.2" \
             "Enable firewall: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on"
     fi
 }
 
 check_stealth_mode() {
-    local id="CHK-OS-004"
+    local id="CHK-STEALTH"
     local output
     output=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode 2>&1) || true
     if echo "$output" | grep -q "enabled"; then
-        report_result "$id" "os" "Firewall stealth mode enabled" "PASS" "2.2"
+        report_result "$id" "Firewall" "Stealth mode is enabled" "PASS" "2.2"
     else
-        report_result "$id" "os" "Firewall stealth mode disabled" "WARN" "2.2" \
+        report_result "$id" "Firewall" "Stealth mode is not enabled" "WARN" "2.2" \
             "Enable stealth mode: sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on"
     fi
 }
@@ -224,7 +242,7 @@ main() {
                 ;;
             --no-color)
                 NO_COLOR=true
-                RED='' GREEN='' YELLOW='' BOLD='' NC=''
+                RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
                 shift
                 ;;
             --version)
@@ -243,6 +261,11 @@ main() {
         esac
     done
 
+    # Warn if --json used without jq
+    if $JSON_OUTPUT && ! command -v jq &>/dev/null; then
+        echo "Warning: jq not found — JSON output will not be pretty-printed" >&2
+    fi
+
     check_platform
 
     local deployment
@@ -253,9 +276,11 @@ main() {
     hardware=$(uname -m 2>/dev/null || echo "unknown")
 
     if ! $JSON_OUTPUT; then
-        echo "${BOLD}macOS Hardening Audit${NC}"
-        echo "macOS ${macos_version} | ${hardware} | Deployment: ${deployment}"
-        echo "---"
+        echo "================================================================"
+        echo "  OpenClaw Mac Hardening Audit"
+        printf "  Version: %s | Date: %s\n" "$VERSION" "$(date +%Y-%m-%d)"
+        printf "  Deployment: %s | macOS: %s\n" "$deployment" "$macos_version"
+        echo "================================================================"
     fi
 
     # --- Run All Checks ---
@@ -305,13 +330,18 @@ main() {
             echo "$json_output"
         fi
     else
-        echo "---"
-        printf "Results: ${GREEN}%d PASS${NC} | ${RED}%d FAIL${NC} | ${YELLOW}%d WARN${NC}" \
+        echo ""
+        echo "================================================================"
+        printf "  Results: ${GREEN}%d PASS${NC} | ${RED}%d FAIL${NC} | ${YELLOW}%d WARN${NC}" \
             "$PASS_COUNT" "$FAIL_COUNT" "$WARN_COUNT"
         if [[ $SKIP_COUNT -gt 0 ]]; then
-            printf " | %d SKIP" "$SKIP_COUNT"
+            printf " | ${CYAN}%d SKIP${NC}" "$SKIP_COUNT"
         fi
         echo ""
+        if [[ $FAIL_COUNT -gt 0 ]]; then
+            printf "  Action required: Fix %d FAIL item(s) (see referenced sections)\n" "$FAIL_COUNT"
+        fi
+        echo "================================================================"
     fi
 
     # Exit code: 1 if any FAIL, 0 otherwise
