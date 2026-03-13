@@ -1,8 +1,8 @@
+# NetworkChuck Style: macOS Sonoma (14) Hardening Addendum
+
 > **DEPRECATED**: This document has been superseded by the comprehensive
 > [macOS Hardening Guide](HARDENING.md). See §2 for OS foundation controls
 > covering both Sonoma and Tahoe.
-
-# NetworkChuck Style: macOS Sonoma (14) Hardening Addendum
 
 > *"You're on Sonoma? Fine. But don't let your guard down just because it's not Tahoe yet!"*
 
