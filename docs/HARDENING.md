@@ -384,6 +384,7 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
 - **macOS updates can reset firewall state**: After macOS upgrades, verify the firewall is still enabled (§10.3 post-update checklist).
 - **Application-level vs packet-level**: The macOS application firewall operates at the application level. For packet-level filtering (IP/port rules), use `pf` (§3.3).
 - **Signed applications bypass**: By default, signed applications can receive incoming connections. Use `--setallowsigned off` for stricter control, but test first — this can break macOS services.
+- **Tahoe vs Sonoma**: On Tahoe (macOS 26), the application firewall persists more reliably across updates but may reset after major upgrades. Sonoma (macOS 14) is more prone to firewall state resets during minor updates. On both versions, verify firewall state after any system update. Tahoe also adds improved logging granularity for blocked connections via `log show --predicate 'subsystem == "com.apple.alf"'`.
 
 **Audit checks**: `CHK-FIREWALL` (FAIL), `CHK-STEALTH` (WARN) → §2.2
 
@@ -1065,7 +1066,10 @@ mdutil -s /path/to/n8n/data 2>/dev/null
 - **TCC database access**: Reading the TCC database requires Full Disk Access for the querying process. The audit script will attempt to check TCC but may report SKIP if permissions are insufficient.
 - **Spotlight exclusion timing**: Adding Spotlight exclusions does not remove previously indexed data. You must rebuild the index (`mdutil -E /`) to purge stale entries containing PII.
 - **Configuration profiles**: Legitimate management software (MDM) may install profiles. Verify with your IT department before removing profiles you don't recognize.
-- **Tahoe TCC changes**: On Tahoe, the Local Network Privacy prompt is more strictly enforced, which may affect network operations. Test after upgrading.
+- **Tahoe TCC changes**: On Tahoe (macOS 26), TCC enforcement is stricter across the board. Key differences from Sonoma (macOS 14):
+  - **Local Network Privacy**: Tahoe requires explicit user consent for any process that accesses the local network (mDNS, Bonjour, multicast). This affects n8n workflows that interact with LAN services, Colima's VM networking, and tools like `nmap` or `arp-scan`. On Sonoma, these prompts are less frequent. If running headless, pre-approve network access via `tccutil` or a configuration profile before going headless — prompts cannot be answered without a GUI session.
+  - **Background service TCC**: Launch daemons on Tahoe may trigger additional consent prompts when accessing protected resources (contacts, calendar, camera, microphone). Ensure `_n8n` service account has no unnecessary TCC grants.
+  - **Automation permissions**: AppleScript and `osascript` commands (used for notification fallback in §10.2) require explicit Automation permission grants on Tahoe.
 - **Docker build cache**: If using custom Dockerfiles, `docker builder prune` removes cached layers that may contain sensitive data. See §4.4.
 
 **Audit checks**: `CHK-TCC` (WARN), `CHK-CORE-DUMPS` (WARN), `CHK-PRIVACY` (WARN), `CHK-PROFILES` (WARN), `CHK-SPOTLIGHT` (WARN) → §2.10
@@ -1963,7 +1967,7 @@ docker inspect $(docker compose ps -q n8n) --format '{{.Config.Env}}' | grep -i 
 - **Volume ownership**: If the named volume is owned by a different UID, fix with: `docker compose exec n8n chown -R 1000:1000 /home/node/.n8n`
 - **Image digest pinning**: For production, replace `:latest` with a digest: `n8nio/n8n@sha256:...`. Get the digest: `docker inspect n8nio/n8n:latest | jq -r '.[0].RepoDigests'`
 
-**Audit checks**: `CHK-CONTAINER-ROOT` (FAIL), `CHK-CONTAINER-READONLY` (WARN), `CHK-CONTAINER-CAPS` (WARN), `CHK-CONTAINER-PRIVILEGED` (FAIL), `CHK-DOCKER-SOCKET` (FAIL), `CHK-SECRETS-ENV` (WARN), `CHK-COLIMA-MOUNTS` (WARN) → §4.3
+**Audit checks**: `CHK-CONTAINER-ROOT` (FAIL), `CHK-CONTAINER-READONLY` (WARN), `CHK-CONTAINER-CAPS` (WARN), `CHK-CONTAINER-PRIVILEGED` (FAIL), `CHK-DOCKER-SOCKET` (FAIL), `CHK-SECRETS-ENV` (WARN), `CHK-COLIMA-MOUNTS` (WARN), `CHK-CONTAINER-NETWORK` (FAIL), `CHK-CONTAINER-RESOURCES` (WARN) → §4
 
 ### 4.4 Advanced Container Hardening
 
@@ -3070,6 +3074,7 @@ ps -p "$(pgrep -f 'n8n start')" -o args= 2>/dev/null
 - **Plist syntax errors**: Use `plutil -lint /Library/LaunchDaemons/com.openclaw.n8n.plist` to validate XML before loading.
 - **Log rotation**: launchd does not rotate logs. Configure `newsyslog` or a manual rotation script for `/opt/n8n/logs/` (§10.4).
 - **`launchctl bootstrap` vs `load`**: On macOS 10.11+, Apple recommends `launchctl bootstrap system /path/to/plist`. Both work; `load` is more widely documented.
+- **Tahoe vs Sonoma**: Tahoe (macOS 26) enforces stricter background service restrictions — unsigned or ad-hoc signed launch daemons may trigger additional TCC prompts or Gatekeeper blocks on first load. Ensure the `start-n8n.sh` script is not quarantined (`xattr -d com.apple.quarantine /opt/n8n/start-n8n.sh`). Sonoma (macOS 14) is more permissive with LaunchDaemon loading but still requires root ownership. On Tahoe, `launchctl bootstrap` is the preferred method over `launchctl load` (which Apple marks deprecated). Both versions honor `KeepAlive` and `RunAtLoad` identically.
 
 ### 6.4 Filesystem Permissions
 
@@ -4154,23 +4159,884 @@ security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null |
 
 ### 9.1 Incident Response Runbook
 
-<!-- Content: T044 -->
+**Threat**: An active compromise or security breach goes undetected or is handled incorrectly, allowing the attacker to maintain access, exfiltrate data, or destroy evidence
+**Layer**: Respond
+**Deployment**: Both
+**Source**: [NIST SP 800-61 Rev 2](https://csrc.nist.gov/publications/detail/sp/800-61/rev-2/final) (Computer Security Incident Handling Guide), [NIST Cybersecurity Framework](https://www.nist.gov/cyberframework) (Respond function)
+
+#### Why This Matters
+
+When a security incident occurs on this Mac Mini, the operator must act quickly and methodically. Poor incident handling — rebooting prematurely, failing to preserve evidence, or rotating only some credentials — can extend the breach, destroy forensic evidence, or leave the attacker with persistent access. This runbook provides a step-by-step procedure that can be followed under pressure without consulting external documentation (SC-025).
+
+#### Severity Classification
+
+Before taking action, classify the incident to prioritize your response:
+
+| Severity | Indicators | Response Time |
+|----------|-----------|---------------|
+| **Critical** | Active attacker confirmed: unauthorized processes running, data exfiltration in progress, modified workflows with unknown Code nodes, new SSH `authorized_keys` entries, unknown launch daemons executing | **Immediate** — proceed to Containment now |
+| **High** | Strong indicators without confirmed active presence: unexpected launch daemons/agents, n8n API access from unknown IP, audit checks that previously passed now FAIL, unknown Docker images | **Immediate** — proceed to Containment |
+| **Medium** | Suspicious but potentially benign: new outbound connections to unknown IPs, unfamiliar process names, minor configuration drift, unexpected file modifications | **Investigate within 24 hours** |
+| **Low** | Informational anomalies: audit WARN results, failed login attempts within normal bounds, software update available | **Log for trend analysis** |
+
+Critical and High severity incidents require immediate containment. Medium requires investigation within 24 hours. Low is logged and reviewed during regular security reviews.
+
+#### Step 1: Triage — Real Incident or False Positive?
+
+Run these checks to determine whether you are facing a real incident:
+
+```bash
+# Check for unexpected processes
+ps aux | grep -v "^$(whoami)" | grep -v "^root" | grep -v "^_"
+
+# Check for unknown launch daemons/agents
+ls -la /Library/LaunchDaemons/ /Library/LaunchAgents/ ~/Library/LaunchAgents/ 2>/dev/null
+# Compare against known items from §8.2 persistence baseline
+
+# Check for modified workflows (compare against baseline from §8.3)
+# Containerized:
+docker compose exec n8n n8n export:workflow --all --output=/tmp/current-workflows/ 2>/dev/null
+# Bare-metal:
+n8n export:workflow --all --output=/tmp/current-workflows/ 2>/dev/null
+# Compare SHA256 against your baseline manifest
+
+# Check for unexplained outbound connections
+lsof -i -nP | grep ESTABLISHED | grep -v "127.0.0.1"
+
+# Check for unexpected SSH authorized_keys
+cat ~/.ssh/authorized_keys 2>/dev/null
+# Compare against known keys — any unknown entries are Critical severity
+
+# Check for modified crontab
+crontab -l 2>/dev/null
+
+# Check for new or modified Docker images (containerized)
+docker images --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.CreatedAt}}' 2>/dev/null
+
+# Check TCC permissions for changes (§2.10)
+sqlite3 ~/Library/Application\ Support/com.apple.TCC/TCC.db \
+    "SELECT client, service, auth_value FROM access;" 2>/dev/null
+```
+
+If any check reveals unauthorized changes, classify severity and proceed to Containment.
+
+#### Step 2: Containment — Limit the Damage
+
+**Do NOT reboot** — rebooting destroys volatile evidence (running processes, memory contents, network connections).
+
+```bash
+# 1. Disconnect from network IMMEDIATELY
+# Disable Wi-Fi:
+networksetup -setairportpower en0 off
+# Disable Ethernet (if applicable):
+networksetup -setnetworkserviceenabled "Ethernet" off
+# Or physically unplug the Ethernet cable
+
+# 2. Stop n8n to prevent further workflow execution
+# Containerized:
+docker compose stop
+# Bare-metal:
+launchctl bootout system/com.openclaw.n8n 2>/dev/null || true
+pkill -f "n8n start" 2>/dev/null || true
+
+# 3. Block all network at the firewall level (belt and suspenders)
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setblockall on
+```
+
+#### Step 3: Evidence Preservation
+
+Before any remediation, preserve evidence. If this incident may involve law enforcement or legal proceedings (GDPR breach, data theft), handle evidence to preserve admissibility.
+
+```bash
+# Create evidence directory on a SEPARATE device if possible
+EVIDENCE_DIR="/tmp/incident-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$EVIDENCE_DIR"
+
+# Record who is performing the investigation and when
+echo "Investigator: $(whoami)" > "$EVIDENCE_DIR/chain-of-custody.txt"
+echo "Started: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$EVIDENCE_DIR/chain-of-custody.txt"
+echo "System: $(hostname)" >> "$EVIDENCE_DIR/chain-of-custody.txt"
+
+# Capture running processes
+ps auxww > "$EVIDENCE_DIR/processes.txt"
+
+# Capture network connections
+lsof -i -nP > "$EVIDENCE_DIR/network-connections.txt"
+netstat -an > "$EVIDENCE_DIR/netstat.txt"
+
+# Capture launch daemons/agents
+ls -laR /Library/LaunchDaemons/ /Library/LaunchAgents/ ~/Library/LaunchAgents/ \
+    > "$EVIDENCE_DIR/launch-items.txt" 2>&1
+
+# Export macOS unified logs (last 24 hours)
+log show --last 24h --predicate '
+    process == "sshd" OR
+    subsystem == "com.apple.alf" OR
+    subsystem == "com.apple.TCC" OR
+    process == "loginwindow"
+' > "$EVIDENCE_DIR/system-logs.txt" 2>&1
+
+# Capture n8n logs
+# Containerized:
+docker compose logs --no-color > "$EVIDENCE_DIR/n8n-logs.txt" 2>&1
+# Bare-metal:
+cp /opt/n8n/logs/*.log "$EVIDENCE_DIR/" 2>/dev/null
+
+# Capture Docker state (containerized)
+docker ps -a --no-trunc > "$EVIDENCE_DIR/docker-containers.txt" 2>/dev/null
+docker images --no-trunc > "$EVIDENCE_DIR/docker-images.txt" 2>/dev/null
+
+# Capture crontab
+crontab -l > "$EVIDENCE_DIR/crontab.txt" 2>&1
+
+# Capture SSH authorized_keys
+cp ~/.ssh/authorized_keys "$EVIDENCE_DIR/authorized_keys.txt" 2>/dev/null
+
+# Capture user accounts
+dscl . list /Users > "$EVIDENCE_DIR/user-accounts.txt"
+
+# Generate SHA256 hashes of all evidence files
+cd "$EVIDENCE_DIR" && shasum -a 256 * > checksums.sha256
+echo "Evidence collected: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> chain-of-custody.txt
+```
+
+**Critical**: Copy the evidence directory to a separate, trusted device (USB drive, another computer) immediately. An attacker who compromises this Mac Mini could modify evidence left on it.
+
+```bash
+# Create a forensic disk image if the incident may involve legal proceedings
+# WARNING: This requires significant disk space
+sudo hdiutil create -srcdevice /dev/disk0 \
+    -format UDRO "$EVIDENCE_DIR/disk-image.dmg" 2>/dev/null
+# Record the hash
+shasum -a 256 "$EVIDENCE_DIR/disk-image.dmg" >> "$EVIDENCE_DIR/checksums.sha256"
+```
+
+#### Step 4: Assessment — Credential Blast Radius
+
+Determine which credentials may be compromised. **Assume complete compromise** — if the attacker had access to the Mac Mini, they potentially had access to everything on it:
+
+| Credential | Storage Location | Blast Radius |
+|-----------|-----------------|-------------|
+| Mac Mini login password | macOS Keychain | SSH access, sudo, all local services |
+| SSH keys | `~/.ssh/` | All remote systems these keys authenticate to |
+| N8N_ENCRYPTION_KEY | Environment / `.env` | Decrypts all n8n-stored credentials |
+| n8n web UI password | n8n database | n8n admin access, workflow modification |
+| n8n API keys | n8n database | Programmatic n8n access |
+| Apify API key | n8n credentials store | Apify account, scraping operations |
+| LinkedIn session tokens | n8n credentials store | LinkedIn account, scraped data |
+| SMTP credentials | n8n credentials store / env | Email sending capability |
+| Docker registry creds | `~/.docker/config.json` | Docker image pull/push |
+
+#### Step 5: Recovery
+
+1. **Restore from known-good backup** (§9.3) — do NOT attempt to clean a compromised system
+2. **Re-harden from this guide** — follow the hardening procedures from §2 onward
+3. **Rotate ALL credentials** — follow the emergency credential rotation procedure in §9.2. Rotate everything, not just what you know was compromised
+4. **Verify restore** — run the audit script after recovery:
+
+```bash
+./scripts/hardening-audit.sh
+# All checks should PASS before returning to production
+```
+
+1. **Re-enable network** only after hardening is verified:
+
+```bash
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setblockall off
+networksetup -setairportpower en0 on
+```
+
+#### Step 6: Notification Obligations
+
+If PII lead data (LinkedIn profiles, emails, phone numbers) was exposed:
+
+- **GDPR**: Notify the supervisory authority within **72 hours** of becoming aware of the breach (Article 33). Notify affected individuals "without undue delay" if there is a high risk to their rights
+- **CCPA**: Notify affected California residents if unencrypted personal information was accessed
+- **LinkedIn ToS**: Review LinkedIn's terms — unauthorized data collection or exposure may require notification to LinkedIn
+
+#### When to Engage External Help
+
+- **Incident response firm**: If you cannot determine the scope of compromise, if the attacker appears to have persistent access you cannot remove, or if the attack is sophisticated (rootkit, firmware-level)
+- **Law enforcement**: If PII was stolen, if the attack appears targeted (nation-state, corporate espionage), or if your insurance requires it
+- **Legal counsel**: If GDPR/CCPA notification timelines are triggered (72 hours for GDPR) or if the breach involves contractual obligations
+
+#### Post-Incident Review
+
+After recovery is complete and the system is back in production, conduct a review:
+
+1. **Root cause**: How did the attacker gain access? Which control failed?
+2. **Timeline**: When did the compromise begin? When was it detected? What was the dwell time?
+3. **Control gaps**: What hardening measures from this guide were not in place? What additional controls are needed?
+4. **Backup/restore evaluation**: Did the backup and restore procedure work as expected? Was the RTO met?
+5. **Process gaps**: Did the incident response process itself have gaps? Was evidence preserved correctly?
+6. **Remediation verification**: Confirm all remediation actions were completed and verified
+7. **Lessons learned**: Document findings and update your local hardening notes
+
+> **Cross-reference**: Detection sources are documented in §8. The condensed, printable incident response checklist is in Appendix C.
 
 ### 9.2 Credential Rotation Procedures
 
-<!-- Content: T044 -->
+**Threat**: During an active breach, delayed or incomplete credential rotation leaves the attacker with valid credentials to regain access even after the system is restored
+**Layer**: Respond
+**Deployment**: Both
+**Source**: [NIST SP 800-61 Rev 2](https://csrc.nist.gov/publications/detail/sp/800-61/rev-2/final) (Incident Handling — eradication), [NIST SP 800-63B Section 5.1](https://pages.nist.gov/800-63-3/sp800-63b.html) (Authenticator Lifecycle)
+
+#### Why This Matters
+
+`[EDUCATIONAL]` During an incident, the attacker may have copies of every credential on the system. Rotating credentials in the wrong order can lock you out or break dependencies — for example, changing the N8N_ENCRYPTION_KEY without first re-encrypting the database makes all stored credentials unrecoverable. This runbook provides a dependency-ordered sequence designed to be completed within **2 hours** (SC-035).
+
+#### Emergency Credential Rotation Sequence
+
+Rotate in this exact order — credentials that protect other credentials are rotated first:
+
+**Step 1: Mac Mini login password** (~5 min)
+
+```bash
+# Change the login password (protects SSH and sudo access)
+# Use System Settings > Users & Groups, or:
+passwd
+# Verify: log out and log back in with the new password
+```
+
+- **What breaks**: Nothing immediately — active sessions remain until logout
+- **Update after**: Any password managers or documentation referencing this password
+
+**Step 2: SSH keys** (~10 min)
+
+```bash
+# Generate new SSH key pair
+ssh-keygen -t ed25519 -C "$(hostname)-$(date +%Y%m%d)" -f ~/.ssh/id_ed25519_new
+
+# Copy the new public key to all remote systems BEFORE removing the old one
+ssh-copy-id -i ~/.ssh/id_ed25519_new.pub user@remote-host
+
+# On EACH remote system, remove the old key from authorized_keys
+# ssh user@remote-host "sed -i.bak '/OLD_KEY_FINGERPRINT/d' ~/.ssh/authorized_keys"
+
+# Replace the old key locally
+mv ~/.ssh/id_ed25519 ~/.ssh/id_ed25519_compromised
+mv ~/.ssh/id_ed25519.pub ~/.ssh/id_ed25519_compromised.pub
+mv ~/.ssh/id_ed25519_new ~/.ssh/id_ed25519
+mv ~/.ssh/id_ed25519_new.pub ~/.ssh/id_ed25519.pub
+
+# Verify: SSH to a remote system with the new key
+ssh -i ~/.ssh/id_ed25519 user@remote-host "echo 'SSH key rotation verified'"
+```
+
+- **What breaks**: All SSH connections using the old key
+- **Update after**: Any scripts, CI/CD, or automated processes that use this SSH key
+
+**Step 3: N8N_ENCRYPTION_KEY** (~20 min)
+
+> **CRITICAL**: This key decrypts all n8n-stored credentials. You MUST export credentials BEFORE changing the key, or they are **permanently lost**.
+
+```bash
+# Record the current encryption key
+echo "Old key: $N8N_ENCRYPTION_KEY"
+
+# Export all credentials with the CURRENT key
+# Containerized:
+docker compose exec n8n n8n export:credentials --all --output=/tmp/creds-backup/
+# Bare-metal:
+n8n export:credentials --all --output=/tmp/creds-backup/
+
+# Generate a new encryption key
+NEW_KEY=$(openssl rand -hex 32)
+echo "New key: $NEW_KEY"
+
+# Update the encryption key in your environment
+# Containerized — update .env or docker-compose.yml:
+#   N8N_ENCRYPTION_KEY=<new_key>
+# Bare-metal — update the environment file:
+#   /opt/n8n/.env or launchd plist EnvironmentVariables
+
+# Restart n8n with the new key
+# Containerized:
+docker compose down && docker compose up -d
+# Bare-metal:
+launchctl bootout system/com.openclaw.n8n
+launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.n8n.plist
+
+# Re-import credentials (they will be re-encrypted with the new key)
+# Containerized:
+docker compose exec n8n n8n import:credentials --input=/tmp/creds-backup/
+# Bare-metal:
+n8n import:credentials --input=/tmp/creds-backup/
+
+# Verify: open n8n web UI, check that credentials are accessible
+# Run a test workflow that uses stored credentials
+
+# Securely delete the plaintext export
+rm -rf /tmp/creds-backup/
+```
+
+- **What breaks**: All n8n credential decryption until re-import completes
+- **Update after**: Store the new key in your password manager, update backup documentation
+
+**Step 4: n8n web UI / owner account password** (~5 min)
+
+```bash
+# Log into n8n web UI at https://localhost:5678
+# Settings > Personal > Change Password
+# Or reset via CLI:
+# Containerized:
+docker compose exec n8n n8n user-management:reset-password --email=admin@example.com
+# Bare-metal:
+n8n user-management:reset-password --email=admin@example.com
+
+# Verify: log out and log back in with the new password
+```
+
+- **What breaks**: Active n8n sessions
+- **Update after**: Any documentation or password managers with the old password
+
+**Step 5: n8n API keys** (~5 min, if API access is enabled)
+
+```bash
+# In n8n web UI: Settings > API > Regenerate API Key
+# Update any external systems that use the n8n API key
+# Verify: test API access with the new key
+curl -s -H "X-N8N-API-KEY: <new_key>" http://localhost:5678/api/v1/workflows | head -1
+```
+
+- **What breaks**: All external integrations using the old API key
+- **Update after**: Monitoring scripts, external automation, webhook configs
+
+**Step 6: Apify API key** (~5 min)
+
+```bash
+# Log into Apify console: https://console.apify.com/account/integrations
+# Regenerate API token
+# Update the credential in n8n: Credentials > Apify > Edit > paste new token
+# Verify: run a test Apify actor from n8n
+```
+
+- **What breaks**: All Apify actors triggered from n8n
+- **Update after**: Any scripts or automations using the Apify key directly
+
+**Step 7: LinkedIn session tokens / cookies** (~10 min)
+
+```bash
+# Force re-authentication:
+# 1. Log into LinkedIn from a trusted device
+# 2. Settings > Sign in & security > Where you're signed in
+# 3. Sign out of all sessions
+# 4. Change LinkedIn password
+# 5. Re-authenticate in n8n and update the stored session/cookies
+# Verify: run a test LinkedIn scraping workflow
+```
+
+- **What breaks**: All LinkedIn data collection workflows until re-authenticated
+- **Update after**: n8n LinkedIn credential entries
+
+**Step 8: SMTP relay credentials** (~5 min)
+
+```bash
+# Log into your SMTP relay provider (e.g., SendGrid, Mailgun, Amazon SES)
+# Regenerate or rotate the SMTP credentials/API key
+# Update in n8n credentials and notification configuration (§10.2)
+# Verify: send a test email
+echo "SMTP rotation test" | mail -s "Credential rotation test" your@email.com
+```
+
+- **What breaks**: Email notifications, any workflows that send email
+- **Update after**: Notification plist configuration, n8n SMTP credentials
+
+**Step 9: Docker registry credentials** (~5 min, if applicable)
+
+```bash
+# Log out of Docker registries
+docker logout
+# Re-authenticate with new credentials
+docker login -u <username>
+# Verify: pull an image
+docker pull n8nio/n8n:latest
+```
+
+- **What breaks**: Docker image pulls until re-authenticated
+- **Update after**: CI/CD pipelines, deployment scripts
+
+##### Step 10: Any additional credentials in your inventory
+
+Review your credential inventory (Appendix B) for any credentials not covered above. Rotate each one following the same pattern: change → update references → verify.
+
+#### Time Budget
+
+| Step | Credential | Estimated Time |
+|------|-----------|---------------|
+| 1 | Mac Mini password | 5 min |
+| 2 | SSH keys | 10 min |
+| 3 | N8N_ENCRYPTION_KEY | 20 min |
+| 4 | n8n web UI password | 5 min |
+| 5 | n8n API keys | 5 min |
+| 6 | Apify API key | 5 min |
+| 7 | LinkedIn sessions | 10 min |
+| 8 | SMTP credentials | 5 min |
+| 9 | Docker registry | 5 min |
+| 10 | Additional | 10 min |
+| | **Total** | **~80 min** |
+
+This leaves a 40-minute buffer within the 2-hour target for troubleshooting.
+
+#### Practice Runs
+
+**Strongly recommended**: Perform a dry run of this procedure before you need it under pressure. Walk through each step mentally or in a staging environment to verify you know where every credential is configured and how to update it. Time yourself — if you exceed 2 hours in practice, identify bottlenecks and document shortcuts.
+
+> **Cross-reference**: Routine credential rotation schedules are covered in §7.2. The credential inventory template is in Appendix B.
 
 ### 9.3 Backup and Recovery
 
-<!-- Content: T044 -->
+**Threat**: System failure, ransomware, or a compromised system requires rebuilding from scratch, but backups are missing, corrupted, unencrypted, or unrecoverable
+**Layer**: Respond
+**Deployment**: Both (path-specific procedures below)
+**Source**: [NIST SP 800-123 Section 5.3](https://csrc.nist.gov/publications/detail/sp/800-123/final) (Backup Procedures), [CIS Controls v8 Control 11](https://www.cisecurity.org/controls/data-recovery) (Data Recovery), [NIST SP 800-34 Rev 1](https://csrc.nist.gov/publications/detail/sp/800-34/rev-1/final) (Contingency Planning Guide)
+
+#### Why This Matters
+
+Without tested backups, any destructive event — disk failure, ransomware, or a confirmed compromise requiring a full rebuild — means starting from zero. Rebuilding n8n workflows from memory is error-prone and time-consuming. Backup encryption is critical because backups contain ALL secrets — the N8N_ENCRYPTION_KEY, stored credentials, workflow IP, and PII lead data. An attacker who can read backups achieves the same impact as compromising the live system.
+
+#### Recovery Objectives
+
+| Objective | Target | Rationale |
+|-----------|--------|-----------|
+| **RPO** (Recovery Point Objective) | 24 hours | Maximum acceptable data loss: 24 hours of workflow changes and execution data. Operators with high-frequency workflow changes should increase backup frequency |
+| **RTO** (Recovery Time Objective) | 2 hours total | Restore (~30 min per SC-016) + re-hardening verification via audit script + credential rotation if compromise is suspected |
+
+#### Backup Schedule
+
+| Backup Type | Frequency | Method |
+|------------|-----------|--------|
+| n8n workflows + credentials | **Daily** | `n8n export` or Docker volume snapshot |
+| Full system (Time Machine) | **Continuous/hourly** | macOS Time Machine (default) |
+| Offsite/remote copy | **Weekly** minimum | Encrypted transfer to remote storage |
+
+Automate via launchd (bare-metal) or a scheduled container job (containerized) — see §10.1 for scheduling setup.
+
+#### Containerized Backup Procedure
+
+```bash
+# 1. Export n8n workflows
+docker compose exec n8n n8n export:workflow --all \
+    --output=/tmp/n8n-backup/workflows/
+
+# 2. Export n8n credentials (encrypted with N8N_ENCRYPTION_KEY)
+docker compose exec n8n n8n export:credentials --all \
+    --output=/tmp/n8n-backup/credentials/
+
+# 3. Back up Docker volume data
+BACKUP_DATE=$(date +%Y%m%d-%H%M%S)
+docker compose stop
+docker run --rm \
+    -v n8n_data:/source:ro \
+    -v /opt/n8n/backups:/backup \
+    alpine tar czf "/backup/n8n-volume-${BACKUP_DATE}.tar.gz" -C /source .
+docker compose start
+
+# 4. Back up docker-compose.yml and .env
+cp docker-compose.yml "/opt/n8n/backups/docker-compose-${BACKUP_DATE}.yml"
+cp .env "/opt/n8n/backups/env-${BACKUP_DATE}" 2>/dev/null
+
+# 5. Back up Colima VM snapshot (if using Colima)
+colima snapshot save "backup-${BACKUP_DATE}" 2>/dev/null
+
+# 6. Generate integrity checksum
+cd /opt/n8n/backups && shasum -a 256 *-"${BACKUP_DATE}"* > "checksums-${BACKUP_DATE}.sha256"
+```
+
+#### Bare-Metal Backup Procedure
+
+```bash
+# 1. Export n8n workflows
+n8n export:workflow --all --output=/opt/n8n/backups/workflows/
+
+# 2. Export n8n credentials
+n8n export:credentials --all --output=/opt/n8n/backups/credentials/
+
+# 3. Back up n8n data directory
+BACKUP_DATE=$(date +%Y%m%d-%H%M%S)
+launchctl bootout system/com.openclaw.n8n 2>/dev/null || true
+tar czf "/opt/n8n/backups/n8n-data-${BACKUP_DATE}.tar.gz" \
+    -C /opt/n8n/data .
+launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.n8n.plist
+
+# 4. Back up service account configuration
+cp /Library/LaunchDaemons/com.openclaw.n8n.plist \
+    "/opt/n8n/backups/launchd-plist-${BACKUP_DATE}.plist"
+
+# 5. Back up environment file
+cp /opt/n8n/.env "/opt/n8n/backups/env-${BACKUP_DATE}" 2>/dev/null
+
+# 6. Generate integrity checksum
+cd /opt/n8n/backups && shasum -a 256 *-"${BACKUP_DATE}"* > "checksums-${BACKUP_DATE}.sha256"
+```
+
+#### Time Machine Configuration
+
+```bash
+# Enable Time Machine (encrypts backups on supported volumes)
+sudo tmutil enable
+
+# Verify Time Machine is encrypting backups
+tmutil destinationinfo | grep "Mount Point\|Name\|Kind"
+
+# Exclude sensitive directories from Time Machine if using a separate backup strategy
+# (prevents double-backup and reduces Time Machine disk usage)
+sudo tmutil addexclusion /opt/n8n/backups
+```
+
+> **Important**: Time Machine encryption uses the user's password — anyone with the password can decrypt the backup. For higher assurance, use a separate encrypted backup strategy (below).
+
+#### Backup Encryption
+
+ALL backups MUST be encrypted before being written to disk or transferred offsite:
+
+```bash
+# Encrypt a backup archive with GPG (free)
+gpg --symmetric --cipher-algo AES256 \
+    "/opt/n8n/backups/n8n-volume-${BACKUP_DATE}.tar.gz"
+# Produces: n8n-volume-${BACKUP_DATE}.tar.gz.gpg
+# Securely delete the unencrypted archive:
+rm -P "/opt/n8n/backups/n8n-volume-${BACKUP_DATE}.tar.gz"
+
+# Alternative: encrypt with OpenSSL
+openssl enc -aes-256-cbc -salt -pbkdf2 \
+    -in "/opt/n8n/backups/n8n-volume-${BACKUP_DATE}.tar.gz" \
+    -out "/opt/n8n/backups/n8n-volume-${BACKUP_DATE}.tar.gz.enc"
+rm -P "/opt/n8n/backups/n8n-volume-${BACKUP_DATE}.tar.gz"
+```
+
+**For n8n workflow exports**: `n8n export:workflow` exports workflows as plaintext JSON. If workflows contain hardcoded values or credential references, encrypt them before storage.
+
+#### Backup Access Control
+
+```bash
+# Restrict backup file permissions (owner-only read/write)
+chmod 600 /opt/n8n/backups/*
+
+# On bare-metal: backups MUST NOT be readable by the n8n service account
+# A compromised n8n should not be able to read its own backups
+sudo chown root:wheel /opt/n8n/backups/
+sudo chmod 700 /opt/n8n/backups/
+
+# On containerized: backup volumes MUST NOT be mounted into the n8n container
+# Verify docker-compose.yml does NOT mount the backup directory
+```
+
+#### N8N_ENCRYPTION_KEY Backup
+
+This key decrypts all stored n8n credentials. Special handling required:
+
+- **If lost**: All n8n credentials must be manually re-entered — they cannot be recovered
+- **If stolen**: All n8n credentials are compromised — rotate immediately (§9.2 Step 3)
+- **Storage**: Store separately from the data backup — in a password manager or physical safe. **NEVER** in the same backup archive as the n8n data it encrypts
+
+```bash
+# Store the encryption key securely (example: macOS Keychain on a DIFFERENT machine)
+security add-generic-password -a "n8n-encryption-key" -s "openclaw-backup" \
+    -w "$N8N_ENCRYPTION_KEY" -T "" 2>/dev/null
+# Or print and store in a physical safe:
+echo "N8N_ENCRYPTION_KEY=$N8N_ENCRYPTION_KEY" | lpr
+```
+
+#### Offsite Backup
+
+```bash
+# Transfer encrypted backups to remote storage via rsync over SSH
+rsync -avz --progress \
+    /opt/n8n/backups/*.gpg \
+    backup-user@remote-server:/backups/openclaw/
+
+# Verify transfer integrity
+ssh backup-user@remote-server \
+    "shasum -a 256 /backups/openclaw/*.gpg"
+# Compare against local checksums
+```
+
+Requirements for offsite storage:
+
+- Encryption in transit (TLS/SSH) — satisfied by rsync over SSH
+- Encryption at rest at destination — satisfied by GPG encryption before transfer
+- Dedicated access credentials (not the operator's main account)
+- Defined retention and deletion policy
+
+#### Backup Integrity Verification
+
+```bash
+# Verify checksums before relying on a backup for recovery
+cd /opt/n8n/backups
+shasum -a 256 -c "checksums-${BACKUP_DATE}.sha256"
+# All files should show "OK"
+```
+
+#### Emergency Rebuild from Scratch
+
+If ALL backups are corrupted or unavailable:
+
+1. Reinstall macOS from recovery mode (Command-R on Intel, hold power button on Apple Silicon)
+2. Follow this hardening guide from §2 onward
+3. Install n8n fresh (§4 containerized or §6 bare-metal)
+4. Manually recreate workflows from documentation or version control
+5. Re-enter all credentials manually
+6. Run the audit script to verify hardening
+7. Update your backup strategy to prevent recurrence
+
+#### Corrupted Backup Diagnosis
+
+```bash
+# Check if an encrypted backup can be decrypted
+gpg --decrypt --output /dev/null "backup-file.tar.gz.gpg" 2>&1
+# If this fails with "decryption failed" — wrong passphrase or corrupted
+
+# Check tar archive integrity
+tar tzf "backup-file.tar.gz" > /dev/null 2>&1
+echo "Exit code: $? (0 = OK, non-zero = corrupted)"
+
+# Verify SHA256 checksum
+shasum -a 256 -c checksums.sha256
+```
+
+**Audit check**: `CHK-BACKUP-CONFIGURED` (WARN) → §9.3
+**Audit check**: `CHK-BACKUP-ENCRYPTED` (WARN) → §9.3
 
 ### 9.4 Restore Testing
 
-<!-- Content: T044 -->
+**Threat**: Backups exist but cannot actually be restored — corrupted archives, missing encryption keys, incompatible formats, or untested procedures give false confidence
+**Layer**: Respond
+**Deployment**: Both
+**Source**: [NIST SP 800-123 Section 5.3](https://csrc.nist.gov/publications/detail/sp/800-123/final) (Backup Procedures), [CIS Controls v8 Control 11](https://www.cisecurity.org/controls/data-recovery) (Data Recovery)
+
+#### Why This Matters
+
+Untested backups provide false confidence. The only way to know your backups work is to test the restore procedure. This procedure is non-destructive — your current state is preserved and can be rolled back if the restore fails.
+
+#### Containerized Restore Test
+
+```bash
+# 1. Stop the running container
+docker compose stop
+
+# 2. Rename (NOT delete) the current Docker volume
+docker volume create n8n_data_backup
+docker run --rm \
+    -v n8n_data:/source:ro \
+    -v n8n_data_backup:/dest \
+    alpine sh -c "cp -a /source/. /dest/"
+
+# 3. Remove the current volume and restore from backup
+docker volume rm n8n_data
+docker volume create n8n_data
+docker run --rm \
+    -v n8n_data:/dest \
+    -v /opt/n8n/backups:/backup:ro \
+    alpine sh -c "tar xzf /backup/n8n-volume-YYYYMMDD-HHMMSS.tar.gz -C /dest"
+
+# 4. Start n8n and verify
+docker compose start
+
+# 5. Validation checks:
+# - n8n web UI is accessible
+# - All workflows are present (compare count)
+docker compose exec n8n n8n export:workflow --all --output=/tmp/restore-test/ 2>/dev/null
+ls /tmp/restore-test/ | wc -l
+# - Stored credentials decrypt correctly (test a workflow that uses them)
+# - Run a test workflow execution
+
+# 6. If restore test PASSES — clean up the backup volume
+docker volume rm n8n_data_backup
+
+# 6b. If restore test FAILS — roll back to pre-test state
+docker compose stop
+docker volume rm n8n_data
+docker volume create n8n_data
+docker run --rm \
+    -v n8n_data_backup:/source:ro \
+    -v n8n_data:/dest \
+    alpine sh -c "cp -a /source/. /dest/"
+docker volume rm n8n_data_backup
+docker compose start
+```
+
+#### Bare-Metal Restore Test
+
+```bash
+# 1. Stop n8n
+launchctl bootout system/com.openclaw.n8n 2>/dev/null || true
+
+# 2. Rename (NOT delete) the current data directory
+sudo mv /opt/n8n/data /opt/n8n/data-pre-test
+
+# 3. Create fresh data directory and restore from backup
+sudo mkdir -p /opt/n8n/data
+sudo tar xzf "/opt/n8n/backups/n8n-data-YYYYMMDD-HHMMSS.tar.gz" \
+    -C /opt/n8n/data
+sudo chown -R _n8n:_n8n /opt/n8n/data
+
+# 4. Start n8n and verify
+launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.n8n.plist
+
+# 5. Validation checks (same as containerized):
+# - n8n starts successfully
+# - All workflows present
+# - Credentials decrypt correctly
+# - Test workflow execution succeeds
+
+# 6. If restore test PASSES — clean up
+sudo rm -rf /opt/n8n/data-pre-test
+
+# 6b. If restore test FAILS — roll back
+launchctl bootout system/com.openclaw.n8n 2>/dev/null || true
+sudo rm -rf /opt/n8n/data
+sudo mv /opt/n8n/data-pre-test /opt/n8n/data
+launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.n8n.plist
+```
+
+#### Restore Test Schedule
+
+- **Required**: At least once after initial backup setup
+- **Recommended**: Quarterly thereafter
+- **After changes**: After any significant change to the backup procedure or n8n configuration
+
+#### Backup Encryption Key Safety
+
+If the backup encryption key (GPG passphrase or OpenSSL password) is stored only on the Mac Mini, a disk failure means both the machine and the ability to decrypt backups are lost simultaneously. Store the encryption key in a separate location:
+
+- Password manager on a different device
+- Printed copy in a physical safe
+- Trusted family member or colleague (for sole-operator deployments)
+
+> **Target**: The complete restore procedure should take under 30 minutes (SC-016), excluding credential rotation time.
 
 ### 9.5 Physical Security
 
-<!-- Content: T044 -->
+**Threat**: Physical access to the Mac Mini bypasses most software security controls — an attacker with physical access can boot from external media, install hardware keyloggers, use DMA attacks via Thunderbolt, or simply steal the device
+**Layer**: Respond / Prevent
+**Deployment**: Both
+**Source**: [Apple Platform Security Guide](https://support.apple.com/guide/security/) (Startup Security, Find My, Accessory Security), [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os), [MITRE ATT&CK T1200](https://attack.mitre.org/techniques/T1200/) (Hardware Additions)
+
+#### Why This Matters
+
+A headless Mac Mini running as a server is particularly vulnerable to physical attacks because it is unattended most of the time. USB ports are accessible, and unlike rack-mounted servers, a Mac Mini can be carried away in a pocket. FileVault (§2.1) protects data at rest, but a running, unlocked system with physical access is fully compromised.
+
+#### Boot Security
+
+**Apple Silicon Macs:**
+
+```bash
+# Verify Startup Security is set to "Full Security"
+# This prevents booting from external media or unsigned kernels
+# Check current status (requires Startup Security Utility or Recovery Mode):
+# System Settings > General > Startup Disk > Security Policy
+# Ensure: "Full Security" is selected
+
+# Programmatic check (limited — the audit script checks what's available):
+csrutil status
+# "System Integrity Protection status: enabled" is a prerequisite
+```
+
+Apple Silicon Macs with Full Security enabled cannot boot from external media or unsigned kernels, preventing unauthorized OS installation and target disk mode attacks.
+
+**Intel Macs:**
+
+```bash
+# Set a firmware password to prevent booting from external media
+# This prevents Target Disk Mode attacks and unauthorized OS reinstallation
+# Must be done from Recovery Mode (Command-R at boot):
+# Utilities > Startup Security Utility > Turn On Firmware Password
+
+# Verify firmware password is set (from normal boot):
+sudo firmwarepasswd -check
+# Expected: "Password Enabled: Yes"
+```
+
+> **Note**: Firmware passwords are an Intel-only feature. Apple Silicon uses Startup Security levels instead.
+
+#### Find My Mac
+
+Enable Find My Mac to allow remote locking and wiping if the Mac Mini is stolen:
+
+```bash
+# Check Find My Mac status
+defaults read com.apple.icloud.findmymac FMMEnabled 2>/dev/null
+# Expected: 1 (enabled)
+
+# Enable via: System Settings > Apple ID > iCloud > Find My Mac > ON
+```
+
+**Benefits:**
+
+- Remote lock — renders the Mac Mini unusable without your Apple ID password
+- Remote wipe — erases all data if recovery is not possible
+- Activation Lock — prevents a thief from erasing and reusing the machine without your Apple ID
+
+**Privacy tradeoff**: Find My Mac requires an Apple ID and iCloud connection, sending location data to Apple. For a dedicated server Mac Mini, this tradeoff is generally acceptable — the security benefit outweighs the privacy cost. If you are unable to accept this tradeoff, ensure you have alternative theft-response procedures (immediate credential rotation, remote wipe via MDM).
+
+> **Apple ID 2FA**: Your Apple ID MUST have two-factor authentication enabled. If an attacker compromises your Apple ID, they can disable Find My Mac and Activation Lock.
+
+**Audit check**: `CHK-FIND-MY-MAC` (WARN) → §9.5
+
+#### USB/Thunderbolt Restriction
+
+`[EDUCATIONAL]` USB ports on a headless server are attack vectors:
+
+| Attack Type | Method | Risk |
+|------------|--------|------|
+| **BadUSB** | Device masquerades as keyboard, injects commands | High — bypasses all software auth |
+| **USB mass storage** | Introduces malware via autorun or social engineering | Medium |
+| **Thunderbolt DMA** | Direct memory access to read/write system RAM | Low on Apple Silicon (IOMMU protection), Medium on Intel |
+
+**Configure macOS accessory security (Sonoma+):**
+
+```bash
+# Set accessory security policy
+# System Settings > Privacy & Security > Security > "Allow accessories to connect"
+# Recommended for headless servers: "Ask Every Time" or restrict further
+
+# Check current setting:
+defaults read /Library/Preferences/com.apple.security.accessory AccessorySecurityPolicy 2>/dev/null
+# 2 = Ask for new accessories (recommended)
+# 3 = Ask for new accessories when locked
+```
+
+For a headless server, once initial setup is complete (keyboard/mouse configured if needed), USB ports should accept minimal new devices. The tradeoff is between convenience (plugging in a keyboard for maintenance) and security (restricting USB).
+
+**Apple Silicon mitigations**: Apple Silicon Macs include IOMMU protection that blocks classic Thunderbolt DMA attacks. However, USB HID (keyboard/mouse emulation) and mass storage attacks remain relevant regardless of architecture.
+
+**Audit check**: `CHK-USB` (WARN) → §9.5
+
+#### Physical Port Security
+
+For a headless server, position the Mac Mini where ports are not easily accessible:
+
+- **Ideal**: Locked server room or cabinet
+- **Home office**: Locked drawer, cabinet, or shelf behind furniture
+- **Shared office**: Cable lock (see below) plus restricted port access
+
+#### Cable Lock
+
+Mac Mini supports Kensington security slots:
+
+- Use a cable lock for environments where physical theft is a risk (shared offices, accessible server locations)
+- Cable locks deter opportunistic theft but do not stop a determined attacker with tools
+- Pair with Find My Mac for defense in depth
+
+#### Location Considerations
+
+- Place the Mac Mini in a locked room, cabinet, or area not accessible to visitors
+- In a home office where a "locked room" is not feasible: locked drawer, hidden location behind furniture, or a cable lock
+- Ensure adequate ventilation — a locked cabinet needs airflow to prevent overheating
+- Consider proximity to the network switch/router for wired Ethernet
+
+#### What Happens If Stolen — Post-Theft Procedure
+
+If the Mac Mini is stolen, execute these steps immediately:
+
+1. **Use Find My Mac** to lock the device remotely, then wipe it
+2. **FileVault protects data at rest** — the thief cannot read the disk without the login password. Data is safe as long as the password is strong
+3. **Rotate ALL credentials immediately** — follow the emergency credential rotation procedure in §9.2. Assume complete credential compromise because SSH keys, N8N_ENCRYPTION_KEY, and other secrets were on the disk (even encrypted, assume worst case)
+4. **Notify relevant parties** per §9.1 Step 6 if PII was on the device
+5. **Revoke SSH keys** on all remote systems that trusted the stolen Mac Mini's keys
+6. **Report the theft** to law enforcement — Activation Lock and Find My Mac data can assist in recovery
+7. **Rebuild on replacement hardware** — restore from offsite backup (§9.3) on a new Mac Mini, re-harden from §2 onward
 
 ---
 
@@ -4178,27 +5044,879 @@ security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null |
 
 ### 10.1 Automated Audit Scheduling
 
-<!-- Content: T049 -->
+**Threat**: Security controls degrade silently over time — macOS updates reset settings, configuration drift accumulates, and new vulnerabilities appear — but without scheduled auditing, the operator remains unaware until an incident occurs
+**Layer**: Maintain
+**Deployment**: Both
+**Source**: [NIST SP 800-123 Section 5](https://csrc.nist.gov/publications/detail/sp/800-123/final) (Maintaining Server Security), [Apple Developer Documentation](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) (launchd)
+
+#### Why This Matters
+
+Hardening is not a one-time activity. macOS updates are known to reset firewall rules, sharing settings, and privacy permissions. Security tools need signature updates. Configuration drift happens naturally over time. Scheduled auditing catches these regressions before an attacker can exploit them. After initial setup, this runs fully unattended (SC-014) — the operator only acts when a FAIL notification is received.
+
+#### How to Configure
+
+**1. Create the log directory:**
+
+```bash
+sudo mkdir -p /opt/n8n/logs/audit
+sudo chown root:wheel /opt/n8n/logs/audit
+sudo chmod 755 /opt/n8n/logs/audit
+```
+
+**2. Install the launchd plist:**
+
+Copy the provided template (`scripts/launchd/com.openclaw.audit.plist`) to the system LaunchDaemons directory:
+
+```bash
+sudo cp scripts/launchd/com.openclaw.audit.plist /Library/LaunchDaemons/
+sudo chown root:wheel /Library/LaunchDaemons/com.openclaw.audit.plist
+sudo chmod 644 /Library/LaunchDaemons/com.openclaw.audit.plist
+```
+
+**3. Load the job:**
+
+```bash
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit.plist
+```
+
+**4. Verify the job is loaded:**
+
+```bash
+sudo launchctl list | grep com.openclaw.audit
+# Expected: PID or "-" followed by exit status and label
+```
+
+#### Schedule Configuration
+
+The default schedule runs the audit **weekly on Sunday at 03:00**. To change the schedule, edit the `StartCalendarInterval` in the plist:
+
+```xml
+<!-- Weekly on Sunday at 03:00 (default) -->
+<key>StartCalendarInterval</key>
+<dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+</dict>
+```
+
+Common schedule alternatives:
+
+| Schedule | Weekday | Hour | Minute |
+|----------|---------|------|--------|
+| Daily at 03:00 | (omit) | 3 | 0 |
+| Weekly Sunday 03:00 | 0 | 3 | 0 |
+| Monthly 1st at 03:00 | (omit Weekday, add `<key>Day</key><integer>1</integer>`) | 3 | 0 |
+
+After editing, reload the job:
+
+```bash
+sudo launchctl bootout system/com.openclaw.audit
+sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit.plist
+```
+
+#### Sleep/Wake Behavior
+
+launchd handles Mac sleep gracefully via `StartCalendarInterval`:
+
+- If the Mac is **asleep** at the scheduled time, the job runs at **next wake**
+- If the Mac is **off** at the scheduled time, the job runs at **next boot**
+- The job does NOT run multiple times to "catch up" on missed runs — only the most recent missed run fires
+
+This is the correct behavior for a weekly audit — no extra configuration needed.
+
+#### Log Output
+
+Each audit run produces a timestamped log file:
+
+```text
+/opt/n8n/logs/audit/audit-2026-03-12T03:00:00.log    # human-readable
+/opt/n8n/logs/audit/audit-2026-03-12T03:00:00.json    # JSON (for notification parsing)
+```
+
+The plist runs the audit script with both `--json` output (piped to the JSON log) and standard output (piped to the text log). See the plist template for the wrapper script details.
+
+#### Verification
+
+```bash
+# Check that the job is loaded
+sudo launchctl list com.openclaw.audit 2>/dev/null && echo "Loaded" || echo "NOT loaded"
+
+# Check the most recent audit log
+ls -lt /opt/n8n/logs/audit/ | head -5
+
+# Manually trigger a run (for testing)
+sudo launchctl kickstart system/com.openclaw.audit
+```
+
+**Audit check**: `CHK-LAUNCHD-AUDIT-JOB` (FAIL) → §10.1
 
 ### 10.2 Notification Setup
 
-<!-- Content: T049 -->
+**Threat**: Scheduled audits detect security regressions, but the operator never sees the results because there is no notification mechanism — failures go unaddressed until a breach occurs
+**Layer**: Maintain
+**Deployment**: Both
+**Source**: [NIST SP 800-92](https://csrc.nist.gov/publications/detail/sp/800-92/final) (Guide to Computer Security Log Management), [CIS Controls v8 Control 8](https://www.cisecurity.org/controls/audit-log-management) (Audit Log Management)
+
+#### Why This Matters
+
+Without active notifications, the operator must remember to manually check audit logs — a process that degrades over time. FAIL-only alerts (FR-025) ensure critical failures trigger immediate notification while avoiding alert fatigue from routine PASS/WARN results. After setup, routine maintenance requires no more than 15 minutes per month (SC-013).
+
+#### Alert Design Principles
+
+| Audit Result | Notification Action |
+|-------------|-------------------|
+| Any FAIL results | **Active notification** — email, system alert, or webhook |
+| WARN-only (no FAILs) | Logged silently — no active notification |
+| All PASS | Logged silently — no active notification |
+
+This design prevents alert fatigue while ensuring critical failures are always surfaced. Operators requiring stricter monitoring can optionally enable WARN notifications by editing the notification script.
+
+#### Notification Configuration File
+
+Create a configuration file that the notification script reads:
+
+```bash
+sudo mkdir -p /opt/n8n/etc
+cat << 'EOF' | sudo tee /opt/n8n/etc/notify.conf
+# OpenClaw Audit Notification Configuration
+# Uncomment and configure the methods you want to use
+
+# --- Email (primary recommended method) ---
+# Requires msmtp installed: brew install msmtp
+NOTIFY_EMAIL_ENABLED=false
+NOTIFY_EMAIL_TO="operator@example.com"
+NOTIFY_EMAIL_FROM="openclaw-audit@example.com"
+
+# --- macOS Notification Center (local fallback) ---
+NOTIFY_OSASCRIPT_ENABLED=true
+
+# --- Webhook (advanced — Slack, Discord, n8n, etc.) ---
+NOTIFY_WEBHOOK_ENABLED=false
+NOTIFY_WEBHOOK_URL=""
+EOF
+sudo chmod 600 /opt/n8n/etc/notify.conf
+```
+
+#### Method 1: Email via msmtp (Primary)
+
+Install and configure msmtp for sending email alerts:
+
+```bash
+# Install msmtp
+brew install msmtp
+
+# Configure SMTP relay
+cat << 'EOF' > ~/.msmtprc
+defaults
+auth           on
+tls            on
+tls_trust_file /etc/ssl/cert.pem
+logfile        /opt/n8n/logs/msmtp.log
+
+account        default
+host           smtp.gmail.com
+port           587
+from           openclaw-audit@example.com
+user           your-email@gmail.com
+password       your-app-password
+EOF
+chmod 600 ~/.msmtprc
+```
+
+> **Note**: For Gmail, use an [App Password](https://myaccount.google.com/apppasswords) (requires 2FA enabled). Do not use your main Gmail password.
+
+**Test email delivery:**
+
+```bash
+echo "OpenClaw audit notification test" | msmtp -a default operator@example.com
+```
+
+Update `notify.conf`:
+
+```bash
+NOTIFY_EMAIL_ENABLED=true
+NOTIFY_EMAIL_TO="operator@example.com"
+```
+
+#### Method 2: macOS Notification Center (Local Fallback)
+
+Uses `osascript` to display a system notification visible on the Mac's screen and forwarded to iPhone/iPad via Apple notification sync:
+
+```bash
+# Test notification
+osascript -e 'display notification "2 security checks FAILED — run audit for details" with title "OpenClaw Security Audit" subtitle "Action Required"'
+```
+
+This is enabled by default as a local fallback. No additional configuration needed.
+
+#### Method 3: Webhook (Advanced)
+
+Send an HTTP POST to any webhook-capable service (Slack, Discord, n8n, etc.):
+
+```bash
+# Example: Slack incoming webhook
+NOTIFY_WEBHOOK_URL="https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN"
+
+# Test webhook
+curl -s -X POST -H 'Content-Type: application/json' \
+    -d '{"text":"OpenClaw audit test notification"}' \
+    "$NOTIFY_WEBHOOK_URL"
+```
+
+Update `notify.conf`:
+
+```bash
+NOTIFY_WEBHOOK_ENABLED=true
+NOTIFY_WEBHOOK_URL="https://hooks.slack.com/services/..."
+```
+
+#### Notification Script
+
+Create the notification script that parses audit JSON output and sends alerts only on FAIL:
+
+```bash
+cat << 'SCRIPT' | sudo tee /opt/n8n/scripts/audit-notify.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Load configuration
+CONF="/opt/n8n/etc/notify.conf"
+if [[ ! -f "$CONF" ]]; then
+    echo "Error: notification config not found at $CONF" >&2
+    exit 2
+fi
+# shellcheck source=/dev/null
+source "$CONF"
+
+# Find the most recent JSON audit log
+LOG_DIR="/opt/n8n/logs/audit"
+LATEST_JSON=$(ls -t "${LOG_DIR}"/audit-*.json 2>/dev/null | head -1)
+
+if [[ -z "$LATEST_JSON" ]]; then
+    echo "No audit JSON log found in $LOG_DIR" >&2
+    exit 2
+fi
+
+# Parse FAIL count from JSON
+FAIL_COUNT=0
+if command -v jq &>/dev/null; then
+    FAIL_COUNT=$(jq -r '.summary.fail // 0' "$LATEST_JSON" 2>/dev/null || echo 0)
+else
+    FAIL_COUNT=$(grep -o '"fail":[0-9]*' "$LATEST_JSON" | grep -o '[0-9]*' || echo 0)
+fi
+
+# FAIL-only filtering: exit silently if no FAILs
+if [[ "$FAIL_COUNT" -eq 0 ]]; then
+    exit 0
+fi
+
+# Build notification message
+WARN_COUNT=0
+PASS_COUNT=0
+TOTAL=0
+if command -v jq &>/dev/null; then
+    WARN_COUNT=$(jq -r '.summary.warn // 0' "$LATEST_JSON" 2>/dev/null || echo 0)
+    PASS_COUNT=$(jq -r '.summary.pass // 0' "$LATEST_JSON" 2>/dev/null || echo 0)
+    TOTAL=$(jq -r '.summary.total // 0' "$LATEST_JSON" 2>/dev/null || echo 0)
+    # Get list of failed checks
+    FAILED_CHECKS=$(jq -r '.results[] | select(.status == "FAIL") | "\(.id): \(.description) (§\(.guide_ref))"' "$LATEST_JSON" 2>/dev/null || echo "")
+fi
+
+SUBJECT="CRITICAL: ${FAIL_COUNT} security control(s) FAILED"
+BODY="OpenClaw Mac Hardening Audit Report
+Date: $(date)
+Total: ${TOTAL} | PASS: ${PASS_COUNT} | FAIL: ${FAIL_COUNT} | WARN: ${WARN_COUNT}
+
+Failed checks:
+${FAILED_CHECKS}
+
+Action required: Fix ${FAIL_COUNT} FAIL item(s). See referenced guide sections for remediation."
+
+# --- Send via enabled methods ---
+
+# Email
+if [[ "${NOTIFY_EMAIL_ENABLED:-false}" == "true" ]]; then
+    if command -v msmtp &>/dev/null; then
+        printf "Subject: %s\n\n%s" "$SUBJECT" "$BODY" | \
+            msmtp -a default "${NOTIFY_EMAIL_TO}" 2>/dev/null || \
+            echo "Email notification failed — check msmtp config" >&2
+    else
+        echo "msmtp not installed — skipping email notification" >&2
+    fi
+fi
+
+# macOS Notification Center
+if [[ "${NOTIFY_OSASCRIPT_ENABLED:-false}" == "true" ]]; then
+    osascript -e "display notification \"${FAIL_COUNT} security checks FAILED — run audit for details\" with title \"OpenClaw Security Audit\" subtitle \"Action Required\"" 2>/dev/null || true
+fi
+
+# Webhook
+if [[ "${NOTIFY_WEBHOOK_ENABLED:-false}" == "true" && -n "${NOTIFY_WEBHOOK_URL:-}" ]]; then
+    WEBHOOK_BODY=$(printf '{"text":"%s\n\n%s"}' "$SUBJECT" "$FAILED_CHECKS" | sed 's/"/\\"/g; s/\n/\\n/g')
+    curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"text\":\"${SUBJECT}\"}" \
+        "${NOTIFY_WEBHOOK_URL}" 2>/dev/null || \
+        echo "Webhook notification failed" >&2
+fi
+
+echo "Notification sent: ${SUBJECT}"
+SCRIPT
+sudo chmod 700 /opt/n8n/scripts/audit-notify.sh
+```
+
+#### Local Log Fallback
+
+If all notification methods fail, audit results are still preserved in the log files at `/opt/n8n/logs/audit/`. The operator can always check results manually:
+
+```bash
+# View latest audit results
+cat "$(ls -t /opt/n8n/logs/audit/audit-*.log | head -1)"
+
+# Check if any recent audit had FAILs
+for f in /opt/n8n/logs/audit/audit-*.json; do
+    if command -v jq &>/dev/null; then
+        fails=$(jq -r '.summary.fail' "$f" 2>/dev/null)
+        if [[ "$fails" -gt 0 ]]; then
+            echo "FAIL: $f ($fails failures)"
+        fi
+    fi
+done
+```
+
+**Audit check**: `CHK-NOTIFICATION-CONFIG` (WARN) → §10.2
 
 ### 10.3 Tool Maintenance
 
-<!-- Content: T049 -->
+**Threat**: Security tools with outdated signatures, stale rules, or unpatched vulnerabilities provide degraded or false protection — ClamAV with week-old signatures misses new malware, outdated Santa rules allow unauthorized binaries, and unpatched n8n versions contain known exploits
+**Layer**: Maintain
+**Deployment**: Both
+**Source**: [CIS Controls v8 Control 7](https://www.cisecurity.org/controls/continuous-vulnerability-management) (Continuous Vulnerability Management), [NIST SP 800-40 Rev 4](https://csrc.nist.gov/publications/detail/sp/800-40/rev-4/final) (Guide to Enterprise Patch Management Planning)
+
+#### Why This Matters
+
+Hardening controls are only as effective as the tools enforcing them. A ClamAV installation with month-old signatures, an outdated Santa binary, or an unpatched n8n version with a known auth bypass all create false confidence. Automated tool freshness checks flag when action is needed, keeping the maintenance burden under 15 minutes per month (SC-013).
+
+#### ClamAV Signature Updates
+
+```bash
+# Verify freshclam is configured for automatic updates
+# Check freshclam configuration
+cat /usr/local/etc/clamav/freshclam.conf 2>/dev/null | grep -E "^(DatabaseMirror|UpdateLogFile|Checks)"
+
+# Verify signature freshness
+sigtool --info /usr/local/share/clamav/main.cvd 2>/dev/null | grep "Build time"
+# Signatures older than 7 days should be updated
+
+# Manually trigger an update
+sudo freshclam
+
+# Configure freshclam as a launchd daemon (if not already)
+# freshclam runs as a daemon by default when installed via Homebrew
+brew services start clamav
+```
+
+**Audit check**: `CHK-CLAMAV-FRESHNESS` (WARN) → §10.3
+
+#### Homebrew Security Tool Updates
+
+```bash
+# Check for outdated security tools
+brew outdated | grep -E "(santa|blockblock|lulu|clamav|msmtp|colima)"
+
+# Update all Homebrew packages (review changes before updating)
+brew update && brew outdated
+
+# Update a specific tool
+brew upgrade santa
+```
+
+> **Important**: Do NOT auto-install updates — automatic installation can break running services. Review what changed before upgrading, especially for Santa (rule format changes), ClamAV (engine compatibility), and Docker/Colima (container runtime changes).
+
+#### n8n Update Procedure
+
+**Containerized:**
+
+```bash
+# Check for newer n8n Docker image
+docker pull n8nio/n8n:latest --dry-run 2>/dev/null || \
+    docker pull n8nio/n8n:latest
+# Compare image ID with running container
+docker inspect n8nio/n8n:latest --format '{{.Id}}' 2>/dev/null
+docker inspect "$(docker ps -q --filter name=n8n)" --format '{{.Image}}' 2>/dev/null
+
+# Update n8n container
+docker compose pull
+docker compose down && docker compose up -d
+```
+
+**Bare-metal:**
+
+```bash
+# Check for newer n8n version
+npm outdated -g n8n
+
+# Update n8n
+npm update -g n8n
+```
+
+**Post-update verification** (both paths):
+
+```bash
+# 1. Verify n8n starts and is accessible
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5678/healthz
+# Expected: 200
+
+# 2. Verify security environment variables are still set
+# Containerized:
+docker compose exec n8n env | grep -E "N8N_BLOCK_ENV|N8N_DIAGNOSTICS|N8N_HIDE_USAGE_PAGE"
+# Bare-metal:
+env | grep -E "N8N_BLOCK_ENV|N8N_DIAGNOSTICS|N8N_HIDE_USAGE_PAGE"
+
+# 3. Run the audit script to verify no regressions
+./scripts/hardening-audit.sh --section "n8n Platform"
+```
+
+#### Post-macOS-Update Checklist (SC-010)
+
+Run this checklist **immediately after every macOS update**. macOS updates are known to reset these specific settings:
+
+```bash
+# Quick post-update verification (targeted — not a full audit)
+
+echo "=== Post-macOS-Update Security Checklist ==="
+
+# 1. Firewall
+echo -n "Firewall: "
+/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>/dev/null | grep -q "enabled" && echo "OK" || echo "RESET — re-enable"
+
+# 2. Stealth mode
+echo -n "Stealth mode: "
+/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode 2>/dev/null | grep -q "enabled" && echo "OK" || echo "RESET — re-enable"
+
+# 3. Sharing services
+echo -n "File Sharing: "
+launchctl list com.apple.smbd 2>/dev/null && echo "RESET — disable" || echo "OK"
+
+echo -n "Remote Login (SSH): "
+systemsetup -getremotelogin 2>/dev/null | grep -q "On" && echo "ON (verify config)" || echo "Off"
+
+# 4. Gatekeeper
+echo -n "Gatekeeper: "
+spctl --status 2>/dev/null | grep -q "enabled" && echo "OK" || echo "RESET — re-enable"
+
+# 5. Privacy/TCC permissions
+echo -n "TCC permissions: "
+echo "Review manually — System Settings > Privacy & Security"
+
+# 6. Monitoring infrastructure intact
+echo -n "Audit launchd job: "
+sudo launchctl list com.openclaw.audit 2>/dev/null && echo "OK" || echo "MISSING — reload"
+
+echo -n "Notify launchd job: "
+sudo launchctl list com.openclaw.notify 2>/dev/null && echo "OK" || echo "MISSING — reload"
+
+echo -n "Log directory: "
+[[ -d /opt/n8n/logs/audit ]] && echo "OK" || echo "MISSING — recreate"
+
+echo -n "Notification config: "
+[[ -f /opt/n8n/etc/notify.conf ]] && echo "OK" || echo "MISSING — recreate"
+
+echo "=== Run full audit for comprehensive check: ./scripts/hardening-audit.sh ==="
+```
+
+If any items show "RESET", remediate using the corresponding guide section and then run the full audit script.
+
+#### Re-audit Schedule
+
+| Event | Action |
+|-------|--------|
+| Weekly (automated) | Full audit via launchd — no operator action unless FAIL notification |
+| After macOS update | Post-update checklist (above), then full audit if any items reset |
+| After n8n update | Verify security env vars, run `--section` audit for n8n checks |
+| After tool update | Run relevant audit checks to verify no regressions |
+| After security event | Full audit + review §8 detection baselines |
+| Monthly (manual) | Review audit log trends, check for new tool versions |
 
 ### 10.4 Log Retention and Rotation
 
-<!-- Content: T049 -->
+**Threat**: Audit logs grow unbounded and consume disk space, or are deleted too quickly and unavailable for incident investigation
+**Layer**: Maintain
+**Deployment**: Both
+**Source**: [NIST SP 800-92](https://csrc.nist.gov/publications/detail/sp/800-92/final) (Guide to Computer Security Log Management), [CIS Controls v8 Control 8](https://www.cisecurity.org/controls/audit-log-management) (Audit Log Management)
+
+#### Why This Matters
+
+Audit logs serve two purposes: trend analysis (are WARN counts increasing?) and incident investigation (what was the security state at a given time?). Without retention policies, logs either fill the disk or get lost. Without rotation, individual log files grow unwieldy.
+
+#### Retention Policy
+
+- **Minimum retention**: 90 days (configurable)
+- **Rationale**: 90 days covers a full quarter of audit history, sufficient for most incident investigations and trend analysis
+- **Storage estimate**: Weekly JSON audit output is ~5-15 KB per run. 90 days = ~13 runs = ~200 KB. Negligible disk impact.
+
+#### Log Rotation with newsyslog
+
+Configure macOS newsyslog to rotate audit logs:
+
+```bash
+# Add rotation config for audit logs
+cat << 'EOF' | sudo tee /etc/newsyslog.d/openclaw-audit.conf
+# logfilename                          [owner:group]  mode  count  size  when  flags
+/opt/n8n/logs/audit/launchd-audit-stdout.log  root:wheel  644   12     1000  *     J
+/opt/n8n/logs/audit/launchd-audit-stderr.log  root:wheel  644   12     1000  *     J
+/opt/n8n/logs/audit/launchd-notify-stdout.log root:wheel  644   12     1000  *     J
+/opt/n8n/logs/audit/launchd-notify-stderr.log root:wheel  644   12     1000  *     J
+/opt/n8n/logs/msmtp.log                       root:wheel  600   12     1000  *     J
+EOF
+```
+
+The timestamped audit log files (`audit-YYYY-MM-DDTHH:MM:SS.log/json`) are not rotated by newsyslog — they are naturally organized by timestamp. Clean up old files with a pruning job:
+
+```bash
+# Prune audit logs older than 90 days (add to a weekly launchd job or cron)
+find /opt/n8n/logs/audit -name "audit-*.log" -mtime +90 -delete
+find /opt/n8n/logs/audit -name "audit-*.json" -mtime +90 -delete
+```
+
+#### Meta-Audit: Monitoring Infrastructure Self-Check
+
+The audit script includes self-monitoring checks (FR-027) that verify the monitoring infrastructure is healthy:
+
+| Check | What It Verifies | Severity |
+|-------|-----------------|----------|
+| `CHK-LAUNCHD-AUDIT-JOB` | Audit launchd job is loaded and scheduled | FAIL |
+| `CHK-NOTIFICATION-CONFIG` | Notification configuration file exists | WARN |
+| `CHK-LOG-DIR` | Audit log directory exists and is writable | FAIL |
+| `CHK-CLAMAV-FRESHNESS` | ClamAV signatures are not stale (>7 days) | WARN |
+
+These checks appear in the audit output alongside security checks, ensuring the operator is alerted if the monitoring infrastructure itself degrades.
+
+**Audit check**: `CHK-LOG-DIR` (FAIL) → §10.4
 
 ### 10.5 Troubleshooting Common Failures
 
-<!-- Content: T049 -->
+**Purpose**: Resolve operational failures caused by hardening controls without disabling the security control itself (SC-030). Each entry provides symptom, cause, and resolution.
+
+#### Containerized Path Failures
+
+**Container fails to start with `read_only: true`**
+
+- **Symptom**: n8n container exits immediately with filesystem write errors
+- **Cause**: n8n needs writable directories for cache, temp files, and session data
+- **Resolution**: Add tmpfs mounts for writable directories without disabling read-only root:
+
+```yaml
+# docker-compose.yml — add tmpfs for writable dirs
+tmpfs:
+  - /tmp
+  - /home/node/.n8n/.cache
+read_only: true  # keep this enabled
+```
+
+**Container fails with `cap_drop: [ALL]`**
+
+- **Symptom**: n8n crashes on startup with "Operation not permitted" errors
+- **Cause**: n8n's Node.js runtime may need specific capabilities (rare but possible with native modules)
+- **Resolution**: Add back only the specific capability needed, not all capabilities:
+
+```yaml
+cap_drop:
+  - ALL
+cap_add:
+  - CHOWN    # only if needed for file ownership operations
+  # Do NOT add: SYS_ADMIN, NET_ADMIN, SYS_PTRACE
+```
+
+##### Container cannot reach external services after pf rules
+
+- **Symptom**: n8n workflows fail with "ECONNREFUSED" or "ETIMEDOUT" for legitimate services
+- **Cause**: pf outbound allowlist (§3.3) does not include the required destination
+- **Resolution**: Add the destination to the pf allowlist — do NOT disable pf:
+
+```bash
+# Add the required destination to /etc/pf.conf allowlist
+# Example: allow Apify API
+pass out on en0 proto tcp from any to api.apify.com port 443
+sudo pfctl -f /etc/pf.conf
+```
+
+##### n8n credentials fail to decrypt after container rebuild
+
+- **Symptom**: All stored credentials show as invalid or empty after rebuilding the container
+- **Cause**: `N8N_ENCRYPTION_KEY` is not correctly injected — the container is using a default or empty key
+- **Resolution**: Verify the encryption key matches the one used when credentials were first stored:
+
+```bash
+docker compose exec n8n env | grep N8N_ENCRYPTION_KEY
+# Compare with your stored key — must be identical
+```
+
+#### Bare-Metal Path Failures
+
+##### n8n fails to start under the service account
+
+- **Symptom**: launchd job starts but n8n exits immediately; check `launchctl list` shows non-zero exit code
+- **Cause**: Filesystem permissions on the data directory don't allow the service account to read/write
+- **Resolution**: Fix permissions without changing the service account:
+
+```bash
+sudo chown -R _n8n:_n8n /opt/n8n/data
+sudo chmod 750 /opt/n8n/data
+# Verify:
+sudo -u _n8n ls /opt/n8n/data/
+```
+
+##### Keychain access fails on headless server
+
+- **Symptom**: n8n or scripts that use macOS Keychain fail with "security: SecKeychainUnlock: The user name or passphrase you entered is not correct"
+- **Cause**: The Keychain is locked because no user is logged in (headless server)
+- **Resolution**: Add Keychain unlock to the launchd pre-start script:
+
+```bash
+# In the launchd plist ProgramArguments, unlock Keychain before starting n8n:
+security unlock-keychain -p "$(cat /opt/n8n/.keychain-pass)" ~/Library/Keychains/login.keychain-db
+# Store the Keychain password securely (600 permissions, root-owned)
+```
+
+##### Service account cannot install npm packages
+
+- **Symptom**: `npm install` fails with permission errors under the `_n8n` account
+- **Cause**: This is expected behavior — the service account should NOT have npm install permissions
+- **Resolution**: Run npm operations as admin, not as the service account:
+
+```bash
+# Switch to admin account for package management
+sudo -u admin npm update -g n8n
+# Service account only RUNS n8n, never installs packages
+```
+
+#### Common Failures (Both Paths)
+
+##### SSH lockout after hardening
+
+- **Symptom**: Cannot SSH into the Mac Mini after enabling key-only auth (§3.1) or changing the SSH port
+- **Cause**: SSH key not properly installed in `authorized_keys`, or wrong key being offered
+- **Resolution** (in order of preference):
+  1. **Screen Sharing**: If enabled (§2.7), connect via Screen Sharing to fix SSH config
+  2. **Physical access**: Connect keyboard and monitor, log in locally, fix `/etc/ssh/sshd_config`
+  3. **Recovery mode**: Boot to Recovery Mode, mount the disk, and edit sshd_config
+
+```bash
+# After regaining access — verify sshd_config before re-locking
+sudo sshd -t  # test configuration syntax
+sudo launchctl kickstart -k system/com.openssh.sshd
+```
+
+> **Prevention**: Always test SSH access from a second terminal before closing your current session when changing SSH settings.
+
+##### Firewall blocks legitimate traffic
+
+- **Symptom**: Services fail to connect through the macOS Application Firewall
+- **Cause**: New service or updated binary not yet allowlisted in the firewall
+- **Resolution**: Add the specific application — do NOT disable the firewall:
+
+```bash
+# Allow a specific application
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /path/to/application
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /path/to/application
+# Verify firewall is still enabled
+/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+```
+
+##### Audit script reports false FAILs after macOS update
+
+- **Symptom**: Checks that previously passed now FAIL, but the control appears to be in place
+- **Cause**: macOS update changed the location, format, or default value of the setting being checked
+- **Resolution**: Determine whether it's a true regression or a check logic issue:
+
+```bash
+# 1. Manually verify the control is still in place
+# Example: Gatekeeper
+spctl --status
+
+# 2. If the control IS in place but the check fails, the check logic needs updating
+# File an issue or update the check in hardening-audit.sh
+
+# 3. If the control was actually reset, re-apply it per the guide section referenced in the FAIL message
+```
 
 ### 10.6 Hardening Validation Tests
 
-<!-- Content: T049 -->
+**Purpose**: Safe, non-destructive test procedures that verify hardening controls actually prevent attacks — not just that settings are configured correctly (SC-036). The audit script checks configuration; these tests verify enforcement.
+**Source**: [NIST SP 800-115](https://csrc.nist.gov/publications/detail/sp/800-115/final) (Technical Guide to Information Security Testing and Assessment), [CIS Controls v8 Control 18](https://www.cisecurity.org/controls/penetration-testing) (Penetration Testing)
+
+> **When to run**: After initial hardening setup and after any major configuration change. Not needed on a recurring schedule — the audit script handles ongoing monitoring.
+>
+> **Non-destructive guarantee**: Every test includes cleanup steps that return the system to its hardened state. Do NOT run during active production workloads.
+
+#### Test 1: Firewall Validation
+
+From **another device** on the same LAN, attempt to connect to the Mac Mini on ports that should be blocked:
+
+```bash
+# From another machine — replace <mac-mini-ip> with actual IP
+# Test a port that should be blocked (e.g., port 8080)
+nc -z -w 3 <mac-mini-ip> 8080
+# Expected: connection refused or timeout
+
+# Test SSH port (should be open if SSH is enabled)
+nc -z -w 3 <mac-mini-ip> 22
+# Expected: connection succeeded (if SSH enabled) or refused (if disabled)
+
+# Test stealth mode — ping should not respond
+ping -c 3 <mac-mini-ip>
+# Expected: no response (stealth mode drops ICMP)
+```
+
+**Cleanup**: None needed — these are read-only tests from an external device.
+
+#### Test 2: Outbound Filtering Validation
+
+From the Mac Mini, attempt an outbound connection to a non-allowlisted destination:
+
+```bash
+# Attempt connection to a non-allowlisted destination
+curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 http://example.com
+# Expected: 000 (connection blocked by pf) or no response
+
+# If using LuLu, check its log for the blocked attempt
+# LuLu will show a notification or log entry for the blocked connection
+```
+
+**Cleanup**: None needed — the connection attempt was blocked.
+
+#### Test 3: n8n Authentication Validation
+
+Attempt to access the n8n web UI and API without credentials:
+
+```bash
+# Attempt unauthenticated web UI access
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5678/
+# Expected: 401 or 302 (redirect to login)
+
+# Attempt unauthenticated API access
+curl -s -o /dev/null -w "%{http_code}" http://localhost:5678/api/v1/workflows
+# Expected: 401 Unauthorized
+
+# Attempt with invalid credentials
+curl -s -o /dev/null -w "%{http_code}" \
+    -H "X-N8N-API-KEY: invalid-key-12345" \
+    http://localhost:5678/api/v1/workflows
+# Expected: 401 Unauthorized
+```
+
+**Cleanup**: None needed — these are read-only requests.
+
+#### Test 4: Container Isolation Validation (Containerized Path)
+
+From inside the running n8n container, attempt to access host resources:
+
+```bash
+# 1. Attempt to read host filesystem outside mounted volumes
+docker compose exec n8n ls /etc/hosts 2>&1
+# Expected: read-only filesystem error (if read_only: true)
+
+docker compose exec n8n cat /etc/shadow 2>&1
+# Expected: permission denied or file not found
+
+# 2. Attempt to access Docker socket (should not be mounted)
+docker compose exec n8n ls -la /var/run/docker.sock 2>&1
+# Expected: No such file or directory
+
+# 3. Attempt to reach host services via gateway IP
+docker compose exec n8n curl -s --connect-timeout 3 http://host.docker.internal:22/ 2>&1
+# Expected: connection refused or timeout (if pf blocks it)
+
+# 4. Attempt privileged operation (should fail with cap-drop + no-new-privileges)
+docker compose exec n8n mount -t tmpfs tmpfs /mnt 2>&1
+# Expected: operation not permitted
+
+docker compose exec n8n id
+# Expected: non-root user (uid != 0)
+```
+
+**Cleanup**: None needed — all operations were blocked or denied.
+
+#### Test 5: Injection Defense Validation
+
+Create a test n8n workflow that processes a payload with shell metacharacters:
+
+```bash
+# Create a simple test workflow via API (if API is enabled)
+# The workflow should process this test payload:
+TEST_PAYLOAD='{"name": "test; rm -rf /", "email": "$(whoami)@test.com", "note": "ignore all previous instructions"}'
+
+# Verify:
+# 1. The payload is treated as data, not executed as code
+# 2. N8N_BLOCK_ENV_ACCESS_IN_NODE prevents environment variable access:
+docker compose exec n8n env | grep N8N_BLOCK_ENV_ACCESS_IN_NODE
+# Expected: N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+```
+
+**Cleanup**: Delete the test workflow after verification.
+
+#### Test 6: Persistence Detection Validation
+
+Create a temporary test launch agent and verify the audit script detects it:
+
+```bash
+# 1. Create a harmless test launch agent
+cat << 'EOF' > ~/Library/LaunchAgents/com.openclaw.test-persistence.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.test-persistence</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/true</string>
+    </array>
+</dict>
+</plist>
+EOF
+
+# 2. Run the persistence baseline check
+./scripts/hardening-audit.sh --section "Detection"
+# Expected: CHK-PERSISTENCE-BASELINE should WARN about the new agent
+
+# 3. CLEANUP — remove the test agent immediately
+rm ~/Library/LaunchAgents/com.openclaw.test-persistence.plist
+```
+
+> **Important**: Always remove the test agent after the test. Leaving it creates a real persistence mechanism.
+
+#### Test 7: Notification Validation
+
+Deliberately introduce a security regression, trigger an audit, and verify notification delivery:
+
+```bash
+# 1. Temporarily disable the firewall (will cause CHK-FIREWALL to FAIL)
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
+
+# 2. Run the audit
+./scripts/hardening-audit.sh --json > /opt/n8n/logs/audit/audit-validation-test.json
+
+# 3. Trigger notification
+/opt/n8n/scripts/audit-notify.sh
+# Expected: notification received via configured method (email, osascript, webhook)
+
+# 4. CLEANUP — immediately re-enable the firewall
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on
+
+# 5. Verify firewall is back
+/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate
+# Expected: enabled
+
+# 6. Clean up test log
+rm /opt/n8n/logs/audit/audit-validation-test.json
+```
+
+> **Warning**: Re-enable the firewall immediately after the test. The window of exposure should be seconds, not minutes.
 
 ---
 
@@ -4206,38 +5924,545 @@ security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null |
 
 ### 11.1 Running the Audit Script
 
-<!-- Content: T054 -->
+The `hardening-audit.sh` script validates your Mac Mini's security configuration against every control documented in this guide. It auto-detects the deployment path (containerized vs bare-metal) and runs the appropriate checks.
+
+#### Prerequisites
+
+- **Required**: macOS, Bash 5.x
+- **Optional**: `jq` (for pretty-printed JSON output), `docker` (for container checks)
+
+#### Usage
+
+```text
+Usage: hardening-audit.sh [OPTIONS]
+
+Options:
+  --json             Output results in JSON format
+  --section SECTION  Run checks for a specific section only
+  --quiet            Suppress PASS output, show only FAIL/WARN
+  --no-color         Disable colored output (for piping/logging)
+  --help             Show usage information
+  --version          Show script version
+
+Exit codes:
+  0    All checks passed (zero FAIL results)
+  1    One or more FAIL results
+  2    Script error (missing dependency, permission denied)
+```
+
+#### Status Codes
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| **PASS** | Control is correctly configured | None |
+| **FAIL** | Critical control is missing or misconfigured | Fix immediately — see referenced guide section |
+| **WARN** | Recommended control is missing or misconfigured | Review and address when feasible |
+| **SKIP** | Check cannot run (wrong deployment path, missing tool, insufficient privileges) | Install the missing tool or run with appropriate privileges |
+
+#### Examples
+
+```bash
+# Full audit with human-readable output
+./scripts/hardening-audit.sh
+
+# JSON output for automation
+./scripts/hardening-audit.sh --json
+
+# Check only n8n-related controls
+./scripts/hardening-audit.sh --section "n8n Platform"
+
+# Quiet mode — show only failures and warnings
+./scripts/hardening-audit.sh --quiet
+
+# Pipe to file for logging
+./scripts/hardening-audit.sh --no-color > audit-results.txt
+```
+
+#### Deployment Detection
+
+The script auto-detects the deployment path at startup:
+
+1. If Docker/Colima is running AND an n8n container exists → **containerized**
+2. If an n8n process is running natively → **bare-metal**
+3. Otherwise → **unknown** (runs OS-level checks only, warns that n8n was not detected)
+
+Container-specific checks (§4) run only on containerized deployments. Bare-metal-specific checks (§6) run only on bare-metal. All other checks run on both paths.
 
 ### 11.2 Check Reference Table
 
-<!-- Content: T054 -->
+Complete reference of all `CHK-*` audit checks. Each check maps to a specific guide section for remediation.
+
+#### §2 — OS Foundation
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-SIP | FAIL | both | System Integrity Protection enabled | §2.3 |
+| CHK-FILEVAULT | FAIL | both | FileVault disk encryption enabled | §2.1 |
+| CHK-FIREWALL | FAIL | both | Application firewall enabled | §2.2 |
+| CHK-STEALTH | WARN | both | Stealth mode enabled | §2.2 |
+| CHK-GATEKEEPER | FAIL | both | Gatekeeper enabled | §2.4 |
+| CHK-XPROTECT-FRESH | WARN | both | XProtect signatures up to date | §2.4 |
+| CHK-AUTO-UPDATES | WARN | both | Automatic updates enabled | §2.5 |
+| CHK-NTP | WARN | both | NTP time synchronization configured | §2.5 |
+| CHK-AUTO-LOGIN | FAIL | both | Automatic login disabled | §2.6 |
+| CHK-SCREEN-LOCK | WARN | both | Screen lock configured | §2.6 |
+| CHK-GUEST | FAIL | both | Guest account disabled | §2.7 |
+| CHK-SHARING-FILE | FAIL | both | File Sharing disabled | §2.7 |
+| CHK-SHARING-REMOTE-EVENTS | FAIL | both | Remote Apple Events disabled | §2.7 |
+| CHK-SHARING-INTERNET | FAIL | both | Internet Sharing disabled | §2.7 |
+| CHK-SHARING-SCREEN | WARN | both | Screen Sharing status checked | §2.7 |
+| CHK-AIRDROP | WARN | both | AirDrop disabled or restricted | §2.7 |
+| CHK-STARTUP-SECURITY | WARN | both | Startup Security configured | §2.9 |
+| CHK-TCC | WARN | both | TCC permissions reviewed | §2.10 |
+| CHK-CORE-DUMPS | WARN | both | Core dumps disabled | §2.10 |
+| CHK-PRIVACY | WARN | both | Privacy settings reviewed | §2.10 |
+| CHK-PROFILES | WARN | both | Configuration profiles reviewed | §2.10 |
+| CHK-SPOTLIGHT | WARN | both | Spotlight indexing restricted | §2.10 |
+
+#### §3 — Network Security
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-SSH-KEY-ONLY | FAIL | both | SSH password auth disabled | §3.1 |
+| CHK-SSH-ROOT | FAIL | both | SSH root login disabled | §3.1 |
+| CHK-DNS-ENCRYPTED | WARN | both | Encrypted DNS configured | §3.2 |
+| CHK-OUTBOUND-FILTER | WARN | both | Outbound filtering configured | §3.3 |
+| CHK-BLUETOOTH | WARN | both | Bluetooth disabled or restricted | §3.4 |
+| CHK-IPV6 | WARN | both | IPv6 configuration reviewed | §3.5 |
+| CHK-LISTENERS-BASELINE | WARN | both | Network listeners baselined | §3.6 |
+
+#### §4 — Container Isolation (Containerized Only)
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-CONTAINER-ROOT | FAIL | containerized | Container runs as non-root | §4.3 |
+| CHK-CONTAINER-READONLY | WARN | containerized | Container filesystem read-only | §4.3 |
+| CHK-CONTAINER-CAPS | WARN | containerized | Linux capabilities dropped | §4.3 |
+| CHK-CONTAINER-PRIVILEGED | FAIL | containerized | Container not privileged | §4.3 |
+| CHK-DOCKER-SOCKET | FAIL | containerized | Docker socket not mounted | §4.3 |
+| CHK-SECRETS-ENV | WARN | containerized | Secrets not in plain env vars | §4.3 |
+| CHK-COLIMA-MOUNTS | WARN | containerized | Colima mount restrictions | §4.3 |
+| CHK-CONTAINER-NETWORK | FAIL | containerized | Container not using host network | §4.5 |
+| CHK-CONTAINER-RESOURCES | WARN | containerized | Memory limits configured | §4.3 |
+
+#### §5 — n8n Platform Security
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-N8N-BIND | FAIL | both | n8n bound to 127.0.0.1 | §5.1 |
+| CHK-N8N-AUTH | FAIL | both | n8n authentication enabled | §5.1 |
+| CHK-N8N-API | WARN | both | n8n public API disabled or secured | §5.4 |
+| CHK-N8N-ENV-BLOCK | WARN | both | N8N_BLOCK_ENV_ACCESS_IN_NODE set | §5.3 |
+| CHK-N8N-ENV-DIAGNOSTICS | WARN | both | N8N_DIAGNOSTICS_ENABLED disabled | §5.3 |
+| CHK-N8N-ENV-API | WARN | both | N8N_PUBLIC_API_DISABLED set | §5.3 |
+| CHK-N8N-NODES | WARN | both | Community nodes restricted | §5.6 |
+| CHK-N8N-WEBHOOK | WARN | both | Webhook security configured | §5.5 |
+
+#### §6 — Bare-Metal Path (Bare-Metal Only)
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-SERVICE-ACCOUNT | FAIL | bare-metal | Dedicated service account exists | §6.1 |
+| CHK-SERVICE-HOME-PERMS | FAIL | bare-metal | Service home permissions 750 | §6.4 |
+| CHK-SERVICE-DATA-PERMS | FAIL | bare-metal | Service data permissions 750 | §6.4 |
+
+#### §7 — Data Security
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-CRED-ENV-VISIBLE | WARN | both | Credentials not visible in process list | §7.1 |
+| CHK-DOCKER-INSPECT-SECRETS | WARN | containerized | Secrets not in docker inspect | §7.1 |
+| CHK-SPOTLIGHT-EXCLUSIONS | WARN | both | Sensitive dirs excluded from Spotlight | §7.4 |
+| CHK-CONFIG-PROFILES | WARN | both | No unexpected config profiles | §7.10 |
+
+#### §8 — Detection and Monitoring
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-SANTA | WARN | both | Google Santa installed | §8.1 |
+| CHK-BLOCKBLOCK | WARN | both | BlockBlock installed | §8.1 |
+| CHK-LULU | WARN | both | LuLu installed | §8.1 |
+| CHK-CLAMAV | WARN | both | ClamAV installed | §8.1 |
+| CHK-CLAMAV-SIGS | WARN | both | ClamAV signatures present | §8.1 |
+| CHK-PERSISTENCE-BASELINE | WARN | both | Persistence baseline created | §8.2 |
+| CHK-WORKFLOW-BASELINE | WARN | both | Workflow integrity baseline created | §8.3 |
+| CHK-LISTENER-BASELINE | WARN | both | Network listener baseline created | §8.2 |
+| CHK-CERT-BASELINE | WARN | both | Certificate trust baseline created | §8.7 |
+| CHK-ICLOUD-KEYCHAIN | WARN | both | iCloud Keychain sync disabled | §8.6 |
+| CHK-ICLOUD-DRIVE | WARN | both | iCloud Drive sync disabled | §8.6 |
+| CHK-CANARY | WARN | both | Canary files deployed | §8.5 |
+
+#### §9 — Response and Recovery
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-BACKUP-CONFIGURED | WARN | both | Backup configuration detected | §9.3 |
+| CHK-BACKUP-ENCRYPTED | WARN | both | Backups are encrypted | §9.3 |
+| CHK-FIND-MY-MAC | WARN | both | Find My Mac enabled | §9.5 |
+| CHK-USB | WARN | both | USB accessory security configured | §9.5 |
+
+#### §10 — Operational Maintenance (Infrastructure Self-Check)
+
+| ID | Severity | Deployment | Description | Guide Section |
+|----|----------|------------|-------------|---------------|
+| CHK-LAUNCHD-AUDIT-JOB | FAIL | both | Scheduled audit launchd job loaded | §10.1 |
+| CHK-NOTIFICATION-CONFIG | WARN | both | Notification configuration exists | §10.2 |
+| CHK-LOG-DIR | FAIL | both | Audit log directory exists and writable | §10.4 |
+| CHK-CLAMAV-FRESHNESS | WARN | both | ClamAV signatures fresh (<7 days) | §10.3 |
+
+**Total: 73 checks** (23 FAIL severity, 50 WARN severity; 60 both-path, 10 containerized-only, 3 bare-metal-only)
 
 ### 11.3 JSON Output Schema
 
-<!-- Content: T054 -->
+When run with `--json`, the script produces structured output for automation (notification parsing, dashboards, trend tracking):
+
+```json
+{
+  "version": "0.1.0",
+  "timestamp": "2026-03-12T03:00:00Z",
+  "system": {
+    "macos_version": "14.4",
+    "hardware": "arm64",
+    "deployment": "containerized"
+  },
+  "results": [
+    {
+      "id": "CHK-FILEVAULT",
+      "section": "Disk Encryption",
+      "description": "FileVault is enabled",
+      "status": "PASS",
+      "guide_ref": "§2.1"
+    },
+    {
+      "id": "CHK-N8N-BIND",
+      "section": "n8n Platform",
+      "description": "n8n is bound to 0.0.0.0 (should be 127.0.0.1)",
+      "status": "FAIL",
+      "guide_ref": "§5.1",
+      "remediation": "Set N8N_HOST=127.0.0.1 in your environment"
+    }
+  ],
+  "summary": {
+    "total": 71,
+    "pass": 65,
+    "fail": 2,
+    "warn": 3,
+    "skip": 1
+  }
+}
+```
+
+#### Schema Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | string | Audit script version |
+| `timestamp` | string | ISO 8601 UTC timestamp of the audit run |
+| `system.macos_version` | string | macOS version (`sw_vers -productVersion`) |
+| `system.hardware` | string | Hardware architecture (`uname -m`) |
+| `system.deployment` | string | Detected deployment: `containerized`, `bare-metal`, or `unknown` |
+| `results[]` | array | Array of individual check results |
+| `results[].id` | string | Check identifier (e.g., `CHK-FILEVAULT`) |
+| `results[].section` | string | Check category/section name |
+| `results[].description` | string | Human-readable description of what was checked |
+| `results[].status` | string | One of: `PASS`, `FAIL`, `WARN`, `SKIP` |
+| `results[].guide_ref` | string | Guide section reference (e.g., `§2.1`) |
+| `results[].remediation` | string | *(Optional)* Remediation guidance for FAIL/WARN results |
+| `summary.total` | integer | Total checks executed |
+| `summary.pass` | integer | Count of PASS results |
+| `summary.fail` | integer | Count of FAIL results |
+| `summary.warn` | integer | Count of WARN results |
+| `summary.skip` | integer | Count of SKIP results |
+
+#### Using JSON Output
+
+```bash
+# Parse FAIL count for notification scripts
+jq '.summary.fail' audit-results.json
+
+# List all failed checks
+jq -r '.results[] | select(.status == "FAIL") | "\(.id): \(.description)"' audit-results.json
+
+# Compare two audit runs for drift
+diff <(jq -r '.results[] | "\(.id):\(.status)"' audit-old.json | sort) \
+     <(jq -r '.results[] | "\(.id):\(.status)"' audit-new.json | sort)
+```
 
 ### 11.4 Interpreting Results
 
-<!-- Content: T054 -->
+#### What "All PASS" Means (and Does Not Mean)
+
+An all-PASS audit result means that all checked configurations are in the expected state. It does **NOT** mean:
+
+- The system is uncompromised — the audit script validates configuration, not absence of compromise
+- There are no vulnerabilities — zero-day exploits in n8n, Docker, Colima, or macOS are outside the script's scope
+- All threats are mitigated — the script checks what can be checked programmatically; some controls require manual verification
+
+#### Audit Script Limitations
+
+The audit script has inherent limitations that the operator must understand:
+
+- **Time-of-check/time-of-use**: The script checks configuration at a point in time. An attacker can modify configuration after the audit runs and before the next run. Continuous monitoring (§8) is the complementary control
+- **Cannot detect**:
+  - In-memory malware that leaves no disk artifacts
+  - Kernel-level rootkits (SIP protects against most; the script only checks SIP status)
+  - Zero-day exploits in n8n, Docker, Colima, or macOS
+  - Insider threats from operators with legitimate admin access
+  - Network-level attacks (MITM, ARP spoofing) that don't modify host configuration
+- **Defense in depth**: No single control is sufficient. The audit script is one layer alongside continuous monitoring (§8), IDS tools (§8.1), outbound filtering (§3.3), and container isolation (§4). A sophisticated attacker may bypass any individual control; the goal is to make the combined stack expensive to penetrate and likely to detect intrusion
+
+#### Validating the Audit Script Itself
+
+A false PASS is worse than no check because it creates false confidence. Periodically validate the script:
+
+1. **Known-good baseline test**: Run the script on an unhardened macOS install. Verify it produces the expected FAIL/WARN results for every missing control. If a control is known to be missing and the script reports PASS, the script has a bug
+
+2. **Deliberate regression test**: Disable a specific hardened control (e.g., turn off the firewall) and verify the script catches it. Re-enable immediately after. See §10.6 Test 7 for the procedure
+
+3. **Script integrity**: Record the script's SHA256 hash and verify it periodically:
+
+   ```bash
+   # Record baseline hash
+   shasum -a 256 scripts/hardening-audit.sh > scripts/audit-script.sha256
+
+   # Verify integrity
+   shasum -a 256 -c scripts/audit-script.sha256
+   ```
+
+4. **Version tracking**: The script prints its version at the start of every run. Check that the version matches what you expect — an older version may be missing checks for newer controls
+
+5. **Manual cross-validation**: Quarterly, manually spot-check 3-5 audit results by verifying the control state independently and comparing with the script's output. This catches script drift from macOS changes that break check logic
 
 ---
 
 ## Appendix A: Security Environment Variable Reference
 
-<!-- Content: T059 -->
+Complete reference of all n8n security-relevant environment variables (SC-028). Use this single reference instead of consulting multiple external documentation pages.
+
+> **Note**: Variable names and defaults are verified against n8n v2.0+. Earlier versions may use different names or defaults — see the corrections column.
+
+| Variable | Recommended Value | Default (v2.0) | Risk if Not Set | Corrections |
+|----------|------------------|----------------|-----------------|-------------|
+| `N8N_HOST` | `127.0.0.1` | `0.0.0.0` | n8n accessible from network — attackers can reach the web UI | |
+| `N8N_PORT` | `5678` | `5678` | — | |
+| `N8N_PROTOCOL` | `https` | `http` | Credentials transmitted in cleartext | Use with reverse proxy (§5.8) |
+| `N8N_ENCRYPTION_KEY` | Random 64-char hex | Auto-generated | If not explicitly set, auto-generated key is lost on container rebuild — all credentials unrecoverable | Store separately (§9.3) |
+| `N8N_BLOCK_ENV_ACCESS_IN_NODE` | `true` | `true` (v2.0) | Code nodes can read server environment variables including secrets | Was `false` in v1.x — verify explicitly |
+| `N8N_DIAGNOSTICS_ENABLED` | `false` | `true` | Telemetry sent to n8n servers every 6 hours — leaks deployment info | |
+| `N8N_HIDE_USAGE_PAGE` | `true` | `false` | Usage statistics page accessible — leaks workflow count and execution data | |
+| `N8N_PUBLIC_API_DISABLED` | `true` | `false` | REST API accessible — enables programmatic workflow manipulation | Name is inverted: set `true` to *disable*. Replaces old `N8N_PUBLIC_API_ENABLED` |
+| `N8N_RESTRICT_FILE_ACCESS_TO` | `/opt/n8n/data` | Has default restriction | Code nodes can read/write arbitrary filesystem paths | Restrict to data directory |
+| `WEBHOOK_URL` | `https://your-domain.com/` | Auto-detected | Webhook URLs may expose internal hostnames | Set explicitly behind reverse proxy |
+| `N8N_PERSONALIZATION_ENABLED` | `false` | `true` | Personalization survey leaks deployment info to n8n servers | |
+| `N8N_VERSION_NOTIFICATIONS_ENABLED` | `false` | `true` | Version check leaks deployment info to n8n servers | |
+| `N8N_TEMPLATES_ENABLED` | `false` | `true` | Template gallery makes external requests to n8n servers | |
+| `N8N_COMMUNITY_PACKAGES_ENABLED` | `false` | `true` | Allows installing community npm packages — supply chain risk | |
+| `N8N_HIRING_BANNER_ENABLED` | `false` | `true` | Minor: banner makes external request | |
+| `DB_TYPE` | `sqlite` | `sqlite` | — | Use `postgresdb` for multi-user deployments |
+| `N8N_USER_MANAGEMENT_JWT_SECRET` | Random 64-char hex | Auto-generated | If not set, auto-generated on restart — invalidates all sessions | |
+| `N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS` | `true` | `true` (v2.0) | Settings file readable by other users | |
+
+**Deprecated variables** (do NOT set — causes errors in v2.0):
+
+| Variable | Status | Notes |
+|----------|--------|-------|
+| `EXECUTIONS_PROCESS=own` | **Removed in v2.0** | Setting this causes startup failure. Execution isolation is now handled differently |
+| `N8N_PUBLIC_API_ENABLED` | **Renamed** | Use `N8N_PUBLIC_API_DISABLED=true` instead (inverted logic) |
+
+**Minimal secure `.env` file:**
+
+```bash
+# Required
+N8N_ENCRYPTION_KEY=<your-64-char-hex-key>
+N8N_HOST=127.0.0.1
+
+# Security hardening
+N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+N8N_DIAGNOSTICS_ENABLED=false
+N8N_HIDE_USAGE_PAGE=true
+N8N_PUBLIC_API_DISABLED=true
+N8N_PERSONALIZATION_ENABLED=false
+N8N_VERSION_NOTIFICATIONS_ENABLED=false
+N8N_TEMPLATES_ENABLED=false
+N8N_COMMUNITY_PACKAGES_ENABLED=false
+N8N_HIRING_BANNER_ENABLED=false
+
+# Session security
+N8N_USER_MANAGEMENT_JWT_SECRET=<your-64-char-hex-key>
+```
 
 ## Appendix B: Credential Inventory Template
 
-<!-- Content: T060 -->
+Maintain this inventory for incident response (§9.1 blast radius assessment) and credential rotation (§9.2). Update it whenever credentials are added, rotated, or removed.
+
+| Credential | Type | Storage (Containerized) | Storage (Bare-Metal) | Rotation Interval | Last Rotated | Blast Radius |
+|-----------|------|------------------------|---------------------|-------------------|-------------|-------------|
+| Mac Mini login password | password | N/A (host-level) | macOS Keychain | Annually or on compromise | YYYY-MM-DD | SSH, sudo, all local services |
+| SSH private key | certificate | `~/.ssh/id_ed25519` | `~/.ssh/id_ed25519` | Annually | YYYY-MM-DD | All remote systems this key authenticates to |
+| N8N_ENCRYPTION_KEY | encryption_key | Docker secret / `.env` | `/opt/n8n/.env` | Annually (requires DB re-encryption) | YYYY-MM-DD | Decrypts ALL n8n-stored credentials |
+| n8n owner password | password | n8n database (encrypted) | n8n database (encrypted) | Annually | YYYY-MM-DD | n8n admin access, workflow modification |
+| N8N_USER_MANAGEMENT_JWT_SECRET | encryption_key | Docker secret / `.env` | `/opt/n8n/.env` | Annually | YYYY-MM-DD | Session token signing — all active sessions |
+| n8n API key | api_key | n8n database | n8n database | 90 days | YYYY-MM-DD | Programmatic n8n access (if API enabled) |
+| Apify API key | api_key | n8n credentials store | n8n credentials store | 90 days | YYYY-MM-DD | Apify account, scraping operations |
+| LinkedIn session token | token | n8n credentials store | n8n credentials store | 90 days or on forced re-auth | YYYY-MM-DD | LinkedIn account, scraped data access |
+| SMTP relay credentials | password | n8n credentials store / `.env` | n8n credentials store / `.env` | Per provider policy | YYYY-MM-DD | Email sending capability |
+| Docker registry credentials | password | `~/.docker/config.json` | N/A | Per registry policy | YYYY-MM-DD | Docker image pull/push |
+| Backup encryption passphrase | password | Password manager | Password manager | On compromise only | YYYY-MM-DD | Decrypts all backup archives |
+
+**Usage instructions:**
+
+1. Copy this table to a local secure document (encrypted note, password manager)
+2. Fill in the "Last Rotated" dates
+3. Set calendar reminders for rotation intervals
+4. During incident response (§9.1), use the "Blast Radius" column to assess exposure
+5. During emergency rotation (§9.2), work through credentials in the order listed above
 
 ## Appendix C: Incident Response Checklist
 
-<!-- Content: T061 -->
+Condensed, printable checklist version of the §9.1 runbook for use under time pressure (SC-025). Print this and keep it accessible.
+
+### Triage
+
+- [ ] Check for unexpected processes: `ps aux | grep -v "^$(whoami)"`
+- [ ] Check launch daemons/agents: `ls -la /Library/LaunchDaemons/ /Library/LaunchAgents/`
+- [ ] Check SSH authorized_keys: `cat ~/.ssh/authorized_keys`
+- [ ] Check outbound connections: `lsof -i -nP | grep ESTABLISHED`
+- [ ] Check crontab: `crontab -l`
+- [ ] Compare workflow baseline: export current workflows, compare SHA256
+- [ ] **Classify severity**: Critical / High / Medium / Low (see §9.1)
+
+### Containment (Critical/High — do immediately)
+
+- [ ] **DO NOT REBOOT** — preserves volatile evidence
+- [ ] Disable Wi-Fi: `networksetup -setairportpower en0 off`
+- [ ] Disable Ethernet: unplug cable or `networksetup -setnetworkserviceenabled "Ethernet" off`
+- [ ] Stop n8n: `docker compose stop` or `launchctl bootout system/com.openclaw.n8n`
+- [ ] Block all network: `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setblockall on`
+
+### Evidence Preservation
+
+- [ ] Create evidence directory: `mkdir -p /tmp/incident-$(date +%Y%m%d-%H%M%S)`
+- [ ] Record investigator name and timestamp in chain-of-custody file
+- [ ] Capture: processes, network connections, launch items, system logs, n8n logs
+- [ ] Capture: Docker state (containers, images), crontab, authorized_keys, user accounts
+- [ ] SHA256 hash all evidence files
+- [ ] **Copy evidence to a separate device**
+
+### Assessment
+
+- [ ] Review credential blast radius table (§9.1 / Appendix B)
+- [ ] Identify which credentials were accessible from the compromised component
+- [ ] Determine: unauthorized accounts? modified workflows? new launch daemons?
+
+### Recovery
+
+- [ ] Restore from known-good backup (§9.3)
+- [ ] Re-harden from guide (§2 onward)
+- [ ] Rotate ALL credentials in dependency order (§9.2)
+- [ ] Run audit script — all checks must PASS
+- [ ] Re-enable network only after verification
+
+### Notification
+
+- [ ] GDPR: notify supervisory authority within **72 hours** if PII exposed
+- [ ] CCPA: notify affected California residents
+- [ ] LinkedIn ToS: review notification obligations
+- [ ] Consider: law enforcement, IR firm, legal counsel
+
+### Post-Incident
+
+- [ ] Root cause analysis: how did attacker gain access?
+- [ ] Control gap analysis: what failed?
+- [ ] Backup/restore evaluation: did RTO target hold?
+- [ ] Document findings and update local hardening notes
 
 ## Appendix D: Tool Comparison Matrix
 
-<!-- Content: T062 -->
+All security tools referenced in this guide with cost, function, defensive layer, and alternatives (SC-005).
+
+| Tool | Cost | Function | Layer | Install | Alternative |
+|------|------|----------|-------|---------|-------------|
+| **Colima** | Free | Lightweight Linux VM for Docker on macOS | Prevent | `brew install colima` | Docker Desktop `[PAID]` ~$7/mo per user |
+| **Docker CLI** | Free | Container management | Prevent | `brew install docker` | Podman (free) |
+| **ClamAV** | Free | Open-source antivirus scanning | Detect | `brew install clamav` | SentinelOne `[PAID]` ~$5/mo/endpoint |
+| **Google Santa** | Free | Binary allow/blocklisting (application control) | Prevent | `brew install santa` | Carbon Black `[PAID]` ~$50/endpoint/yr |
+| **BlockBlock** | Free | Persistence mechanism detection (new launch items) | Detect | [objective-see.org](https://objective-see.org/products/blockblock.html) | SentinelOne `[PAID]` ~$5/mo/endpoint |
+| **LuLu** | Free | Application-level outbound firewall | Detect | `brew install lulu` | Little Snitch `[PAID]` ~$59 one-time |
+| **KnockKnock** | Free | Persistence audit (list all persistent items) | Detect | [objective-see.org](https://objective-see.org/products/knockknock.html) | Autoruns (macOS port) — free |
+| **Quad9** | Free | Malware-blocking DNS resolver | Prevent | System Settings > Network > DNS | Cloudflare Gateway `[PAID]` $7/user/mo |
+| **Caddy** | Free | Reverse proxy with automatic TLS | Prevent | `brew install caddy` | nginx (free), Traefik (free) |
+| **msmtp** | Free | Lightweight SMTP relay client | Respond | `brew install msmtp` | ssmtp (free), mailx (free) |
+| **Bitwarden CLI** | Free | Password/secret management | Prevent | `brew install bitwarden-cli` | 1Password CLI `[PAID]` ~$3/mo |
+| **shellcheck** | Free | Bash script static analysis | N/A | `brew install shellcheck` | — |
+| **pf** (built-in) | Free | macOS packet filter firewall | Prevent | Built into macOS | — |
+| **Time Machine** (built-in) | Free | macOS backup with encryption | Respond | Built into macOS | Arq `[PAID]` ~$50 one-time |
+
+### Paid Tools (Referenced as Alternatives)
+
+| Tool | Cost | Function | Free Alternative |
+|------|------|----------|-----------------|
+| **Docker Desktop** | ~$7/mo per user | Container runtime with GUI | Colima (free) |
+| **Little Snitch** | ~$59 one-time | Advanced outbound firewall with per-connection rules | LuLu (free) |
+| **SentinelOne** | ~$5/mo/endpoint | EDR, antivirus, behavioral detection | ClamAV + BlockBlock + Santa (free) |
+| **Carbon Black** | ~$50/endpoint/yr | Application control and EDR | Google Santa (free) |
+| **Cloudflare Gateway** | ~$7/user/mo | DNS filtering with analytics | Quad9 (free) |
+| **1Password CLI** | ~$3/mo | Secret management with team features | Bitwarden CLI (free) |
+| **Arq Backup** | ~$50 one-time | Backup with cloud storage integration | Time Machine (free, built-in) |
+
+> **Note**: All prices are approximate as of 2026. This guide recommends free tools as the primary option. Paid alternatives are listed for operators who need additional features (team management, SLA support, advanced analytics).
 
 ## Appendix E: PII Data Classification Table
 
-<!-- Content: T063 -->
+LinkedIn lead generation data fields with sensitivity classification, storage locations, retention guidance, and GDPR relevance (SC-026).
+
+### Data Fields
+
+| Field | Sensitivity | Source | GDPR Relevant | Retention Recommendation |
+|-------|------------|--------|---------------|-------------------------|
+| `full_name` | **Semi-private** | LinkedIn profile | Yes | Delete when no longer needed for outreach |
+| `email` | **Semi-private** | LinkedIn profile / enrichment | Yes — special category if personal email | Delete after campaign ends or on unsubscribe |
+| `phone` | **Semi-private** | LinkedIn profile / enrichment | Yes | Delete after campaign ends or on request |
+| `job_title` | Public | LinkedIn profile | Yes (when combined with name) | Retain for active campaigns only |
+| `company` | Public | LinkedIn profile | Yes (when combined with name) | Retain for active campaigns only |
+| `company_size` | Public | LinkedIn profile | Marginal | Retain for segmentation |
+| `industry` | Public | LinkedIn profile | Marginal | Retain for segmentation |
+| `location` | Public | LinkedIn profile | Yes (geolocation data) | Delete after campaign targeting complete |
+| `profile_url` | Public | LinkedIn profile | Yes (persistent identifier) | Retain with profile data |
+| `headline` | Public | LinkedIn profile | Marginal | Retain with profile data |
+| `connection_degree` | Derived | LinkedIn relationship | No | Ephemeral — do not store |
+| `scrape_timestamp` | Derived | Collection metadata | No | Retain for audit trail |
+| `outreach_status` | Derived | CRM/workflow status | No | Retain for campaign tracking |
+
+### Sensitivity Levels
+
+- **Public**: Visible on LinkedIn profiles without authentication. Lower risk but still PII when combined with other fields
+- **Semi-private**: May be restricted by LinkedIn privacy settings. Higher risk — treat as confidential
+- **Derived**: Generated during processing, not directly from LinkedIn. Lower GDPR relevance
+
+### Storage Locations (Data Flow)
+
+| Location | Data at Rest | Encryption | Access Control |
+|----------|-------------|------------|----------------|
+| n8n database | Workflows, execution data, credential references | N8N_ENCRYPTION_KEY (credentials only) | n8n auth, filesystem permissions |
+| n8n execution logs | Full workflow input/output including PII | None (plaintext in DB) | n8n auth |
+| Apify dataset | Scraped LinkedIn data | Apify platform encryption | Apify API key |
+| Docker volume / n8n data dir | All of the above | FileVault (disk-level) | Filesystem permissions |
+| Backup archives | All of the above | GPG/OpenSSL encryption (§9.3) | 600 permissions, root-owned |
+| Time Machine | Full system including all above | Time Machine encryption | Login password |
+
+### Retention and Deletion Procedures
+
+1. **n8n execution data**: Configure execution data retention in n8n settings. Set `EXECUTIONS_DATA_MAX_AGE` to limit how long execution data (including PII payloads) is retained
+2. **Apify datasets**: Set dataset retention policies in Apify console. Delete datasets after data has been processed
+3. **Backup archives**: Follow the 90-day retention policy (§10.4). Older backups containing PII should be securely deleted
+4. **Secure deletion**: Use `rm -P` on macOS (3-pass overwrite) for files on HDD. On SSD/Apple Silicon, FileVault encryption means deleted files are cryptographically inaccessible when FileVault key is destroyed
+
+### GDPR Obligations
+
+If processing data of EU residents:
+
+- **Lawful basis**: Document your lawful basis for processing (legitimate interest for B2B outreach is common but must be documented)
+- **Data subject rights**: Be prepared to respond to access, rectification, and deletion requests within 30 days
+- **Breach notification**: 72-hour notification to supervisory authority if PII is exposed (§9.1 Step 6)
+- **Data minimization**: Collect only the fields you need for your specific outreach campaign
+- **Storage limitation**: Do not retain PII longer than necessary for the stated purpose
