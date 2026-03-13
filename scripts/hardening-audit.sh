@@ -959,6 +959,98 @@ check_listeners_baseline() {
     fi
 }
 
+# --- §6 Bare-Metal Path Checks (T032) ---
+
+check_service_account() {
+    local id="CHK-SERVICE-ACCOUNT"
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" == "containerized" ]]; then
+        report_result "$id" "Bare-Metal" "Containerized deployment (service account N/A)" "SKIP" "6.1"
+        return
+    fi
+    # Check if _n8n service account exists
+    if dscl . -read /Users/_n8n &>/dev/null; then
+        local shell
+        shell=$(dscl . -read /Users/_n8n UserShell 2>/dev/null | awk '{print $2}') || true
+        if [[ "$shell" == "/usr/bin/false" || "$shell" == "/usr/sbin/nologin" ]]; then
+            # Verify n8n is running as _n8n
+            local n8n_user
+            n8n_user=$(ps -eo user,command 2>/dev/null | grep "[n]8n" | awk '{print $1}' | head -1) || true
+            if [[ "$n8n_user" == "_n8n" ]]; then
+                report_result "$id" "Bare-Metal" "n8n runs as _n8n service account" "PASS" "6.1"
+            elif [[ -z "$n8n_user" ]]; then
+                report_result "$id" "Bare-Metal" "_n8n account exists (n8n not running)" "PASS" "6.1"
+            else
+                report_result "$id" "Bare-Metal" "n8n runs as ${n8n_user} (not _n8n)" "FAIL" "6.1" \
+                    "Configure launchd to run n8n as _n8n — see §6.3"
+            fi
+        else
+            report_result "$id" "Bare-Metal" "_n8n has interactive shell: ${shell}" "FAIL" "6.1" \
+                "Set shell to /usr/bin/false: sudo dscl . -change /Users/_n8n UserShell ${shell} /usr/bin/false"
+        fi
+    else
+        if [[ "$deployment" == "bare-metal" ]]; then
+            report_result "$id" "Bare-Metal" "No _n8n service account (n8n runs as admin)" "FAIL" "6.1" \
+                "Create service account: sudo sysadminctl -addUser _n8n -shell /usr/bin/false"
+        else
+            report_result "$id" "Bare-Metal" "n8n not detected and no _n8n account" "SKIP" "6.1"
+        fi
+    fi
+}
+
+check_service_home_perms() {
+    local id="CHK-SERVICE-HOME-PERMS"
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" == "containerized" ]]; then
+        report_result "$id" "Bare-Metal" "Containerized deployment (home perms N/A)" "SKIP" "6.4"
+        return
+    fi
+    if ! dscl . -read /Users/_n8n &>/dev/null; then
+        report_result "$id" "Bare-Metal" "No _n8n account (home perms check skipped)" "SKIP" "6.4"
+        return
+    fi
+    # Verify _n8n cannot access operator home directory
+    local admin_home
+    admin_home=$(eval echo "~$(whoami)") || true
+    if sudo -u _n8n test -r "$admin_home" 2>/dev/null; then
+        report_result "$id" "Bare-Metal" "_n8n can read operator home directory" "FAIL" "6.4" \
+            "Restrict: chmod 750 ${admin_home} or chmod 700 ${admin_home}"
+    else
+        report_result "$id" "Bare-Metal" "_n8n cannot access operator home" "PASS" "6.4"
+    fi
+}
+
+check_service_data_perms() {
+    local id="CHK-SERVICE-DATA-PERMS"
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" == "containerized" ]]; then
+        report_result "$id" "Bare-Metal" "Containerized deployment (data perms N/A)" "SKIP" "6.4"
+        return
+    fi
+    if [[ ! -d /opt/n8n/data ]]; then
+        if [[ "$deployment" == "bare-metal" ]]; then
+            report_result "$id" "Bare-Metal" "n8n data directory /opt/n8n/data not found" "FAIL" "6.4" \
+                "Create: sudo mkdir -p /opt/n8n/data && sudo chown _n8n:_n8n /opt/n8n/data && sudo chmod 700 /opt/n8n/data"
+        else
+            report_result "$id" "Bare-Metal" "n8n data directory not found (n8n not detected)" "SKIP" "6.4"
+        fi
+        return
+    fi
+    local perms
+    perms=$(stat -f "%A" /opt/n8n/data 2>/dev/null) || true
+    local owner
+    owner=$(stat -f "%Su" /opt/n8n/data 2>/dev/null) || true
+    if [[ "$owner" == "_n8n" && "$perms" == "700" ]]; then
+        report_result "$id" "Bare-Metal" "n8n data dir: 700 owned by _n8n" "PASS" "6.4"
+    else
+        report_result "$id" "Bare-Metal" "n8n data dir: ${perms} owned by ${owner}" "FAIL" "6.4" \
+            "Fix: sudo chown _n8n:_n8n /opt/n8n/data && sudo chmod 700 /opt/n8n/data"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -1080,8 +1172,14 @@ main() {
     run_check check_n8n_nodes
     run_check check_n8n_webhook
 
+    # §6 Bare-Metal Path checks (T032) — bare-metal only
+    if [[ "$deployment" == "bare-metal" || "$deployment" == "unknown" ]]; then
+        run_check check_service_account
+        run_check check_service_home_perms
+        run_check check_service_data_perms
+    fi
+
     # Additional check groups added by later tasks:
-    # T032: Bare-Metal checks
     # T038: Data Security checks
     # T045: Detection and Monitoring checks
     # T050: Response and Recovery checks

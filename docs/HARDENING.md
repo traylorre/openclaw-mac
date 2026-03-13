@@ -2695,19 +2695,491 @@ npm install -g n8n@<previous-version>
 
 ### 6.1 Dedicated Service Account
 
-<!-- Content: T029 -->
+**Threat**: n8n running as the operator's admin account gives a compromised workflow full access to home directory, SSH keys, macOS Keychain, and the ability to install persistent backdoors
+**Layer**: Prevent
+**Deployment**: Bare-metal only
+**Source**: [NIST SP 800-123 §4.1](https://csrc.nist.gov/publications/detail/sp/800-123/final) (Least Privilege), [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os) (User Account Controls), [MITRE ATT&CK T1078.001](https://attack.mitre.org/techniques/T1078/001/)
+
+#### Why This Matters
+
+On bare-metal without a service account, a compromised n8n process runs as the operator's admin user — it can read SSH keys, access the login Keychain, write to system directories, and install launch agents for persistence. A dedicated service account is the bare-metal equivalent of container isolation (§4): it limits the blast radius of a compromise to only the n8n data directory.
+
+#### How to Harden
+
+**Create the dedicated `_n8n` service account:**
+
+```bash
+# Create service account with no login shell
+# The underscore prefix follows macOS convention for service accounts
+sudo sysadminctl -addUser _n8n -fullName "n8n Service" -shell /usr/bin/false -home /var/empty
+
+# Verify the account was created
+dscl . -read /Users/_n8n
+```
+
+> **NOTE**: `sysadminctl` requires admin privileges and may prompt for the admin password. On macOS Sonoma 14.x+, use `-password -` to skip setting a password (the account will have no password and cannot be used for login).
+
+**Restrict group memberships:**
+
+```bash
+# Verify the service account is NOT in the admin group
+dseditgroup -o checkmember -m _n8n admin
+# Expected: "no _n8n is NOT a member of admin"
+
+# Remove from staff group if present (limits file access)
+sudo dseditgroup -o edit -d _n8n -t user staff 2>/dev/null || true
+```
+
+**Prevent interactive login:**
+
+The `/usr/bin/false` shell prevents SSH and terminal login. Additionally:
+
+```bash
+# Verify shell is non-interactive
+dscl . -read /Users/_n8n UserShell
+# Expected: UserShell: /usr/bin/false
+
+# Verify account cannot SSH in (if SSH is enabled)
+# Add to DenyUsers in /etc/ssh/sshd_config.d/hardening.conf:
+#   DenyUsers _n8n
+```
+
+**Create the n8n data directory:**
+
+```bash
+# Create dedicated data directory
+sudo mkdir -p /opt/n8n/data /opt/n8n/logs /opt/n8n/backups
+
+# Set ownership to service account
+sudo chown -R _n8n:_n8n /opt/n8n
+
+# Restrict permissions (owner only — no group or world access)
+sudo chmod 700 /opt/n8n /opt/n8n/data /opt/n8n/logs /opt/n8n/backups
+```
+
+**TCC permissions:**
+
+The `_n8n` service account should have NO TCC (Transparency, Consent, and Control) permissions:
+
+```bash
+# Verify no TCC grants for the service account
+# Check the TCC database (requires Full Disk Access for the querying user)
+sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+    "SELECT client FROM access WHERE client LIKE '%n8n%';" 2>/dev/null
+# Expected: no results
+```
+
+Never grant Full Disk Access, Accessibility, or other TCC permissions to the n8n process or the `_n8n` user. If n8n is compromised and running as a user with Full Disk Access, the attacker can read any file on the system.
+
+#### Verification
+
+```bash
+# Verify service account exists and has correct shell
+dscl . -read /Users/_n8n UserShell 2>/dev/null
+# Expected: UserShell: /usr/bin/false
+
+# Verify account is not in admin group
+dseditgroup -o checkmember -m _n8n admin 2>/dev/null
+# Expected: NOT a member
+
+# Verify n8n runs as _n8n (not admin)
+ps -eo user,pid,command | grep "[n]8n" 2>/dev/null
+# Expected: _n8n PID /path/to/n8n
+```
+
+#### Edge Cases and Warnings
+
+- **Home directory**: Use `/var/empty` (read-only, no home) not `/Users/_n8n`. Creating a full home directory grants unnecessary filesystem access.
+- **Multi-operator scenario**: If multiple admins manage the Mac Mini, designate one as the security owner responsible for the `_n8n` account. Other operators should use non-admin accounts for daily use (§2.6).
+- **macOS upgrades**: Verify the `_n8n` account survives macOS major version upgrades. Check account existence and permissions after each upgrade (§10.3).
+- **Deleting the account**: If migrating to containerized: `sudo sysadminctl -deleteUser _n8n`. This removes the account but not the data directory — archive or securely delete `/opt/n8n` separately.
+
+**Audit check**: `CHK-SERVICE-ACCOUNT` (FAIL) → §6.1
 
 ### 6.2 Keychain Integration
 
-<!-- Content: T029 -->
+**Threat**: n8n credentials stored in environment variables or plaintext files are visible via `ps aux`, `/proc`, or `docker inspect`; login Keychain auto-unlock exposes all credentials to any process running as the same user
+**Layer**: Prevent
+**Deployment**: Bare-metal only
+**Source**: [Apple Developer Documentation — Keychain Services](https://developer.apple.com/documentation/security/keychain_services), [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os) (Keychain Configuration), [MITRE ATT&CK T1555.001](https://attack.mitre.org/techniques/T1555/001/) (Credentials from Keychain)
+
+#### Why This Matters
+
+The macOS Keychain is more secure than environment variables (visible via `ps`) or plaintext config files, but its security model has nuances. The login Keychain auto-unlocks at login, so any process running as the same user can request access. Using a separate, locked Keychain with explicit ACLs limits credential exposure to only the n8n process.
+
+> **NOTE**: For containerized deployments, use Docker secrets (§4.3) — NOT the macOS Keychain. Do not mount the Keychain into a Docker container.
+
+#### How to Harden
+
+**Create a separate Keychain for n8n credentials:**
+
+```bash
+# Create dedicated Keychain (NOT the login Keychain)
+# Use a strong, unique password — not the macOS login password
+sudo -u _n8n security create-keychain -p "$(openssl rand -base64 32)" \
+    /opt/n8n/n8n.keychain-db
+
+# Set auto-lock timeout (lock after 5 minutes of inactivity)
+sudo -u _n8n security set-keychain-settings -t 300 -l \
+    /opt/n8n/n8n.keychain-db
+```
+
+**Store n8n credentials in the dedicated Keychain:**
+
+```bash
+# Store the n8n encryption key
+sudo -u _n8n security add-generic-password \
+    -a "n8n" \
+    -s "N8N_ENCRYPTION_KEY" \
+    -w "$(cat /path/to/encryption-key.txt)" \
+    -T "/usr/local/bin/n8n" \
+    /opt/n8n/n8n.keychain-db
+
+# Store other credentials similarly
+sudo -u _n8n security add-generic-password \
+    -a "n8n" \
+    -s "APIFY_API_KEY" \
+    -w "$(cat /path/to/apify-key.txt)" \
+    -T "/usr/local/bin/n8n" \
+    /opt/n8n/n8n.keychain-db
+```
+
+The `-T` flag restricts access to only the specified application path (ACL).
+
+**Retrieve credentials in the launchd pre-start script:**
+
+```bash
+#!/bin/bash
+# /opt/n8n/start-n8n.sh — called by launchd plist (§6.3)
+set -euo pipefail
+
+# Unlock the n8n Keychain (password read from a protected file)
+security unlock-keychain -p "$(cat /opt/n8n/.keychain-password)" \
+    /opt/n8n/n8n.keychain-db
+
+# Export credentials as environment variables for the n8n process
+export N8N_ENCRYPTION_KEY
+N8N_ENCRYPTION_KEY=$(security find-generic-password \
+    -a "n8n" -s "N8N_ENCRYPTION_KEY" -w \
+    /opt/n8n/n8n.keychain-db)
+
+# Start n8n
+exec /usr/local/bin/n8n start
+```
+
+> **WARNING**: The Keychain unlock password file (`/opt/n8n/.keychain-password`) must be:
+> - Owned by `_n8n:_n8n` with permissions `400` (read-only by owner)
+> - NOT the same password as the macOS login or any other credential
+> - Backed up securely (§9.3) — if lost, you must recreate the Keychain and re-enter all credentials
+
+**Keychain security settings:**
+
+```bash
+# Verify Keychain auto-lock is configured
+sudo -u _n8n security show-keychain-info /opt/n8n/n8n.keychain-db 2>&1
+# Expected: "timeout=300 lock-on-sleep"
+
+# Lock Keychain when n8n is not running
+sudo -u _n8n security lock-keychain /opt/n8n/n8n.keychain-db
+```
+
+#### Keychain vs Other Credential Storage
+
+| Method | Security | Visibility | Recommended |
+|--------|----------|------------|-------------|
+| **Separate Keychain with ACLs** | Strong — encrypted, access-controlled | Not visible in process listings | Yes (bare-metal) |
+| **Docker secrets** | Strong — mounted at `/run/secrets/` | Not visible in `docker inspect` env | Yes (containerized) |
+| **Environment variables** | Weak — visible in `ps aux`, `/proc` | Exposed to all same-user processes | No |
+| **Plaintext config files** | Weak — readable by anyone with file access | On disk in cleartext | No |
+| **Bitwarden CLI** (free) | Strong — encrypted vault | Requires manual unlock | Alternative |
+
+#### Verification
+
+```bash
+# Verify separate Keychain exists
+sudo -u _n8n security list-keychains 2>/dev/null | grep n8n
+# Expected: "/opt/n8n/n8n.keychain-db"
+
+# Verify Keychain is not the login Keychain
+sudo -u _n8n security default-keychain 2>/dev/null
+# Expected: should NOT be n8n.keychain-db
+
+# Verify auto-lock is configured
+sudo -u _n8n security show-keychain-info /opt/n8n/n8n.keychain-db 2>&1
+# Expected: timeout value set
+```
+
+#### Edge Cases and Warnings
+
+- **Headless server**: With no GUI session, Keychain prompts are suppressed or fail silently. The launchd pre-start script MUST unlock the Keychain programmatically — do not rely on login Keychain auto-unlock.
+- **Keychain corruption**: If the Keychain file is corrupted, n8n will fail to start. Keep a backup of the Keychain file (encrypted, §9.3) and document all stored credential names.
+- **Credential reuse**: Use a unique password for each credential — not the macOS login, SSH key passphrase, or any other service password. Use Bitwarden CLI (free) for generating unique credentials.
+- **Keychain and Time Machine**: Time Machine backs up Keychain files. If Time Machine backups are accessible to other users or unencrypted, credentials are exposed. See §9.3 for backup encryption.
 
 ### 6.3 launchd Execution
 
-<!-- Content: T029 -->
+**Threat**: n8n running as a login item under the admin user inherits full admin privileges and stops when the user logs out; secrets passed as command-line arguments are visible in `ps aux` to all users
+**Layer**: Prevent
+**Deployment**: Bare-metal only
+**Source**: [Apple Developer Documentation — Creating Launch Daemons and Agents](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html), [NIST SP 800-123 §4.3](https://csrc.nist.gov/publications/detail/sp/800-123/final)
+
+#### Why This Matters
+
+Running n8n as a launch daemon (via `launchd`) ensures it starts at boot, runs as the dedicated `_n8n` service account, and survives user logouts. Using a launchd plist instead of a shell alias or login item also prevents accidental exposure of secrets via command-line arguments.
+
+#### How to Harden
+
+**Create the launchd plist:**
+
+Create `/Library/LaunchDaemons/com.openclaw.n8n.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.n8n</string>
+
+    <!-- Run as dedicated service account (FR-036) -->
+    <key>UserName</key>
+    <string>_n8n</string>
+    <key>GroupName</key>
+    <string>_n8n</string>
+
+    <!-- Start script handles Keychain unlock + env vars (§6.2) -->
+    <!-- NEVER pass secrets as ProgramArguments — visible in ps aux (SC-043) -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/n8n/start-n8n.sh</string>
+    </array>
+
+    <!-- Working directory for n8n data -->
+    <key>WorkingDirectory</key>
+    <string>/opt/n8n/data</string>
+
+    <!-- Start at boot, restart on crash -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Logging — timestamped output for audit trail -->
+    <key>StandardOutPath</key>
+    <string>/opt/n8n/logs/n8n-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/n8n/logs/n8n-stderr.log</string>
+
+    <!-- Environment variables (non-sensitive only) -->
+    <!-- Sensitive values loaded by start-n8n.sh from Keychain -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>N8N_HOST</key>
+        <string>localhost</string>
+        <key>N8N_PORT</key>
+        <string>5678</string>
+        <key>N8N_USER_FOLDER</key>
+        <string>/opt/n8n/data</string>
+        <key>N8N_LOG_LEVEL</key>
+        <string>info</string>
+        <key>N8N_BLOCK_ENV_ACCESS_IN_NODE</key>
+        <string>true</string>
+        <key>N8N_RESTRICT_FILE_ACCESS_TO</key>
+        <string>/opt/n8n/data</string>
+        <key>N8N_PUBLIC_API_DISABLED</key>
+        <string>true</string>
+        <key>N8N_MFA_ENABLED</key>
+        <string>true</string>
+        <key>N8N_DIAGNOSTICS_ENABLED</key>
+        <string>false</string>
+        <key>N8N_TEMPLATES_ENABLED</key>
+        <string>false</string>
+        <key>N8N_VERSION_NOTIFICATIONS_ENABLED</key>
+        <string>false</string>
+        <key>N8N_PERSONALIZATION_ENABLED</key>
+        <string>false</string>
+        <key>EXECUTIONS_DATA_SAVE_ON_ERROR</key>
+        <string>all</string>
+        <key>EXECUTIONS_DATA_SAVE_ON_SUCCESS</key>
+        <string>none</string>
+        <key>NODES_EXCLUDE</key>
+        <string>["n8n-nodes-base.executeCommand","n8n-nodes-base.ssh","n8n-nodes-base.localFileTrigger"]</string>
+    </dict>
+
+    <!-- Resource limits -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <!-- Disable core dumps (FR-068) -->
+        <key>Core</key>
+        <integer>0</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>Core</key>
+        <integer>0</integer>
+    </dict>
+</dict>
+</plist>
+```
+
+**Load and manage the service:**
+
+```bash
+# Set correct ownership and permissions on the plist
+sudo chown root:wheel /Library/LaunchDaemons/com.openclaw.n8n.plist
+sudo chmod 644 /Library/LaunchDaemons/com.openclaw.n8n.plist
+
+# Load the daemon (starts n8n)
+sudo launchctl load /Library/LaunchDaemons/com.openclaw.n8n.plist
+
+# Verify it is running
+sudo launchctl list | grep com.openclaw.n8n
+# Expected: PID  0  com.openclaw.n8n  (PID column shows a number, exit code 0)
+
+# Stop n8n
+sudo launchctl unload /Library/LaunchDaemons/com.openclaw.n8n.plist
+
+# Restart n8n
+sudo launchctl unload /Library/LaunchDaemons/com.openclaw.n8n.plist
+sudo launchctl load /Library/LaunchDaemons/com.openclaw.n8n.plist
+```
+
+> **WARNING**: Never pass secrets (encryption keys, API tokens, passwords) as `ProgramArguments` or inline in the plist's `EnvironmentVariables`. These are visible in `ps aux` and `launchctl print`. Use the Keychain-based start script (§6.2) to inject secrets at runtime.
+
+#### Verification
+
+```bash
+# Verify daemon is loaded and running
+sudo launchctl list | grep com.openclaw.n8n
+# Expected: shows PID and exit status 0
+
+# Verify n8n runs as _n8n user
+ps -eo user,pid,command | grep "[n]8n"
+# Expected: _n8n  <PID>  /usr/local/bin/n8n start
+
+# Verify no secrets in process arguments
+ps -p "$(pgrep -f 'n8n start')" -o args= 2>/dev/null
+# Expected: no encryption keys, passwords, or tokens visible
+```
+
+#### Edge Cases and Warnings
+
+- **`StartCalendarInterval` during sleep**: If using a scheduled start (not `KeepAlive`), `launchd` runs the job at the next wake if the scheduled time passed during sleep.
+- **Plist syntax errors**: Use `plutil -lint /Library/LaunchDaemons/com.openclaw.n8n.plist` to validate XML before loading.
+- **Log rotation**: launchd does not rotate logs. Configure `newsyslog` or a manual rotation script for `/opt/n8n/logs/` (§10.4).
+- **`launchctl bootstrap` vs `load`**: On macOS 10.11+, Apple recommends `launchctl bootstrap system /path/to/plist`. Both work; `load` is more widely documented.
 
 ### 6.4 Filesystem Permissions
 
-<!-- Content: T029 -->
+**Threat**: Overly permissive file permissions allow other users or compromised processes to read n8n credentials, modify workflows, or tamper with the n8n binary
+**Layer**: Prevent
+**Deployment**: Bare-metal only
+**Source**: [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os) (File Permissions), [NIST SP 800-123 §4.2](https://csrc.nist.gov/publications/detail/sp/800-123/final)
+
+#### Why This Matters
+
+The `_n8n` service account's data directory contains the SQLite database with encrypted credentials, workflow definitions, and execution logs (which may contain PII). If other users can read these files, they can extract the encrypted database and attempt offline decryption. If they can write, they can inject malicious workflows.
+
+#### How to Harden
+
+**Set restrictive permissions on all n8n directories and files:**
+
+```bash
+# Directory permissions: 700 (owner only)
+sudo chmod 700 /opt/n8n
+sudo chmod 700 /opt/n8n/data
+sudo chmod 700 /opt/n8n/logs
+sudo chmod 700 /opt/n8n/backups
+
+# File permissions: 600 (owner read/write only)
+sudo find /opt/n8n -type f -exec chmod 600 {} \;
+
+# Start script must be executable
+sudo chmod 700 /opt/n8n/start-n8n.sh
+
+# Keychain password file: 400 (owner read only)
+sudo chmod 400 /opt/n8n/.keychain-password
+
+# Keychain file: 600 (owner read/write)
+sudo chmod 600 /opt/n8n/n8n.keychain-db
+
+# Ensure all files owned by _n8n
+sudo chown -R _n8n:_n8n /opt/n8n
+```
+
+**Verify the operator's home directory is not accessible:**
+
+```bash
+# Verify _n8n cannot read admin home directory
+sudo -u _n8n ls /Users/$(whoami)/ 2>&1
+# Expected: "Permission denied" or "Operation not permitted"
+
+# Verify _n8n cannot access SSH keys
+sudo -u _n8n cat /Users/$(whoami)/.ssh/id_ed25519 2>&1
+# Expected: "Permission denied"
+
+# Verify _n8n cannot access login Keychain
+sudo -u _n8n security dump-keychain ~/Library/Keychains/login.keychain-db 2>&1
+# Expected: error or permission denied
+```
+
+**Temp file isolation:**
+
+```bash
+# n8n uses /var/folders/ for temp files by default
+# Set TMPDIR to a dedicated temp directory owned by _n8n
+sudo mkdir -p /opt/n8n/tmp
+sudo chown _n8n:_n8n /opt/n8n/tmp
+sudo chmod 700 /opt/n8n/tmp
+
+# Add to launchd plist EnvironmentVariables:
+#   <key>TMPDIR</key>
+#   <string>/opt/n8n/tmp</string>
+```
+
+This prevents n8n temp files (which may contain PII from workflow executions) from being written to shared temp directories.
+
+**n8n binary integrity:**
+
+```bash
+# If n8n was installed via npm globally, verify installation path
+which n8n
+# Record the path and set immutable flag (if supported)
+
+# Verify n8n binary is not writable by non-root
+ls -la "$(which n8n)"
+# Expected: owned by root, not world-writable
+```
+
+#### Verification
+
+```bash
+# Check data directory permissions
+stat -f "%A %Su:%Sg %N" /opt/n8n/data 2>/dev/null
+# Expected: 700 _n8n:_n8n /opt/n8n/data
+
+# Check for world-readable files in n8n directory
+find /opt/n8n -perm -o+r -type f 2>/dev/null
+# Expected: no output (no world-readable files)
+
+# Verify blast radius — _n8n can only access its own directory
+sudo -u _n8n find / -writable -not -path "/opt/n8n/*" -not -path "/dev/*" 2>/dev/null | head -5
+# Expected: no results (or only expected system paths)
+```
+
+#### Edge Cases and Warnings
+
+- **npm global install**: If n8n is installed via `npm install -g`, it may be in `/usr/local/lib/node_modules/` which is world-readable. This is acceptable — the binary itself is not sensitive. The data directory (`/opt/n8n/data`) is what needs protection.
+- **macOS updates**: Major macOS updates may reset permissions on system directories. Re-verify `/opt/n8n` permissions after every update (§10.3).
+- **Backup permissions**: Backup files (§9.3) must NOT be readable by the `_n8n` account. If n8n is compromised, the attacker should not be able to access or modify backups. Store backups in a directory owned by the admin user with `700` permissions.
+- **Spotlight indexing**: Exclude `/opt/n8n` from Spotlight to prevent PII in workflow data from appearing in search results:
+
+```bash
+sudo mdutil -i off /opt/n8n
+```
+
+**Audit checks**: `CHK-SERVICE-HOME-PERMS` (FAIL), `CHK-SERVICE-DATA-PERMS` (FAIL) → §6.4
 
 ---
 
