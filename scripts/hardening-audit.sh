@@ -4,7 +4,8 @@
 set -euo pipefail
 
 readonly VERSION="0.1.0"
-readonly SCRIPT_NAME="$(basename "$0")"
+SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_NAME
 
 # --- Color Setup ---
 RED='\033[0;31m'
@@ -219,6 +220,285 @@ check_stealth_mode() {
     fi
 }
 
+# --- §2 OS Foundation Checks (T014) ---
+
+check_gatekeeper() {
+    local id="CHK-GATEKEEPER"
+    local output
+    output=$(spctl --status 2>&1) || true
+    if echo "$output" | grep -q "assessments enabled"; then
+        report_result "$id" "Gatekeeper" "Gatekeeper is enabled" "PASS" "2.4"
+    else
+        report_result "$id" "Gatekeeper" "Gatekeeper is disabled" "FAIL" "2.4" \
+            "Enable Gatekeeper: sudo spctl --master-enable"
+    fi
+}
+
+check_xprotect_fresh() {
+    local id="CHK-XPROTECT-FRESH"
+    local last_update
+    last_update=$(system_profiler SPInstallHistoryDataType 2>/dev/null \
+        | grep -B 1 "XProtect" | grep "Install Date" | tail -1 \
+        | sed 's/.*Install Date: //' | xargs) || true
+    if [[ -z "$last_update" ]]; then
+        report_result "$id" "XProtect" "Cannot determine XProtect update date" "SKIP" "2.4"
+        return
+    fi
+    local update_epoch current_epoch age_days
+    update_epoch=$(date -j -f "%m/%d/%y, %I:%M %p" "$last_update" "+%s" 2>/dev/null) || \
+    update_epoch=$(date -j -f "%Y-%m-%d" "$last_update" "+%s" 2>/dev/null) || true
+    if [[ -z "$update_epoch" ]]; then
+        report_result "$id" "XProtect" "XProtect update date: ${last_update}" "WARN" "2.4" \
+            "Verify XProtect is up to date via softwareupdate --list"
+        return
+    fi
+    current_epoch=$(date "+%s")
+    age_days=$(( (current_epoch - update_epoch) / 86400 ))
+    if [[ $age_days -le 14 ]]; then
+        report_result "$id" "XProtect" "XProtect updated ${age_days}d ago" "PASS" "2.4"
+    else
+        report_result "$id" "XProtect" "XProtect last updated ${age_days}d ago" "WARN" "2.4" \
+            "Run: softwareupdate --list to check for XProtect updates"
+    fi
+}
+
+check_auto_updates() {
+    local id="CHK-AUTO-UPDATES"
+    local auto_check
+    auto_check=$(defaults read /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled 2>/dev/null) || true
+    local critical
+    critical=$(defaults read /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall 2>/dev/null) || true
+    if [[ "$auto_check" == "1" && "$critical" == "1" ]]; then
+        report_result "$id" "Software Updates" "Automatic updates enabled" "PASS" "2.5"
+    else
+        report_result "$id" "Software Updates" "Automatic updates not fully enabled" "WARN" "2.5" \
+            "Enable: sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true"
+    fi
+}
+
+check_ntp() {
+    local id="CHK-NTP"
+    local output
+    output=$(systemsetup -getusingnetworktime 2>&1) || true
+    if echo "$output" | grep -qi "on"; then
+        report_result "$id" "NTP" "Network time is enabled" "PASS" "2.5"
+    else
+        report_result "$id" "NTP" "Network time is disabled" "WARN" "2.5" \
+            "Enable: sudo systemsetup -setusingnetworktime on"
+    fi
+}
+
+check_auto_login() {
+    local id="CHK-AUTO-LOGIN"
+    local output
+    output=$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>&1) || true
+    if echo "$output" | grep -q "does not exist"; then
+        report_result "$id" "Login Security" "Auto-login is disabled" "PASS" "2.6"
+    elif [[ -z "$output" ]]; then
+        report_result "$id" "Login Security" "Auto-login is disabled" "PASS" "2.6"
+    else
+        report_result "$id" "Login Security" "Auto-login is enabled" "FAIL" "2.6" \
+            "Disable: sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser"
+    fi
+}
+
+check_screen_lock() {
+    local id="CHK-SCREEN-LOCK"
+    local ask_pw
+    ask_pw=$(defaults read com.apple.screensaver askForPassword 2>/dev/null) || true
+    local delay
+    delay=$(defaults read com.apple.screensaver askForPasswordDelay 2>/dev/null) || true
+    if [[ "$ask_pw" == "1" && "$delay" == "0" ]]; then
+        report_result "$id" "Login Security" "Screen lock requires password immediately" "PASS" "2.6"
+    else
+        report_result "$id" "Login Security" "Screen lock not configured optimally" "WARN" "2.6" \
+            "Set: defaults write com.apple.screensaver askForPassword -int 1 && defaults write com.apple.screensaver askForPasswordDelay -int 0"
+    fi
+}
+
+check_guest() {
+    local id="CHK-GUEST"
+    local output
+    output=$(sudo defaults read /Library/Preferences/com.apple.loginwindow GuestEnabled 2>/dev/null) || true
+    if [[ "$output" == "0" ]]; then
+        report_result "$id" "Guest Account" "Guest account is disabled" "PASS" "2.7"
+    else
+        report_result "$id" "Guest Account" "Guest account is enabled" "FAIL" "2.7" \
+            "Disable: sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false"
+    fi
+}
+
+check_sharing_file() {
+    local id="CHK-SHARING-FILE"
+    local output
+    output=$(launchctl print system/com.apple.smbd 2>&1) || true
+    if echo "$output" | grep -q "could not find service"; then
+        report_result "$id" "Sharing Services" "File Sharing (SMB) is disabled" "PASS" "2.7"
+    elif echo "$output" | grep -q "state = running"; then
+        report_result "$id" "Sharing Services" "File Sharing (SMB) is running" "FAIL" "2.7" \
+            "Disable: sudo launchctl disable system/com.apple.smbd"
+    else
+        report_result "$id" "Sharing Services" "File Sharing (SMB) is loaded but not running" "WARN" "2.7"
+    fi
+}
+
+check_sharing_remote_events() {
+    local id="CHK-SHARING-REMOTE-EVENTS"
+    local output
+    output=$(sudo systemsetup -getremoteappleevents 2>&1) || true
+    if echo "$output" | grep -qi "off"; then
+        report_result "$id" "Sharing Services" "Remote Apple Events is disabled" "PASS" "2.7"
+    else
+        report_result "$id" "Sharing Services" "Remote Apple Events is enabled" "FAIL" "2.7" \
+            "Disable: sudo systemsetup -setremoteappleevents off"
+    fi
+}
+
+check_sharing_internet() {
+    local id="CHK-SHARING-INTERNET"
+    local output
+    output=$(defaults read /Library/Preferences/SystemConfiguration/com.apple.nat NAT 2>/dev/null) || true
+    if echo "$output" | grep -q "Enabled = 1"; then
+        report_result "$id" "Sharing Services" "Internet Sharing is enabled" "FAIL" "2.7" \
+            "Disable Internet Sharing in System Settings > General > Sharing"
+    else
+        report_result "$id" "Sharing Services" "Internet Sharing is disabled" "PASS" "2.7"
+    fi
+}
+
+check_sharing_screen() {
+    local id="CHK-SHARING-SCREEN"
+    local output
+    output=$(launchctl print system/com.apple.screensharing 2>&1) || true
+    if echo "$output" | grep -q "could not find service"; then
+        report_result "$id" "Sharing Services" "Screen Sharing is disabled" "PASS" "2.7"
+    elif echo "$output" | grep -q "state = running"; then
+        report_result "$id" "Sharing Services" "Screen Sharing is running" "WARN" "2.7" \
+            "Disable if not needed: sudo launchctl disable system/com.apple.screensharing"
+    else
+        report_result "$id" "Sharing Services" "Screen Sharing is loaded" "WARN" "2.7"
+    fi
+}
+
+check_airdrop() {
+    local id="CHK-AIRDROP"
+    local output
+    output=$(defaults read com.apple.NetworkBrowser DisableAirDrop 2>/dev/null) || true
+    if [[ "$output" == "1" ]]; then
+        report_result "$id" "Sharing Services" "AirDrop is disabled" "PASS" "2.7"
+    else
+        report_result "$id" "Sharing Services" "AirDrop is enabled" "WARN" "2.7" \
+            "Disable: defaults write com.apple.NetworkBrowser DisableAirDrop -bool true"
+    fi
+}
+
+check_startup_security() {
+    local id="CHK-STARTUP-SECURITY"
+    local arch
+    arch=$(uname -m 2>/dev/null) || true
+    if [[ "$arch" == "arm64" ]]; then
+        # Apple Silicon — Recovery Mode auth is enforced by Secure Enclave
+        report_result "$id" "Startup Security" "Apple Silicon — Secure Enclave enforces startup security" "PASS" "2.9"
+    else
+        # Intel — check firmware password
+        local output
+        output=$(sudo firmwarepasswd -check 2>&1) || true
+        if echo "$output" | grep -q "Yes"; then
+            report_result "$id" "Startup Security" "Firmware password is set" "PASS" "2.9"
+        else
+            report_result "$id" "Startup Security" "No firmware password set (Intel)" "WARN" "2.9" \
+                "Set firmware password via Recovery Mode > Startup Security Utility"
+        fi
+    fi
+}
+
+check_tcc() {
+    local id="CHK-TCC"
+    # Check if any sensitive TCC permissions are granted to unexpected apps
+    local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    if [[ ! -r "$tcc_db" ]]; then
+        report_result "$id" "TCC" "Cannot read TCC database (FDA required)" "SKIP" "2.10"
+        return
+    fi
+    local fda_count
+    fda_count=$(sqlite3 "$tcc_db" \
+        "SELECT COUNT(*) FROM access WHERE service = 'kTCCServiceSystemPolicyAllFiles' AND auth_value = 2;" 2>/dev/null) || true
+    if [[ -z "$fda_count" || "$fda_count" == "0" ]]; then
+        report_result "$id" "TCC" "No Full Disk Access grants detected" "PASS" "2.10"
+    else
+        report_result "$id" "TCC" "${fda_count} app(s) have Full Disk Access" "WARN" "2.10" \
+            "Review: tccutil to audit and restrict TCC grants"
+    fi
+}
+
+check_core_dumps() {
+    local id="CHK-CORE-DUMPS"
+    local core_files
+    core_files=$(ls /cores/ 2>/dev/null | wc -l | tr -d ' ') || true
+    local core_limit
+    core_limit=$(launchctl limit core 2>/dev/null | awk '{print $2}') || true
+    if [[ "$core_files" != "0" ]]; then
+        report_result "$id" "Core Dumps" "Core dump files found in /cores/" "WARN" "2.10" \
+            "Remove: sudo rm -f /cores/core.* and disable: sudo launchctl limit core 0"
+    elif [[ "$core_limit" == "0" ]]; then
+        report_result "$id" "Core Dumps" "Core dumps are disabled" "PASS" "2.10"
+    else
+        report_result "$id" "Core Dumps" "Core dumps are not disabled" "WARN" "2.10" \
+            "Disable: sudo launchctl limit core 0"
+    fi
+}
+
+check_privacy() {
+    local id="CHK-PRIVACY"
+    local siri
+    siri=$(defaults read com.apple.assistant.support "Assistant Enabled" 2>/dev/null) || true
+    if [[ "$siri" == "0" ]]; then
+        report_result "$id" "System Privacy" "Siri is disabled" "PASS" "2.10"
+    else
+        report_result "$id" "System Privacy" "Siri is enabled" "WARN" "2.10" \
+            "Disable: defaults write com.apple.assistant.support 'Assistant Enabled' -bool false"
+    fi
+}
+
+check_profiles() {
+    local id="CHK-PROFILES"
+    local output
+    output=$(profiles list 2>&1) || true
+    if echo "$output" | grep -qi "no profiles"; then
+        report_result "$id" "Configuration Profiles" "No configuration profiles installed" "PASS" "2.10"
+    elif echo "$output" | grep -qi "error"; then
+        report_result "$id" "Configuration Profiles" "Cannot check profiles" "SKIP" "2.10"
+    else
+        local count
+        count=$(echo "$output" | grep -c "profileIdentifier" 2>/dev/null) || count=0
+        report_result "$id" "Configuration Profiles" "${count} profile(s) installed" "WARN" "2.10" \
+            "Review: profiles list — remove unauthorized profiles with: sudo profiles remove -identifier <id>"
+    fi
+}
+
+check_spotlight() {
+    local id="CHK-SPOTLIGHT"
+    # Check if common sensitive paths are excluded from Spotlight
+    # This is informational — we can't know the exact n8n data path
+    local n8n_paths=("$HOME/.n8n" "$HOME/.colima")
+    local indexed=0
+    for path in "${n8n_paths[@]}"; do
+        if [[ -d "$path" ]]; then
+            local status
+            status=$(mdutil -s "$path" 2>/dev/null) || true
+            if echo "$status" | grep -q "Indexing enabled"; then
+                indexed=$((indexed + 1))
+            fi
+        fi
+    done
+    if [[ $indexed -eq 0 ]]; then
+        report_result "$id" "Spotlight" "Sensitive directories not indexed (or not present)" "PASS" "2.10"
+    else
+        report_result "$id" "Spotlight" "${indexed} sensitive dir(s) are Spotlight-indexed" "WARN" "2.10" \
+            "Exclude: sudo mdutil -i off /path/to/sensitive/dir"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -290,15 +570,34 @@ main() {
     run_check check_firewall
     run_check check_stealth_mode
 
+    # §2 OS Foundation — extended checks (T014)
+    run_check check_gatekeeper
+    run_check check_xprotect_fresh
+    run_check check_auto_updates
+    run_check check_ntp
+    run_check check_auto_login
+    run_check check_screen_lock
+    run_check check_guest
+    run_check check_sharing_file
+    run_check check_sharing_remote_events
+    run_check check_sharing_internet
+    run_check check_sharing_screen
+    run_check check_airdrop
+    run_check check_startup_security
+    run_check check_tcc
+    run_check check_core_dumps
+    run_check check_privacy
+    run_check check_profiles
+    run_check check_spotlight
+
     # Additional check groups added by later tasks:
-    # T009: OS Foundation checks
-    # T014: Network Security checks
-    # T019: Container Isolation checks
-    # T024: n8n Platform checks
-    # T029: Bare-Metal checks
-    # T034: Data Security checks
-    # T039: Detection and Monitoring checks
-    # T044: Response and Recovery checks
+    # T019: Network Security checks
+    # T024: Container Isolation checks
+    # T029: n8n Platform checks
+    # T034: Bare-Metal checks
+    # T038: Data Security checks
+    # T045: Detection and Monitoring checks
+    # T050: Response and Recovery checks
 
     # --- Output ---
     if $JSON_OUTPUT; then
