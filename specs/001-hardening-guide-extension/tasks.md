@@ -114,9 +114,9 @@
 
 **Independent Test**: Create `_n8n` service account, restrict permissions, run n8n via launchd. Verify n8n process cannot access operator's home directory, Keychain, or SSH keys per SC-015
 
-- [ ] T030 [P] [US1] Write §6.1 Dedicated Service Account, §6.2 Keychain Integration in `docs/HARDENING.md` -- service account per FR-036 (dedicated `_n8n` user), Keychain per FR-051 (separate Keychain, ACLs, lock behavior); `sysadminctl -addUser _n8n` with no home directory shell, separate Keychain with explicit ACLs, headless Keychain prompt behavior; blast radius limited to n8n data dir per SC-015
-- [ ] T031 [P] [US1] Write §6.3 launchd Execution, §6.4 Filesystem Permissions in `docs/HARDENING.md` -- launchd and file permissions per FR-036 (service account isolation), launchd plist running n8n as `_n8n` user, restrictive directory permissions (700/600), temp file isolation, no command-line secrets per SC-043
-- [ ] T032 [US1] Add §6 audit checks to `scripts/hardening-audit.sh` and update `scripts/CHK-REGISTRY.md`: CHK-SERVICE-ACCOUNT, CHK-SERVICE-HOME-PERMS, CHK-SERVICE-DATA-PERMS (3 bare-metal-only checks)
+- [x] T030 [P] [US1] Write §6.1 Dedicated Service Account, §6.2 Keychain Integration in `docs/HARDENING.md` -- service account per FR-036 (dedicated `_n8n` user), Keychain per FR-051 (separate Keychain, ACLs, lock behavior); `sysadminctl -addUser _n8n` with no home directory shell, separate Keychain with explicit ACLs, headless Keychain prompt behavior; blast radius limited to n8n data dir per SC-015
+- [x] T031 [P] [US1] Write §6.3 launchd Execution, §6.4 Filesystem Permissions in `docs/HARDENING.md` -- launchd and file permissions per FR-036 (service account isolation), launchd plist running n8n as `_n8n` user, restrictive directory permissions (700/600), temp file isolation, no command-line secrets per SC-043
+- [x] T032 [US1] Add §6 audit checks to `scripts/hardening-audit.sh` and update `scripts/CHK-REGISTRY.md`: CHK-SERVICE-ACCOUNT, CHK-SERVICE-HOME-PERMS, CHK-SERVICE-DATA-PERMS (3 bare-metal-only checks)
 
 **Checkpoint**: Bare-metal path independently complete. Both deployment paths fully documented per SC-009. Running check count: ~41.
 
