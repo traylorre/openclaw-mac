@@ -6,14 +6,14 @@
 
 - [Preamble](#preamble)
 - [1. Threat Model](#1-threat-model)
-- [2. OS Foundation](#2-os-foundation)
-- [3. Network Security](#3-network-security)
-- [4. Container Isolation — Containerized Path](#4-container-isolation--containerized-path)
-- [5. n8n Platform Security](#5-n8n-platform-security)
-- [6. Bare-Metal Path — Bare-Metal Only](#6-bare-metal-path--bare-metal-only)
-- [7. Data Security](#7-data-security)
-- [8. Detection and Monitoring](#8-detection-and-monitoring)
-- [9. Response and Recovery](#9-response-and-recovery)
+- [2. OS Foundation (Prevent)](#2-os-foundation-prevent)
+- [3. Network Security (Prevent)](#3-network-security-prevent)
+- [4. Container Isolation (Prevent) — Containerized Path](#4-container-isolation-prevent--containerized-path)
+- [5. n8n Platform Security (Prevent)](#5-n8n-platform-security-prevent)
+- [6. Bare-Metal Path (Prevent) — Bare-Metal Only](#6-bare-metal-path-prevent--bare-metal-only)
+- [7. Data Security (Prevent)](#7-data-security-prevent)
+- [8. Detection and Monitoring (Detect)](#8-detection-and-monitoring-detect)
+- [9. Response and Recovery (Respond)](#9-response-and-recovery-respond)
 - [10. Operational Maintenance](#10-operational-maintenance)
 - [11. Audit Script Reference](#11-audit-script-reference)
 - [Appendix A: Security Environment Variable Reference](#appendix-a-security-environment-variable-reference)
@@ -52,9 +52,9 @@ Choose **one** deployment path. Both paths produce equivalent security posture; 
 ```text
 Do you need workflow-level process isolation?
 ├── YES → Containerized Path (§4 + §5)
-│         Uses Colima + Docker to run n8n in a container.
+│         Uses Colima (or Docker Desktop) + Docker to run n8n in a container.
 │         Better blast-radius containment.
-│         Requires: Docker CLI, Colima, ~4 GB RAM overhead.
+│         Requires: Docker CLI, Colima or Docker Desktop, ~4 GB RAM overhead.
 │
 └── NO  → Bare-Metal Path (§6 + §5)
           Runs n8n natively via launchd.
@@ -73,6 +73,7 @@ Sections §2, §3, §7, §8, §9, §10, and §11 apply to **both** paths. Sectio
 | `[PAID]` | Paid tool — cost and free alternative noted inline |
 | **Prevent** / **Detect** / **Respond** | Defensive layer labels per defense-in-depth |
 | `[Containerized]` / `[Bare-Metal]` | Deployment-path-specific instruction |
+| `[EDUCATIONAL]` | Non-automated guidance — manual process or awareness item |
 
 ### Quick-Start Checklist
 
@@ -140,6 +141,8 @@ These controls require tool installation or more complex configuration.
 28. [ ] Set up dedicated service account `[Bare-Metal]` (§6.1)
 29. [ ] Configure launchd execution `[Bare-Metal]` (§6.3)
 30. [ ] Set filesystem permissions `[Bare-Metal]` (§6.4)
+31. [ ] Configure SSRF defense and internal network access control (§7.5)
+32. [ ] Audit and restrict TCC privacy permissions (§2.10)
 
 #### Tier 3: Ongoing (maintain)
 
@@ -185,7 +188,10 @@ The system operates as an always-on, headless (or semi-headless) server on a hom
 |-------|----------------------|
 | **LinkedIn session cookies and API tokens** | Account ban, legal liability, loss of scraping capability |
 | **n8n encryption key** | All stored credentials decryptable — full lateral movement |
+| **n8n admin password and TOTP secrets** | Unauthorized workflow access, credential extraction via UI |
 | **Apify API tokens** | Unauthorized actor execution, data exfiltration, billing abuse |
+| **SSH private keys** | Remote access to the server, lateral movement |
+| **SMTP and notification credentials** | Phishing from trusted sender, alert suppression |
 | **Scraped PII** (names, emails, job titles, profile URLs) | GDPR/CCPA breach notification obligations, reputational damage |
 | **macOS Keychain contents** | Cross-service credential theft |
 | **Workflow definitions** | Business logic exposure, injection of malicious nodes |
@@ -198,8 +204,9 @@ The system operates as an always-on, headless (or semi-headless) server on a hom
 | Adversary | Motivation | Capability | Likely Attack Vector |
 |-----------|-----------|------------|---------------------|
 | **Opportunistic attacker** | Cryptocurrency mining, botnet recruitment | Automated scanning, known CVE exploitation | Exposed n8n instance, default credentials, unpatched macOS |
-| **Credential harvester** | Resale of API tokens and session cookies | Phishing, supply chain compromise, public repo scanning | n8n webhook endpoints, leaked `.env` files, clipboard sniffing |
-| **Competitor / scraping rival** | Disrupt lead-gen capability, steal pipeline logic | Targeted reconnaissance, social engineering | Workflow exfiltration, Apify actor tampering |
+| **Targeted attacker** | Credential theft, PII exfiltration, pipeline disruption | Phishing, n8n exploitation, social engineering | n8n webhook endpoints, leaked `.env` files, clipboard sniffing, workflow exfiltration |
+| **Supply chain attacker** | Implant malware into build/runtime environment | Compromised npm packages, Docker images, Homebrew formulae | Malicious community node, trojanized base image, dependency confusion |
+| **Insider (operator misuse)** | Data exfiltration, cover tracks, disrupt service | Full system access, legitimate credentials | Direct Keychain access, workflow modification, audit log tampering |
 | **LinkedIn platform enforcement** | Terms of Service enforcement | IP blocking, account suspension, legal action | Detection of scraping patterns, session anomalies |
 | **Nation-state (advanced)** | Espionage, PII harvesting | Zero-day exploits, supply chain attacks, physical access | SIP bypass, firmware implants, network interception |
 
@@ -250,7 +257,7 @@ This guide does **not** cover:
 
 ---
 
-## 2. OS Foundation
+## 2. OS Foundation (Prevent)
 
 ### 2.1 Disk Encryption (FileVault)
 
@@ -294,7 +301,7 @@ This guide does **not** cover:
 
 ---
 
-## 3. Network Security
+## 3. Network Security (Prevent)
 
 ### 3.1 SSH Hardening
 
@@ -322,7 +329,7 @@ This guide does **not** cover:
 
 ---
 
-## 4. Container Isolation — Containerized Path
+## 4. Container Isolation (Prevent) — Containerized Path
 
 ### 4.1 Colima Setup
 
@@ -346,7 +353,7 @@ This guide does **not** cover:
 
 ---
 
-## 5. n8n Platform Security
+## 5. n8n Platform Security (Prevent)
 
 ### 5.1 Binding and Authentication
 
@@ -386,7 +393,7 @@ This guide does **not** cover:
 
 ---
 
-## 6. Bare-Metal Path — Bare-Metal Only
+## 6. Bare-Metal Path (Prevent) — Bare-Metal Only
 
 ### 6.1 Dedicated Service Account
 
@@ -406,7 +413,7 @@ This guide does **not** cover:
 
 ---
 
-## 7. Data Security
+## 7. Data Security (Prevent)
 
 ### 7.1 Credential Management
 
@@ -450,7 +457,7 @@ This guide does **not** cover:
 
 ---
 
-## 8. Detection and Monitoring
+## 8. Detection and Monitoring (Detect)
 
 ### 8.1 IDS Tools
 
@@ -482,7 +489,7 @@ This guide does **not** cover:
 
 ---
 
-## 9. Response and Recovery
+## 9. Response and Recovery (Respond)
 
 ### 9.1 Incident Response Runbook
 
