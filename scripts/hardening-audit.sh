@@ -12,12 +12,11 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
-BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Auto-disable colors when stdout is not a terminal
 if [[ ! -t 1 ]]; then
-    RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
+    RED='' GREEN='' YELLOW='' CYAN='' NC=''
 fi
 
 # --- Counters ---
@@ -31,6 +30,8 @@ SKIP_COUNT=0
 JSON_OUTPUT=false
 FILTER_SECTION=""
 QUIET=false
+# NO_COLOR is a conventional env flag; --no-color sets color vars directly
+# shellcheck disable=SC2034
 NO_COLOR=false
 
 # --- JSON accumulator ---
@@ -624,6 +625,42 @@ check_colima_mounts() {
             "Remove home directory mount — use named volumes instead"
     else
         report_result "$id" "Container Security" "No home directory mounts" "PASS" "4.3"
+    fi
+}
+
+check_container_network() {
+    local id="CHK-CONTAINER-NETWORK"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.5"
+        return
+    fi
+    local net_mode
+    net_mode=$(docker inspect "$container_id" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null) || true
+    if [[ "$net_mode" == "host" ]]; then
+        report_result "$id" "Container Security" "Container uses host network — no isolation" "FAIL" "4.5" \
+            "Use bridge networking, not --network host — see §4.5"
+    else
+        report_result "$id" "Container Security" "Container network mode: ${net_mode}" "PASS" "4.5"
+    fi
+}
+
+check_container_resources() {
+    local id="CHK-CONTAINER-RESOURCES"
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
+        return
+    fi
+    local mem_limit
+    mem_limit=$(docker inspect "$container_id" --format '{{.HostConfig.Memory}}' 2>/dev/null) || true
+    if [[ "$mem_limit" == "0" || -z "$mem_limit" ]]; then
+        report_result "$id" "Container Security" "No memory limit set — resource exhaustion possible" "WARN" "4.3" \
+            "Set deploy.resources.limits.memory in docker-compose.yml — see §4.3"
+    else
+        report_result "$id" "Container Security" "Memory limit set (${mem_limit} bytes)" "PASS" "4.3"
     fi
 }
 
@@ -1336,6 +1373,193 @@ check_canary() {
     fi
 }
 
+# --- §9 Response and Recovery checks (T050) ---
+
+check_backup_configured() {
+    local id="CHK-BACKUP-CONFIGURED"
+    local backup_found=false
+
+    # Check for Time Machine configuration
+    if tmutil destinationinfo 2>/dev/null | grep -q "Mount Point"; then
+        backup_found=true
+    fi
+
+    # Check for backup directory with recent files
+    local backup_dir="/opt/n8n/backups"
+    if [[ -d "$backup_dir" ]] && find "$backup_dir" -name "*.tar.gz*" -mtime -30 2>/dev/null | grep -q .; then
+        backup_found=true
+    fi
+
+    if $backup_found; then
+        report_result "$id" "Backup" "Backup configuration detected" "PASS" "9.3"
+    else
+        report_result "$id" "Backup" "No backup configuration detected" "WARN" "9.3" \
+            "Configure Time Machine or automated backup — see §9.3"
+    fi
+}
+
+check_backup_encrypted() {
+    local id="CHK-BACKUP-ENCRYPTED"
+    local backup_dir="/opt/n8n/backups"
+
+    # Check if Time Machine encryption is enabled
+    local tm_encrypted=false
+    if tmutil destinationinfo 2>/dev/null | grep -qi "encrypted"; then
+        tm_encrypted=true
+    fi
+
+    # Check for unencrypted backup files in the backup directory
+    local unencrypted_found=false
+    if [[ -d "$backup_dir" ]]; then
+        # Look for .tar.gz files that don't have a corresponding .gpg or .enc
+        while IFS= read -r -d '' tarfile; do
+            if [[ ! -f "${tarfile}.gpg" && ! -f "${tarfile}.enc" ]]; then
+                unencrypted_found=true
+                break
+            fi
+        done < <(find "$backup_dir" -name "*.tar.gz" -not -name "*.gpg" -not -name "*.enc" -print0 2>/dev/null)
+    fi
+
+    if $unencrypted_found; then
+        report_result "$id" "Backup" "Unencrypted backup files found in $backup_dir" "WARN" "9.3" \
+            "Encrypt backups with GPG or OpenSSL before storage — see §9.3"
+    elif $tm_encrypted || [[ -d "$backup_dir" ]]; then
+        report_result "$id" "Backup" "No unencrypted backup files detected" "PASS" "9.3"
+    else
+        report_result "$id" "Backup" "No backup directory found to check encryption" "SKIP" "9.3" \
+            "Configure backups first — see §9.3"
+    fi
+}
+
+check_find_my_mac() {
+    local id="CHK-FIND-MY-MAC"
+    local fmm_enabled
+    fmm_enabled=$(defaults read com.apple.icloud.findmymac FMMEnabled 2>/dev/null || echo "")
+
+    if [[ "$fmm_enabled" == "1" ]]; then
+        report_result "$id" "Physical" "Find My Mac is enabled" "PASS" "9.5"
+    elif [[ -z "$fmm_enabled" ]]; then
+        report_result "$id" "Physical" "Find My Mac status could not be determined" "WARN" "9.5" \
+            "Enable: System Settings > Apple ID > iCloud > Find My Mac"
+    else
+        report_result "$id" "Physical" "Find My Mac is not enabled" "WARN" "9.5" \
+            "Enable: System Settings > Apple ID > iCloud > Find My Mac"
+    fi
+}
+
+check_usb() {
+    local id="CHK-USB"
+    local policy
+    policy=$(defaults read /Library/Preferences/com.apple.security.accessory AccessorySecurityPolicy 2>/dev/null || echo "")
+
+    if [[ -z "$policy" ]]; then
+        # Setting may not exist on older macOS or if never configured
+        local macos_major
+        macos_major=$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)
+        if [[ "${macos_major:-0}" -ge 14 ]]; then
+            report_result "$id" "Physical" "USB accessory security policy not configured" "WARN" "9.5" \
+                "Configure: System Settings > Privacy & Security > Allow accessories to connect"
+        else
+            report_result "$id" "Physical" "USB accessory security not available on this macOS version" "SKIP" "9.5"
+        fi
+    elif [[ "$policy" -le 2 ]]; then
+        report_result "$id" "Physical" "USB accessory security is configured (policy: $policy)" "PASS" "9.5"
+    else
+        report_result "$id" "Physical" "USB accessory security is set to permissive (policy: $policy)" "WARN" "9.5" \
+            "Restrict to 'Ask for new accessories' — see §9.5"
+    fi
+}
+
+# --- §10 Operational Maintenance checks (T058) ---
+
+check_launchd_audit_job() {
+    local id="CHK-LAUNCHD-AUDIT-JOB"
+    if launchctl list com.openclaw.audit &>/dev/null; then
+        report_result "$id" "Infrastructure" "Audit launchd job is loaded" "PASS" "10.1"
+    elif [[ -f /Library/LaunchDaemons/com.openclaw.audit.plist ]]; then
+        report_result "$id" "Infrastructure" "Audit plist exists but job is not loaded" "FAIL" "10.1" \
+            "Load: sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit.plist"
+    else
+        report_result "$id" "Infrastructure" "Audit launchd job not found" "FAIL" "10.1" \
+            "Install audit plist — see §10.1"
+    fi
+}
+
+check_notification_config() {
+    local id="CHK-NOTIFICATION-CONFIG"
+    local conf="/opt/n8n/etc/notify.conf"
+    if [[ -f "$conf" ]]; then
+        report_result "$id" "Infrastructure" "Notification configuration exists" "PASS" "10.2"
+    else
+        report_result "$id" "Infrastructure" "Notification configuration not found" "WARN" "10.2" \
+            "Create notification config at $conf — see §10.2"
+    fi
+}
+
+check_log_dir() {
+    local id="CHK-LOG-DIR"
+    local log_dir="/opt/n8n/logs/audit"
+    if [[ -d "$log_dir" && -w "$log_dir" ]]; then
+        # Check if logs are being generated (most recent log not older than 2x weekly = 14 days)
+        local latest
+        latest=$(find "$log_dir" -name "audit-*.log" -mtime -14 2>/dev/null | head -1)
+        if [[ -n "$latest" ]]; then
+            report_result "$id" "Infrastructure" "Audit log directory exists with recent logs" "PASS" "10.4"
+        else
+            report_result "$id" "Infrastructure" "Audit log directory exists but no recent logs (>14 days)" "WARN" "10.4" \
+                "Verify scheduled audit is running — see §10.1"
+        fi
+    elif [[ -d "$log_dir" ]]; then
+        report_result "$id" "Infrastructure" "Audit log directory exists but is not writable" "FAIL" "10.4" \
+            "Fix permissions: sudo chmod 755 $log_dir"
+    else
+        report_result "$id" "Infrastructure" "Audit log directory does not exist" "FAIL" "10.4" \
+            "Create: sudo mkdir -p $log_dir && sudo chmod 755 $log_dir"
+    fi
+}
+
+check_clamav_freshness() {
+    local id="CHK-CLAMAV-FRESHNESS"
+    if ! command -v sigtool &>/dev/null; then
+        report_result "$id" "Tools" "ClamAV not installed — cannot check signature freshness" "SKIP" "10.3" \
+            "Install: brew install clamav"
+        return
+    fi
+
+    local sig_file=""
+    for f in /usr/local/share/clamav/main.cvd /opt/homebrew/share/clamav/main.cvd /var/lib/clamav/main.cvd; do
+        if [[ -f "$f" ]]; then
+            sig_file="$f"
+            break
+        fi
+    done
+
+    if [[ -z "$sig_file" ]]; then
+        report_result "$id" "Tools" "ClamAV signature database not found" "WARN" "10.3" \
+            "Run: sudo freshclam"
+        return
+    fi
+
+    # Check file age — warn if older than 7 days
+    local age_days
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        local mod_epoch
+        mod_epoch=$(stat -f %m "$sig_file" 2>/dev/null || echo 0)
+        local now_epoch
+        now_epoch=$(date +%s)
+        age_days=$(( (now_epoch - mod_epoch) / 86400 ))
+    else
+        age_days=$(( ( $(date +%s) - $(stat -c %Y "$sig_file" 2>/dev/null || echo 0) ) / 86400 ))
+    fi
+
+    if [[ "$age_days" -le 7 ]]; then
+        report_result "$id" "Tools" "ClamAV signatures are fresh (${age_days} days old)" "PASS" "10.3"
+    else
+        report_result "$id" "Tools" "ClamAV signatures are stale (${age_days} days old)" "WARN" "10.3" \
+            "Update: sudo freshclam"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -1358,8 +1582,9 @@ main() {
                 shift
                 ;;
             --no-color)
+                # shellcheck disable=SC2034
                 NO_COLOR=true
-                RED='' GREEN='' YELLOW='' CYAN='' BOLD='' NC=''
+                RED='' GREEN='' YELLOW='' CYAN='' NC=''
                 shift
                 ;;
             --version)
@@ -1445,6 +1670,8 @@ main() {
         run_check check_docker_socket
         run_check check_secrets_env
         run_check check_colima_mounts
+        run_check check_container_network
+        run_check check_container_resources
     fi
 
     # §5 n8n Platform Security checks (T029)
@@ -1484,8 +1711,17 @@ main() {
     run_check check_icloud_drive
     run_check check_canary
 
-    # Additional check groups added by later tasks:
-    # T050: Response and Recovery checks
+    # §9 Response and Recovery checks (T050)
+    run_check check_backup_configured
+    run_check check_backup_encrypted
+    run_check check_find_my_mac
+    run_check check_usb
+
+    # §10 Operational Maintenance checks (T058)
+    run_check check_launchd_audit_job
+    run_check check_notification_config
+    run_check check_log_dir
+    run_check check_clamav_freshness
 
     # --- Output ---
     if $JSON_OUTPUT; then

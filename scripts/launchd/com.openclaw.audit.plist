@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.audit</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-c</string>
+        <string><![CDATA[
+TIMESTAMP=$(date +%Y-%m-%dT%H:%M:%S)
+LOG_DIR="/opt/n8n/logs/audit"
+SCRIPT="/opt/n8n/scripts/hardening-audit.sh"
+
+mkdir -p "$LOG_DIR"
+
+# Run audit with human-readable output
+"$SCRIPT" --no-color > "${LOG_DIR}/audit-${TIMESTAMP}.log" 2>&1
+EXIT_CODE=$?
+
+# Run again with JSON output for notification parsing
+"$SCRIPT" --json > "${LOG_DIR}/audit-${TIMESTAMP}.json" 2>&1
+
+exit $EXIT_CODE
+]]></string>
+    </array>
+
+    <!-- Weekly schedule: Sunday at 03:00 -->
+    <!-- Weekday: 0=Sunday, 1=Monday, ..., 6=Saturday -->
+    <!-- If the Mac is asleep at the scheduled time, runs at next wake -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Run as root to access all system settings -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Redirect stdout/stderr for launchd-level logging -->
+    <key>StandardOutPath</key>
+    <string>/opt/n8n/logs/audit/launchd-audit-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/n8n/logs/audit/launchd-audit-stderr.log</string>
+
+    <!-- Do not restart on failure — wait for next scheduled run -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Prevent resource exhaustion -->
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
