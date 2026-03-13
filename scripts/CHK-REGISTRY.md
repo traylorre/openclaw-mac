@@ -55,4 +55,16 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-DOCKER-INSPECT-SECRETS | WARN | containerized | §7.1 | T038 |
 | CHK-SPOTLIGHT-EXCLUSIONS | WARN | both | §7.4 | T038 |
 | CHK-CONFIG-PROFILES | WARN | both | §7.10 | T038 |
-<!-- New checks added by T045, T050, T058 -->
+| CHK-SANTA | WARN | both | §8.1 | T045 |
+| CHK-BLOCKBLOCK | WARN | both | §8.1 | T045 |
+| CHK-LULU | WARN | both | §8.1 | T045 |
+| CHK-CLAMAV | WARN | both | §8.1 | T045 |
+| CHK-CLAMAV-SIGS | WARN | both | §8.1 | T045 |
+| CHK-PERSISTENCE-BASELINE | WARN | both | §8.2 | T045 |
+| CHK-WORKFLOW-BASELINE | WARN | both | §8.3 | T045 |
+| CHK-LISTENER-BASELINE | WARN | both | §8.2 | T045 |
+| CHK-CERT-BASELINE | WARN | both | §8.7 | T045 |
+| CHK-ICLOUD-KEYCHAIN | WARN | both | §8.6 | T045 |
+| CHK-ICLOUD-DRIVE | WARN | both | §8.6 | T045 |
+| CHK-CANARY | WARN | both | §8.5 | T045 |
+<!-- New checks added by T050, T058 -->

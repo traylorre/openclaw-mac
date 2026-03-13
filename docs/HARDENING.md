@@ -3710,31 +3710,443 @@ pbcopy < /dev/null
 
 ### 8.1 IDS Tools
 
-<!-- Content: T039 -->
+**Threat**: Malware execution, unauthorized binary installation, and post-exploitation tooling go undetected without host-level intrusion detection
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [MITRE ATT&CK T1543](https://attack.mitre.org/techniques/T1543/) (Create or Modify System Process), [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os), [Google Santa](https://santa.dev/)
+
+#### Why This Matters
+
+The audit script (§11) checks point-in-time configuration, but it cannot detect attacks that happen between runs. Host-level IDS tools provide continuous real-time detection for binary execution, persistence, and network anomalies. Even containerized deployments need host-level IDS — the host is the trust boundary, and a container breakout would only be detected by host-level tools.
+
+#### How to Harden
+
+**Install the IDS tool stack** (all free, all Apple Silicon native):
+
+| Tool | Function | Detection Type | Install |
+|------|----------|---------------|---------|
+| **Santa** | Binary allow/blocklist | Prevent + Detect | `brew install santa` |
+| **BlockBlock** | Persistence attempt alerts | Real-time Detect | Download from [objective-see.org](https://objective-see.org/products/blockblock.html) |
+| **LuLu** | Outbound connection alerts | Real-time Detect | `brew install --cask lulu` |
+| **KnockKnock** | Persistence enumeration | Periodic Detect | Download from [objective-see.org](https://objective-see.org/products/knockknock.html) |
+| **ClamAV** (free) | Antivirus scanning | Periodic Detect | `brew install clamav` |
+
+> **NOTE**: Santa has moved from `google/santa` (archived) to `northpolesec/santa`. Use the new repository for documentation and releases.
+
+**Santa configuration:**
+
+```bash
+# Install Santa
+brew install santa
+
+# Start in monitor mode (log-only — recommended initially)
+# Do NOT start in lockdown mode until baseline is established
+sudo santactl status
+# Expected: shows mode as "Monitor"
+```
+
+Santa in monitor mode logs all binary executions without blocking. Switch to lockdown mode only after establishing a trusted binary baseline.
+
+**ClamAV setup:**
+
+```bash
+brew install clamav
+# Initialize the virus database
+sudo freshclam
+# Run a scan
+clamscan -r /opt/n8n/data 2>/dev/null  # Bare-metal
+```
+
+**SentinelOne** `[PAID]` ~$5/month per endpoint — commercial EDR with real-time threat detection, automated response, and centralized management. Free alternative: ClamAV (scan-only, no real-time protection) + Santa + BlockBlock + LuLu (together provide comparable detection coverage without automated response).
+
+**How the tools complement each other:**
+
+- Santa controls what runs (prevention + detection)
+- BlockBlock detects persistence attempts in real-time
+- LuLu monitors outbound connections in real-time
+- KnockKnock provides periodic comprehensive persistence audits
+- ClamAV scans for known malware signatures
+
+See Appendix D for the complete tool comparison matrix.
+
+#### Verification
+
+```bash
+# Verify Santa is installed and running
+santactl status 2>/dev/null
+# Expected: shows mode and rule count
+
+# Verify BlockBlock is running
+pgrep -x BlockBlock 2>/dev/null && echo "Running" || echo "Not running"
+
+# Verify LuLu is running
+pgrep -x LuLu 2>/dev/null && echo "Running" || echo "Not running"
+
+# Verify ClamAV signatures are current
+freshclam --quiet 2>/dev/null; clamscan --version 2>/dev/null
+```
+
+**Audit checks**: `CHK-SANTA` (WARN), `CHK-BLOCKBLOCK` (WARN), `CHK-LULU` (WARN), `CHK-CLAMAV` (WARN) → §8.1
 
 ### 8.2 Launch Daemon and Persistence Auditing
 
-<!-- Content: T039 -->
+**Threat**: Attacker installs persistent backdoor via launch daemon/agent, cron job, login item, authorization plugin, shell profile modification, or configuration profile — surviving reboots and macOS updates
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [MITRE ATT&CK T1543.004](https://attack.mitre.org/techniques/T1543/004/) (Launch Daemon), [MITRE ATT&CK T1543.001](https://attack.mitre.org/techniques/T1543/001/) (Launch Agent), [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os)
+
+#### Why This Matters
+
+Launch daemons and agents are the primary macOS persistence mechanism. A compromised n8n (especially on bare-metal) or an attacker with shell access will install a launch agent to survive reboot. But launch daemons are only one of many persistence types — a thorough audit covers ALL mechanisms.
+
+#### How to Harden
+
+**Create a comprehensive persistence baseline** (run after initial hardening):
+
+```bash
+# Create baseline directory
+mkdir -p /opt/n8n/baselines 2>/dev/null || mkdir -p ~/openclaw-baselines
+
+# Launch daemons and agents
+ls -la /Library/LaunchDaemons/ > baselines/launchdaemons.txt
+ls -la /Library/LaunchAgents/ > baselines/launchagents.txt
+ls -la ~/Library/LaunchAgents/ >> baselines/launchagents.txt 2>/dev/null
+
+# Cron jobs (deprecated but functional)
+crontab -l > baselines/crontab-user.txt 2>/dev/null || true
+sudo crontab -l > baselines/crontab-root.txt 2>/dev/null || true
+
+# Login items
+# macOS Ventura+: use Settings > General > Login Items
+# CLI: sfltool dumpbtm (if available)
+
+# Authorization plugins
+ls -la /Library/Security/SecurityAgentPlugins/ > baselines/auth-plugins.txt 2>/dev/null
+
+# Periodic scripts
+ls -la /etc/periodic/daily/ /etc/periodic/weekly/ /etc/periodic/monthly/ \
+    > baselines/periodic.txt 2>/dev/null
+
+# Shell profiles (check for unauthorized modifications)
+shasum -a 256 /etc/profile /etc/bashrc /etc/zshrc \
+    ~/.bash_profile ~/.bashrc ~/.zshrc ~/.zprofile \
+    > baselines/shell-profiles.txt 2>/dev/null
+
+# Configuration profiles
+profiles list > baselines/config-profiles.txt 2>/dev/null
+
+# Generate master hash of all baselines
+shasum -a 256 baselines/*.txt > baselines/MANIFEST.sha256
+```
+
+**Drift detection** (run periodically or after any software installation):
+
+```bash
+# Compare current launch daemons against baseline
+diff <(ls /Library/LaunchDaemons/) <(awk '{print $NF}' baselines/launchdaemons.txt)
+# Any additions or deletions should be investigated
+```
+
+**Re-baseline triggers:**
+
+- After installing any new software via Homebrew
+- After macOS updates
+- Monthly scheduled review
+- After intentional system configuration changes
+
+KnockKnock (§8.1) provides a GUI-based persistence scan that complements the script-based baseline.
+
+**Audit checks**: `CHK-PERSISTENCE-BASELINE` (WARN) → §8.2
 
 ### 8.3 Workflow Integrity Monitoring
 
-<!-- Content: T039 -->
+**Threat**: Attacker who gains n8n API or UI access creates a scheduled workflow with a Code node for persistent code execution — this persistence survives n8n restarts, container rebuilds, and backup/restore cycles
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [MITRE ATT&CK T1053.003](https://attack.mitre.org/techniques/T1053/003/) (Scheduled Task/Job: Cron), [MITRE ATT&CK T1059.007](https://attack.mitre.org/techniques/T1059/007/) (JavaScript)
+
+#### Why This Matters
+
+n8n workflows are a persistence mechanism. An attacker who creates a scheduled workflow with a Code node that runs on a timer achieves persistent arbitrary code execution that survives restarts and is even backed up and restored. This is functionally equivalent to installing a cron job.
+
+#### How to Harden
+
+**Create workflow baseline:**
+
+```bash
+# Export all workflows to JSON
+n8n export:workflow --all --output=/opt/n8n/baselines/workflows.json 2>/dev/null || \
+    docker compose exec n8n n8n export:workflow --all --output=/tmp/workflows.json 2>/dev/null
+
+# Generate SHA256 manifest
+shasum -a 256 /opt/n8n/baselines/workflows.json > /opt/n8n/baselines/workflow-manifest.sha256
+```
+
+**Drift detection:**
+
+```bash
+# Export current workflows and compare
+n8n export:workflow --all --output=/tmp/current-workflows.json 2>/dev/null
+shasum -a 256 /tmp/current-workflows.json
+# Compare against stored manifest — any difference requires investigation
+```
+
+**Change protocol:**
+
+1. Before making intentional workflow changes, record the current manifest
+2. Make changes
+3. Re-export and generate a new manifest
+4. Store the new manifest as the updated baseline
+
+**Attack chain to detect:**
+
+1. Attacker gains n8n API access or injects via webhook
+2. Creates a scheduled workflow with a Code node on a timer
+3. Code node phones home or installs further persistence
+4. Workflow survives restarts and backups
+
+Monitor for: new workflows created outside your working hours, workflows with Code/Execute Command nodes you didn't create, unusual execution patterns in n8n logs.
+
+**Audit check**: `CHK-WORKFLOW-BASELINE` (WARN) → §8.3
 
 ### 8.4 macOS Logging
 
-<!-- Content: T039 -->
+**Threat**: Security events (failed logins, firewall blocks, TCC changes, SSH attempts) go unnoticed between audit script runs, allowing attackers time to operate undetected
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [Apple Developer Documentation — Unified Logging](https://developer.apple.com/documentation/os/logging), [NIST SP 800-92](https://csrc.nist.gov/publications/detail/sp/800-92/final), [MITRE ATT&CK T1070.001](https://attack.mitre.org/techniques/T1070/001/)
+
+#### Why This Matters
+
+macOS's unified log captures security-relevant events, but you must know the right predicates to query. Without active monitoring, a brute-force SSH attack or unauthorized TCC grant can go unnoticed for weeks.
+
+#### How to Harden
+
+**Security log review commands:**
+
+```bash
+# Failed login attempts (last 24 hours)
+log show --predicate 'eventMessage CONTAINS "Authentication failed"' \
+    --style compact --last 24h 2>/dev/null
+
+# Sudo usage
+log show --predicate 'process == "sudo"' --style compact --last 24h 2>/dev/null
+
+# SSH authentication events
+log show --predicate 'process == "sshd" AND eventMessage CONTAINS "authentication"' \
+    --style compact --last 24h 2>/dev/null
+
+# Firewall blocks
+log show --predicate 'subsystem == "com.apple.alf"' \
+    --style compact --last 24h 2>/dev/null
+
+# Gatekeeper blocks
+log show --predicate 'subsystem == "com.apple.syspolicy"' \
+    --style compact --last 24h 2>/dev/null
+
+# TCC permission changes
+log show --predicate 'subsystem == "com.apple.TCC"' \
+    --style compact --last 24h 2>/dev/null
+```
+
+**Continuous monitoring via launchd:**
+
+Create persistent log monitoring jobs that pipe filtered events to files:
+
+```bash
+# Create a log monitoring script
+cat > /opt/n8n/scripts/security-log-monitor.sh << 'SCRIPT'
+#!/bin/bash
+log stream --predicate '
+    (process == "sshd" AND eventMessage CONTAINS "Failed") OR
+    (subsystem == "com.apple.alf" AND eventMessage CONTAINS "deny") OR
+    (subsystem == "com.apple.TCC" AND eventMessage CONTAINS "access")
+' --style compact >> /opt/n8n/logs/security-events.log 2>&1
+SCRIPT
+chmod 700 /opt/n8n/scripts/security-log-monitor.sh
+```
+
+**DNS query logging** (covert channel defense):
+
+DNS tunneling can bypass outbound filtering by encoding data in subdomain queries. Enable DNS query logging to detect anomalous patterns:
+
+```bash
+# Enable mDNSResponder debug logging
+sudo log config --subsystem com.apple.mDNSResponder --mode level:debug
+
+# Monitor for DNS exfiltration indicators:
+# - High volume of queries to a single uncommon domain
+# - Unusually long subdomains (>30 chars of high-entropy content)
+# - Base64/hex-encoded strings in subdomains
+# - Queries to newly registered or uncommon TLDs
+```
+
+> **NOTE**: Encrypted DNS (DoH/DoT, §3.2) protects query privacy in transit but does NOT prevent DNS exfiltration — the attacker still receives the data via their authoritative nameserver.
+
+**Log integrity:**
+
+- Audit log files MUST be owned by root and writable only by the audit process
+- The `_n8n` service account MUST NOT have write access to audit logs
+- Consider `chflags uappend` on active log files for append-only protection
+- Forward critical logs to an external destination (remote syslog, cloud logging) — an attacker who compromises the Mac Mini cannot modify logs already forwarded
+
+```bash
+# Set log file permissions
+sudo chown root:wheel /opt/n8n/logs/security-events.log
+sudo chmod 644 /opt/n8n/logs/security-events.log
+# Note: 644 allows reads for review but only root can write
+```
+
+**Log review cadence**: Weekly for high-security deployments, monthly for standard.
 
 ### 8.5 Credential Exposure Monitoring
 
-<!-- Content: T039 -->
+**Threat**: Credentials exposed in process listings, Docker inspect output, environment variables, or log files go undetected, extending the window of compromise
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [MITRE ATT&CK T1552](https://attack.mitre.org/techniques/T1552/) (Unsecured Credentials), [NIST SP 800-53 SI-4](https://csrc.nist.gov/publications/detail/sp/800-53/rev-5/final)
+
+#### Why This Matters
+
+Even with proper credential management (§7.1), credentials can leak through error messages, debug logs, process arguments, or container metadata. Periodic monitoring detects these exposures before an attacker does.
+
+#### How to Harden
+
+**Check for credential exposure:**
+
+```bash
+# Check process arguments for secrets
+ps aux | grep -iE 'encryption.key=|password=|secret=|api.key=' | grep -v grep
+
+# Containerized: check docker inspect output
+docker inspect "$(docker ps -q --filter name=n8n 2>/dev/null)" \
+    --format '{{json .Config.Env}}' 2>/dev/null | \
+    grep -iE 'ENCRYPTION_KEY=[a-fA-F0-9]{8}|PASSWORD=|SECRET='
+
+# Check n8n logs for credential leakage
+docker compose logs n8n 2>/dev/null | tail -100 | \
+    grep -iE 'password|secret|key|token' | grep -v "expected"
+```
+
+**Canary and tripwire detection** (independent compromise detection):
+
+Canary mechanisms detect compromise by monitoring access to resources that should never be legitimately accessed.
+
+**Canary files:**
+
+```bash
+# Create an attractive canary file in the n8n data directory
+echo "CANARY-TOKEN-$(openssl rand -hex 16)" > /opt/n8n/data/admin-credentials.txt
+chmod 644 /opt/n8n/data/admin-credentials.txt
+# If this file is read by anything other than the baseline scan, investigate
+
+# On bare-metal: create a canary in the operator's home directory
+echo "CANARY-$(openssl rand -hex 16)" > ~/aws-root-credentials.txt
+```
+
+**Honey credentials:**
+
+Create a fake n8n credential entry (e.g., "AWS Root Account") containing a canary token URL. If the URL is ever accessed, an attacker is testing stolen credentials. Use a free service like [canarytokens.org](https://canarytokens.org) to generate tokens with email alerts.
+
+**Canary DNS:**
+
+Place a canary DNS hostname (from a canary token service) in a configuration file. If the hostname is ever resolved (visible in DNS query logs, §8.4), an attacker is exploring the environment.
+
+> **NOTE**: Canary mechanisms are not foolproof — sophisticated attackers may recognize obvious honeypots. However, automated attack tools typically trigger them, providing an independent detection layer.
+
+**Audit check**: `CHK-CANARY` (WARN) → §8.5
 
 ### 8.6 iCloud and Cloud Service Exposure
 
-<!-- Content: T039 -->
+**Threat**: iCloud sync services silently upload Mac Mini data (Keychain, Desktop, Documents, photos) to Apple's servers and synced devices, expanding the attack surface beyond the physical Mac Mini
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os), [MITRE ATT&CK T1537](https://attack.mitre.org/techniques/T1537/) (Transfer Data to Cloud Account)
+
+#### Why This Matters
+
+iCloud syncs Keychain passwords, Desktop and Documents folders, photos, and other data to Apple's servers and all devices signed into the same Apple ID. On a security-hardened Mac Mini processing PII, this creates uncontrolled data leakage to cloud services and other devices.
+
+#### How to Harden
+
+**Disable all iCloud services except Find My Mac:**
+
+```bash
+# Disable iCloud Drive
+defaults write com.apple.bird optimize-storage -bool false 2>/dev/null
+
+# Disable iCloud Keychain sync
+# System Settings > Apple ID > iCloud > Keychain > OFF
+
+# Disable iCloud Desktop and Documents sync
+# System Settings > Apple ID > iCloud > iCloud Drive > Options > uncheck Desktop & Documents
+
+# Disable iCloud Photo Library
+defaults write com.apple.imagecapture disableHotPlug -bool true 2>/dev/null
+```
+
+**Keep Find My Mac enabled** — it provides theft recovery and remote wipe capability. Requires Apple ID with 2FA enabled (introduces Apple ID as a dependency — acceptable tradeoff for physical security).
+
+**Disable Handoff and Universal Clipboard:**
+
+```bash
+# Disable Handoff (prevents clipboard syncing between devices)
+defaults write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool false
+defaults write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool false
+```
+
+#### Verification
+
+```bash
+# Check iCloud Keychain status
+defaults read com.apple.bird optimize-storage 2>/dev/null
+
+# Check iCloud Drive status
+brctl status 2>/dev/null
+```
+
+**Audit checks**: `CHK-ICLOUD-KEYCHAIN` (WARN), `CHK-ICLOUD-DRIVE` (WARN) → §8.6
 
 ### 8.7 Certificate Trust Monitoring
 
-<!-- Content: T039 -->
+**Threat**: Attacker installs a rogue root CA certificate in the System Keychain, enabling silent man-in-the-middle interception of ALL HTTPS traffic — Apify API calls, Docker registry pulls, Homebrew downloads, LinkedIn authentication
+**Layer**: Detect
+**Deployment**: Both
+**Source**: [MITRE ATT&CK T1553.004](https://attack.mitre.org/techniques/T1553/004/) (Install Root Certificate), [CIS Apple macOS Benchmarks](https://www.cisecurity.org/benchmark/apple_os), [Apple Platform Security Guide](https://support.apple.com/guide/security/welcome/web)
+
+#### Why This Matters
+
+Installing a rogue root CA certificate allows an attacker to generate valid-looking certificates for any domain, intercepting and modifying ALL HTTPS traffic without triggering certificate warnings. This single action compromises every encrypted connection the Mac Mini makes.
+
+#### How to Harden
+
+**Create certificate trust store baseline:**
+
+```bash
+# Export all trusted root certificates with fingerprints
+security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null | \
+    while openssl x509 -noout -subject -fingerprint -sha256 2>/dev/null; do :; done \
+    > /opt/n8n/baselines/cert-trust-store.txt 2>/dev/null || \
+    > ~/openclaw-baselines/cert-trust-store.txt
+
+# Count trusted certificates
+security find-certificate -a /Library/Keychains/System.keychain 2>/dev/null | \
+    grep -c "^keychain"
+```
+
+**Drift detection:**
+
+```bash
+# Compare current trust store against baseline
+security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null | \
+    while openssl x509 -noout -subject -fingerprint -sha256 2>/dev/null; do :; done | \
+    diff - /opt/n8n/baselines/cert-trust-store.txt
+# Any additions require investigation
+```
+
+**Post-incident**: During incident recovery (§9.1), review and reset the certificate trust store — remove any certificates not in the original baseline.
+
+**Audit check**: `CHK-CERT-BASELINE` (WARN) → §8.7
 
 ---
 
