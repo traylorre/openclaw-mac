@@ -48,4 +48,7 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-N8N-ENV-API | WARN | both | §5.3 | T029 |
 | CHK-N8N-NODES | WARN | both | §5.6 | T029 |
 | CHK-N8N-WEBHOOK | WARN | both | §5.5 | T029 |
-<!-- New checks added by T032, T038, T045, T050, T058 -->
+| CHK-SERVICE-ACCOUNT | FAIL | bare-metal | §6.1 | T032 |
+| CHK-SERVICE-HOME-PERMS | FAIL | bare-metal | §6.4 | T032 |
+| CHK-SERVICE-DATA-PERMS | FAIL | bare-metal | §6.4 | T032 |
+<!-- New checks added by T038, T045, T050, T058 -->
