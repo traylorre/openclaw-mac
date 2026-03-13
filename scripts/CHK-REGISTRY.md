@@ -51,4 +51,8 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-SERVICE-ACCOUNT | FAIL | bare-metal | §6.1 | T032 |
 | CHK-SERVICE-HOME-PERMS | FAIL | bare-metal | §6.4 | T032 |
 | CHK-SERVICE-DATA-PERMS | FAIL | bare-metal | §6.4 | T032 |
-<!-- New checks added by T038, T045, T050, T058 -->
+| CHK-CRED-ENV-VISIBLE | WARN | both | §7.1 | T038 |
+| CHK-DOCKER-INSPECT-SECRETS | WARN | containerized | §7.1 | T038 |
+| CHK-SPOTLIGHT-EXCLUSIONS | WARN | both | §7.4 | T038 |
+| CHK-CONFIG-PROFILES | WARN | both | §7.10 | T038 |
+<!-- New checks added by T045, T050, T058 -->
