@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.openclaw.notify</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/n8n/scripts/audit-notify.sh</string>
+    </array>
+
+    <!-- Run 5 minutes after the audit job (Sunday at 03:05) -->
+    <!-- This delay ensures the audit JSON output is available for parsing -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>0</integer>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>5</integer>
+    </dict>
+
+    <!-- Run as root to read audit logs owned by root -->
+    <key>UserName</key>
+    <string>root</string>
+
+    <!-- Redirect stdout/stderr for debugging -->
+    <key>StandardOutPath</key>
+    <string>/opt/n8n/logs/audit/launchd-notify-stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/opt/n8n/logs/audit/launchd-notify-stderr.log</string>
+
+    <!-- Do not restart on failure -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>Nice</key>
+    <integer>10</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
