@@ -1051,6 +1051,119 @@ check_service_data_perms() {
     fi
 }
 
+# --- §7 Data Security Checks (T038) ---
+
+check_cred_env_visible() {
+    local id="CHK-CRED-ENV-VISIBLE"
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" == "containerized" ]]; then
+        # Reuse CHK-SECRETS-ENV logic — check container env for secrets
+        local container_id
+        container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+        if [[ -z "$container_id" ]]; then
+            report_result "$id" "Data Security" "No n8n container running" "SKIP" "7.1"
+            return
+        fi
+        local env_vars
+        env_vars=$(docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
+        if echo "$env_vars" | grep -qiE 'ENCRYPTION_KEY=[a-fA-F0-9]{8}|PASSWORD=[^ ]{4}|_SECRET=[a-zA-Z0-9]{8}'; then
+            report_result "$id" "Data Security" "Secrets visible in container environment" "WARN" "7.1" \
+                "Use Docker secrets instead of environment variables — see §4.3"
+        else
+            report_result "$id" "Data Security" "No secrets in container environment" "PASS" "7.1"
+        fi
+    elif [[ "$deployment" == "bare-metal" ]]; then
+        local pid
+        pid=$(pgrep -f "n8n" 2>/dev/null | head -1) || true
+        if [[ -z "$pid" ]]; then
+            report_result "$id" "Data Security" "n8n not running (credential check skipped)" "SKIP" "7.1"
+            return
+        fi
+        local args
+        args=$(ps -p "$pid" -o args= 2>/dev/null) || true
+        if echo "$args" | grep -qiE 'encryption.key=|password=|secret=|token='; then
+            report_result "$id" "Data Security" "Secrets visible in process arguments" "WARN" "7.1" \
+                "Use Keychain or env vars in launchd plist — never command-line args (§6.2)"
+        else
+            report_result "$id" "Data Security" "No secrets in process arguments" "PASS" "7.1"
+        fi
+    else
+        report_result "$id" "Data Security" "n8n not detected" "SKIP" "7.1"
+    fi
+}
+
+check_docker_inspect_secrets() {
+    local id="CHK-DOCKER-INSPECT-SECRETS"
+    local deployment
+    deployment=$(detect_deployment)
+    if [[ "$deployment" != "containerized" ]]; then
+        report_result "$id" "Data Security" "Not containerized (docker inspect N/A)" "SKIP" "7.1"
+        return
+    fi
+    local container_id
+    container_id=$(docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    if [[ -z "$container_id" ]]; then
+        report_result "$id" "Data Security" "No n8n container running" "SKIP" "7.1"
+        return
+    fi
+    # Check if docker inspect reveals actual secret values in environment
+    local env_output
+    env_output=$(docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
+    local has_secrets
+    has_secrets=$(echo "$env_output" | grep -ciE 'N8N_ENCRYPTION_KEY=[a-fA-F0-9]{16}|JWT_SECRET=[a-zA-Z0-9]{16}') || true
+    if [[ "$has_secrets" -gt 0 ]]; then
+        report_result "$id" "Data Security" "docker inspect exposes secret values" "WARN" "7.1" \
+            "Move N8N_ENCRYPTION_KEY to Docker secrets (/run/secrets/) — see §4.3"
+    else
+        report_result "$id" "Data Security" "No high-value secrets in docker inspect" "PASS" "7.1"
+    fi
+}
+
+check_spotlight_exclusions() {
+    local id="CHK-SPOTLIGHT-EXCLUSIONS"
+    local deployment
+    deployment=$(detect_deployment)
+    local indexed=0
+    # Check bare-metal n8n data directory
+    if [[ -d /opt/n8n ]]; then
+        local mdutil_status
+        mdutil_status=$(mdutil -s /opt/n8n 2>/dev/null) || true
+        if echo "$mdutil_status" | grep -qi "enabled"; then
+            indexed=$((indexed + 1))
+        fi
+    fi
+    # Check Docker data directory (if it exists on host)
+    if [[ -d /var/lib/docker ]]; then
+        local docker_mdutil
+        docker_mdutil=$(mdutil -s /var/lib/docker 2>/dev/null) || true
+        if echo "$docker_mdutil" | grep -qi "enabled"; then
+            indexed=$((indexed + 1))
+        fi
+    fi
+    if [[ $indexed -eq 0 ]]; then
+        report_result "$id" "Data Security" "Sensitive directories excluded from Spotlight" "PASS" "7.4"
+    else
+        report_result "$id" "Data Security" "${indexed} sensitive dir(s) are Spotlight-indexed" "WARN" "7.4" \
+            "Exclude: sudo mdutil -i off /opt/n8n (or Docker data dir)"
+    fi
+}
+
+check_config_profiles() {
+    local id="CHK-CONFIG-PROFILES"
+    # Check for unexpected configuration profiles that could weaken security
+    local profiles
+    profiles=$(profiles list 2>/dev/null) || true
+    if [[ -z "$profiles" ]] || echo "$profiles" | grep -qi "no profiles"; then
+        report_result "$id" "Data Security" "No configuration profiles installed" "PASS" "7.10"
+    else
+        local count
+        count=$(echo "$profiles" | grep -c "attribute" 2>/dev/null) || count=0
+        report_result "$id" "Data Security" "${count} configuration profile(s) installed" "WARN" "7.10" \
+            "Review: profiles list — verify all profiles are expected"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -1179,8 +1292,13 @@ main() {
         run_check check_service_data_perms
     fi
 
+    # §7 Data Security checks (T038)
+    run_check check_cred_env_visible
+    run_check check_docker_inspect_secrets
+    run_check check_spotlight_exclusions
+    run_check check_config_profiles
+
     # Additional check groups added by later tasks:
-    # T038: Data Security checks
     # T045: Detection and Monitoring checks
     # T050: Response and Recovery checks
 
