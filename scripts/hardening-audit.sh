@@ -1164,6 +1164,178 @@ check_config_profiles() {
     fi
 }
 
+# --- §8 Detection and Monitoring Checks (T045) ---
+
+check_santa() {
+    local id="CHK-SANTA"
+    if command -v santactl &>/dev/null; then
+        local mode
+        mode=$(santactl status 2>/dev/null | grep -i "mode" | head -1) || true
+        report_result "$id" "IDS Tools" "Santa installed (${mode:-status unknown})" "PASS" "8.1"
+    else
+        report_result "$id" "IDS Tools" "Santa not installed" "WARN" "8.1" \
+            "Install: brew install santa — see §8.1"
+    fi
+}
+
+check_blockblock() {
+    local id="CHK-BLOCKBLOCK"
+    if pgrep -x BlockBlock &>/dev/null || pgrep -x "BlockBlock Helper" &>/dev/null; then
+        report_result "$id" "IDS Tools" "BlockBlock is running" "PASS" "8.1"
+    elif [[ -d "/Applications/BlockBlock Helper.app" ]] || [[ -d "/Library/Objective-See/BlockBlock" ]]; then
+        report_result "$id" "IDS Tools" "BlockBlock installed but not running" "WARN" "8.1" \
+            "Start BlockBlock from Applications"
+    else
+        report_result "$id" "IDS Tools" "BlockBlock not installed" "WARN" "8.1" \
+            "Install from objective-see.org — see §8.1"
+    fi
+}
+
+check_lulu() {
+    local id="CHK-LULU"
+    if pgrep -x LuLu &>/dev/null || pgrep -f "com.objective-see.lulu" &>/dev/null; then
+        report_result "$id" "IDS Tools" "LuLu is running" "PASS" "8.1"
+    elif [[ -d "/Applications/LuLu.app" ]] || [[ -d "/Library/Objective-See/LuLu" ]]; then
+        report_result "$id" "IDS Tools" "LuLu installed but not running" "WARN" "8.1" \
+            "Start LuLu from Applications or brew install --cask lulu"
+    else
+        report_result "$id" "IDS Tools" "LuLu not installed" "WARN" "8.1" \
+            "Install: brew install --cask lulu — see §8.1"
+    fi
+}
+
+check_clamav() {
+    local id="CHK-CLAMAV"
+    if command -v clamscan &>/dev/null; then
+        report_result "$id" "IDS Tools" "ClamAV is installed" "PASS" "8.1"
+    else
+        report_result "$id" "IDS Tools" "ClamAV not installed" "WARN" "8.1" \
+            "Install: brew install clamav — see §8.1"
+    fi
+}
+
+check_clamav_sigs() {
+    local id="CHK-CLAMAV-SIGS"
+    if ! command -v clamscan &>/dev/null; then
+        report_result "$id" "IDS Tools" "ClamAV not installed (sig check skipped)" "SKIP" "8.1"
+        return
+    fi
+    local db_dir="/opt/homebrew/share/clamav"
+    if [[ ! -d "$db_dir" ]]; then
+        db_dir="/usr/local/share/clamav"
+    fi
+    if [[ -f "$db_dir/main.cvd" ]] || [[ -f "$db_dir/main.cld" ]]; then
+        local age_days
+        age_days=$(( ( $(date +%s) - $(stat -f %m "$db_dir/main.c"*d 2>/dev/null | head -1) ) / 86400 )) 2>/dev/null || age_days=999
+        if [[ $age_days -lt 7 ]]; then
+            report_result "$id" "IDS Tools" "ClamAV signatures current (${age_days}d old)" "PASS" "8.1"
+        else
+            report_result "$id" "IDS Tools" "ClamAV signatures stale (${age_days}d old)" "WARN" "8.1" \
+                "Update: sudo freshclam"
+        fi
+    else
+        report_result "$id" "IDS Tools" "ClamAV signatures not initialized" "WARN" "8.1" \
+            "Initialize: sudo freshclam"
+    fi
+}
+
+check_persistence_baseline() {
+    local id="CHK-PERSISTENCE-BASELINE"
+    local baseline_dir="/opt/n8n/baselines"
+    if [[ ! -d "$baseline_dir" ]]; then
+        baseline_dir="$HOME/openclaw-baselines"
+    fi
+    if [[ -f "$baseline_dir/launchdaemons.txt" ]]; then
+        report_result "$id" "Persistence" "Persistence baseline exists" "PASS" "8.2"
+    else
+        report_result "$id" "Persistence" "No persistence baseline found" "WARN" "8.2" \
+            "Create baseline after hardening — see §8.2"
+    fi
+}
+
+check_workflow_baseline() {
+    local id="CHK-WORKFLOW-BASELINE"
+    local baseline_dir="/opt/n8n/baselines"
+    if [[ ! -d "$baseline_dir" ]]; then
+        baseline_dir="$HOME/openclaw-baselines"
+    fi
+    if [[ -f "$baseline_dir/workflow-manifest.sha256" ]]; then
+        report_result "$id" "Workflow Integrity" "Workflow baseline exists" "PASS" "8.3"
+    else
+        report_result "$id" "Workflow Integrity" "No workflow baseline found" "WARN" "8.3" \
+            "Export workflows and create baseline — see §8.3"
+    fi
+}
+
+check_listener_baseline() {
+    local id="CHK-LISTENER-BASELINE"
+    # Check for unexpected listeners beyond known services
+    local listeners
+    listeners=$(sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | awk 'NR>1{print $1, $9}' | sort -u) || true
+    if [[ -z "$listeners" ]]; then
+        report_result "$id" "Network" "No TCP listeners detected" "PASS" "8.2"
+    else
+        local count
+        count=$(echo "$listeners" | wc -l | tr -d ' ')
+        report_result "$id" "Network" "${count} TCP listener(s) — review for unexpected services" "WARN" "8.2" \
+            "Compare against expected services for your deployment path"
+    fi
+}
+
+check_cert_baseline() {
+    local id="CHK-CERT-BASELINE"
+    local baseline_dir="/opt/n8n/baselines"
+    if [[ ! -d "$baseline_dir" ]]; then
+        baseline_dir="$HOME/openclaw-baselines"
+    fi
+    if [[ -f "$baseline_dir/cert-trust-store.txt" ]]; then
+        report_result "$id" "Certificates" "Certificate trust store baseline exists" "PASS" "8.7"
+    else
+        report_result "$id" "Certificates" "No certificate baseline found" "WARN" "8.7" \
+            "Create certificate trust store baseline — see §8.7"
+    fi
+}
+
+check_icloud_keychain() {
+    local id="CHK-ICLOUD-KEYCHAIN"
+    # iCloud Keychain detection is limited from CLI; check for iCloud-related config
+    if defaults read MobileMeAccounts 2>/dev/null | grep -q "KEYCHAIN_SYNC"; then
+        report_result "$id" "Cloud Services" "iCloud Keychain sync may be enabled" "WARN" "8.6" \
+            "Disable: System Settings > Apple ID > iCloud > Keychain > OFF"
+    else
+        report_result "$id" "Cloud Services" "iCloud Keychain sync not detected" "PASS" "8.6"
+    fi
+}
+
+check_icloud_drive() {
+    local id="CHK-ICLOUD-DRIVE"
+    # Check if iCloud Drive is syncing
+    if brctl status 2>/dev/null | grep -qi "enabled"; then
+        report_result "$id" "Cloud Services" "iCloud Drive appears enabled" "WARN" "8.6" \
+            "Disable iCloud Drive sync in System Settings > Apple ID > iCloud"
+    else
+        report_result "$id" "Cloud Services" "iCloud Drive not detected as enabled" "PASS" "8.6"
+    fi
+}
+
+check_canary() {
+    local id="CHK-CANARY"
+    local canary_found=false
+    # Check for canary files in expected locations
+    if [[ -f /opt/n8n/data/admin-credentials.txt ]]; then
+        canary_found=true
+    fi
+    if [[ -f "$HOME/aws-root-credentials.txt" ]]; then
+        canary_found=true
+    fi
+    if $canary_found; then
+        report_result "$id" "Canary" "Canary files are in place" "PASS" "8.5"
+    else
+        report_result "$id" "Canary" "No canary files detected" "WARN" "8.5" \
+            "Deploy canary files for independent compromise detection — see §8.5"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -1298,8 +1470,21 @@ main() {
     run_check check_spotlight_exclusions
     run_check check_config_profiles
 
+    # §8 Detection and Monitoring checks (T045)
+    run_check check_santa
+    run_check check_blockblock
+    run_check check_lulu
+    run_check check_clamav
+    run_check check_clamav_sigs
+    run_check check_persistence_baseline
+    run_check check_workflow_baseline
+    run_check check_listener_baseline
+    run_check check_cert_baseline
+    run_check check_icloud_keychain
+    run_check check_icloud_drive
+    run_check check_canary
+
     # Additional check groups added by later tasks:
-    # T045: Detection and Monitoring checks
     # T050: Response and Recovery checks
 
     # --- Output ---
