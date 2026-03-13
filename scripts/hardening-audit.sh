@@ -499,6 +499,150 @@ check_spotlight() {
     fi
 }
 
+# --- §3 Network Security Checks (T019) ---
+
+check_ssh_key_only() {
+    local id="CHK-SSH-KEY-ONLY"
+    # Check if sshd is running
+    if ! pgrep -q sshd 2>/dev/null; then
+        report_result "$id" "SSH" "SSH daemon is not running" "PASS" "3.1"
+        return
+    fi
+    local pw_auth
+    pw_auth=$(sshd -T 2>/dev/null | grep -i "^passwordauthentication" | awk '{print $2}') || true
+    if [[ "$pw_auth" == "no" ]]; then
+        report_result "$id" "SSH" "SSH password auth is disabled" "PASS" "3.1"
+    else
+        report_result "$id" "SSH" "SSH password auth is enabled" "FAIL" "3.1" \
+            "Disable: add 'PasswordAuthentication no' to /etc/ssh/sshd_config.d/hardening.conf"
+    fi
+}
+
+check_ssh_root() {
+    local id="CHK-SSH-ROOT"
+    if ! pgrep -q sshd 2>/dev/null; then
+        report_result "$id" "SSH" "SSH daemon is not running (root login N/A)" "PASS" "3.1"
+        return
+    fi
+    local root_login
+    root_login=$(sshd -T 2>/dev/null | grep -i "^permitrootlogin" | awk '{print $2}') || true
+    if [[ "$root_login" == "no" ]]; then
+        report_result "$id" "SSH" "SSH root login is disabled" "PASS" "3.1"
+    else
+        report_result "$id" "SSH" "SSH root login is allowed" "FAIL" "3.1" \
+            "Disable: add 'PermitRootLogin no' to /etc/ssh/sshd_config.d/hardening.conf"
+    fi
+}
+
+check_dns_encrypted() {
+    local id="CHK-DNS-ENCRYPTED"
+    # Check if a DNS configuration profile is installed
+    local dns_profile
+    dns_profile=$(profiles list 2>/dev/null | grep -i dns) || true
+    if [[ -n "$dns_profile" ]]; then
+        report_result "$id" "DNS" "DNS configuration profile installed" "PASS" "3.2"
+        return
+    fi
+    # Check if DNS points to known encrypted providers
+    local dns_servers
+    dns_servers=$(scutil --dns 2>/dev/null | grep "nameserver\[0\]" | head -1 | awk '{print $3}') || true
+    case "$dns_servers" in
+        9.9.9.9|149.112.112.112|1.1.1.1|1.0.0.1|8.8.8.8|8.8.4.4)
+            report_result "$id" "DNS" "DNS server ${dns_servers} (verify DoH/DoT enabled)" "WARN" "3.2" \
+                "Install encrypted DNS profile for guaranteed DoH/DoT"
+            ;;
+        *)
+            report_result "$id" "DNS" "DNS server: ${dns_servers:-unknown}" "WARN" "3.2" \
+                "Configure encrypted DNS via Quad9 DoH profile"
+            ;;
+    esac
+}
+
+check_outbound_filter() {
+    local id="CHK-OUTBOUND-FILTER"
+    # Check for pf rules
+    local pf_enabled
+    pf_enabled=$(sudo pfctl -s info 2>/dev/null | grep "Status:" | awk '{print $2}') || true
+    if [[ "$pf_enabled" == "Enabled" ]]; then
+        report_result "$id" "Outbound Filtering" "pf is enabled" "PASS" "3.3"
+        return
+    fi
+    # Check for LuLu
+    if pgrep -f LuLu &>/dev/null; then
+        report_result "$id" "Outbound Filtering" "LuLu is running" "PASS" "3.3"
+        return
+    fi
+    # Check for Little Snitch
+    if pgrep -f "Little Snitch" &>/dev/null; then
+        report_result "$id" "Outbound Filtering" "Little Snitch is running" "PASS" "3.3"
+        return
+    fi
+    report_result "$id" "Outbound Filtering" "No outbound filtering detected" "WARN" "3.3" \
+        "Install LuLu (free) or configure pf rules per §3.3"
+}
+
+check_bluetooth() {
+    local id="CHK-BLUETOOTH"
+    local bt_state
+    bt_state=$(defaults read /Library/Preferences/com.apple.Bluetooth ControllerPowerState 2>/dev/null) || true
+    if [[ "$bt_state" == "0" ]]; then
+        report_result "$id" "Bluetooth" "Bluetooth is disabled" "PASS" "3.4"
+    elif [[ "$bt_state" == "1" ]]; then
+        local discoverable
+        discoverable=$(sudo defaults read /Library/Preferences/com.apple.Bluetooth DiscoverableState 2>/dev/null) || true
+        if [[ "$discoverable" == "0" ]]; then
+            report_result "$id" "Bluetooth" "Bluetooth on, discoverability off" "PASS" "3.4"
+        else
+            report_result "$id" "Bluetooth" "Bluetooth is on and discoverable" "WARN" "3.4" \
+                "Disable discoverability: sudo defaults write /Library/Preferences/com.apple.Bluetooth DiscoverableState -bool false"
+        fi
+    else
+        report_result "$id" "Bluetooth" "Cannot determine Bluetooth state" "SKIP" "3.4"
+    fi
+}
+
+check_ipv6() {
+    local id="CHK-IPV6"
+    local ipv6_status
+    # Check Ethernet first, then Wi-Fi
+    ipv6_status=$(networksetup -getv6 "Ethernet" 2>/dev/null) || \
+    ipv6_status=$(networksetup -getv6 "Wi-Fi" 2>/dev/null) || true
+    if echo "$ipv6_status" | grep -qi "off"; then
+        report_result "$id" "IPv6" "IPv6 is disabled" "PASS" "3.5"
+    elif echo "$ipv6_status" | grep -qi "automatic\|manual"; then
+        # Check if IPv6 pf rules exist
+        local ipv6_rules
+        ipv6_rules=$(sudo pfctl -sr 2>/dev/null | grep -c inet6) || ipv6_rules=0
+        if [[ "$ipv6_rules" -gt 0 ]]; then
+            report_result "$id" "IPv6" "IPv6 enabled with pf rules" "PASS" "3.5"
+        else
+            report_result "$id" "IPv6" "IPv6 enabled without firewall rules" "WARN" "3.5" \
+                "Disable IPv6: networksetup -setv6off Ethernet — or add inet6 pf rules"
+        fi
+    else
+        report_result "$id" "IPv6" "Cannot determine IPv6 status" "SKIP" "3.5"
+    fi
+}
+
+check_listeners_baseline() {
+    local id="CHK-LISTENERS-BASELINE"
+    # Check if any service is listening on 0.0.0.0 that shouldn't be
+    local bad_listeners
+    bad_listeners=$(sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null \
+        | grep -E '\*:|0\.0\.0\.0:' \
+        | grep -v sshd \
+        | grep -v launchd \
+        | awk '{print $1 ":" $9}') || true
+    if [[ -z "$bad_listeners" ]]; then
+        report_result "$id" "Listening Services" "No unexpected wildcard listeners" "PASS" "3.6"
+    else
+        local count
+        count=$(echo "$bad_listeners" | wc -l | tr -d ' ')
+        report_result "$id" "Listening Services" "${count} service(s) on 0.0.0.0" "WARN" "3.6" \
+            "Review: sudo lsof -iTCP -sTCP:LISTEN -P -n — bind services to 127.0.0.1"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -590,11 +734,19 @@ main() {
     run_check check_profiles
     run_check check_spotlight
 
+    # §3 Network Security checks (T019)
+    run_check check_ssh_key_only
+    run_check check_ssh_root
+    run_check check_dns_encrypted
+    run_check check_outbound_filter
+    run_check check_bluetooth
+    run_check check_ipv6
+    run_check check_listeners_baseline
+
     # Additional check groups added by later tasks:
-    # T019: Network Security checks
     # T024: Container Isolation checks
     # T029: n8n Platform checks
-    # T034: Bare-Metal checks
+    # T032: Bare-Metal checks
     # T038: Data Security checks
     # T045: Detection and Monitoring checks
     # T050: Response and Recovery checks

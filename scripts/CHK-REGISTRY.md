@@ -26,4 +26,11 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-PRIVACY | WARN | both | §2.10 | T014 |
 | CHK-PROFILES | WARN | both | §2.10 | T014 |
 | CHK-SPOTLIGHT | WARN | both | §2.10 | T014 |
-<!-- New checks added by T019, T024, T029, T034, T038, T045, T050, T058 -->
+| CHK-SSH-KEY-ONLY | FAIL | both | §3.1 | T019 |
+| CHK-SSH-ROOT | FAIL | both | §3.1 | T019 |
+| CHK-DNS-ENCRYPTED | WARN | both | §3.2 | T019 |
+| CHK-OUTBOUND-FILTER | WARN | both | §3.3 | T019 |
+| CHK-BLUETOOTH | WARN | both | §3.4 | T019 |
+| CHK-IPV6 | WARN | both | §3.5 | T019 |
+| CHK-LISTENERS-BASELINE | WARN | both | §3.6 | T019 |
+<!-- New checks added by T024, T029, T032, T038, T045, T050, T058 -->
