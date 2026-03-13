@@ -33,4 +33,11 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-BLUETOOTH | WARN | both | §3.4 | T019 |
 | CHK-IPV6 | WARN | both | §3.5 | T019 |
 | CHK-LISTENERS-BASELINE | WARN | both | §3.6 | T019 |
-<!-- New checks added by T024, T029, T032, T038, T045, T050, T058 -->
+| CHK-CONTAINER-ROOT | FAIL | containerized | §4.3 | T024 |
+| CHK-CONTAINER-READONLY | WARN | containerized | §4.3 | T024 |
+| CHK-CONTAINER-CAPS | WARN | containerized | §4.3 | T024 |
+| CHK-CONTAINER-PRIVILEGED | FAIL | containerized | §4.3 | T024 |
+| CHK-DOCKER-SOCKET | FAIL | containerized | §4.3 | T024 |
+| CHK-SECRETS-ENV | WARN | containerized | §4.3 | T024 |
+| CHK-COLIMA-MOUNTS | WARN | containerized | §4.3 | T024 |
+<!-- New checks added by T029, T032, T038, T045, T050, T058 -->

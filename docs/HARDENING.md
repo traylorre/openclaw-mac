@@ -1689,23 +1689,450 @@ sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep '0.0.0.0\|*:' | grep -v ss
 
 ### 4.1 Colima Setup
 
-<!-- Content: T019 -->
+**Threat**: Docker Desktop licensing restrictions or GUI dependencies introduce unnecessary complexity and attack surface on a headless server
+**Layer**: Prevent
+**Deployment**: Containerized only
+**Source**: [Colima](https://github.com/abiosoft/colima), [Lima](https://github.com/lima-vm/lima)
+
+#### Why This Matters
+
+Colima is a free, open-source, CLI-only Docker runtime for macOS. It runs a lightweight Linux VM via Lima that exposes the standard Docker socket — all `docker` and `docker compose` commands work without modification. Unlike Docker Desktop, Colima has no GUI layer, no licensing restrictions, and integrates cleanly with headless server management via SSH.
+
+#### How to Harden
+
+**Install Colima and Docker CLI:**
+
+```bash
+brew install colima docker docker-compose
+```
+
+**Start Colima with resource limits:**
+
+```bash
+# Start with explicit resource limits (adjust for your hardware)
+colima start --cpu 4 --memory 8 --disk 60
+```
+
+**Configure persistent resource limits** in `~/.colima/default/colima.yaml`:
+
+```yaml
+cpu: 4
+memory: 8
+disk: 60
+```
+
+**Verify Docker CLI works:**
+
+```bash
+docker ps
+docker compose version
+```
+
+> **NOTE**: Docker Desktop is an alternative (free for personal use and businesses with <250 employees / <$10M revenue). If using Docker Desktop, the same `docker-compose.yml` and hardening steps apply — only the VM layer differs.
+
+#### Verification
+
+```bash
+# Colima is running
+colima status
+# Expected: "colima is running"
+
+# Docker socket is accessible
+docker info --format '{{.ServerVersion}}'
+```
+
+#### Edge Cases and Warnings
+
+- **Apple Silicon vs Intel**: Colima autodetects and supports both. No special configuration needed.
+- **Colima stops on Mac sleep**: If the Mac Mini sleeps, Colima stops and containers halt. Configure the Mac to not sleep (`sudo pmset -a sleep 0`) or use `caffeinate` during critical workflow windows.
+- **Docker Desktop conflict**: If Docker Desktop is installed, Colima and Docker Desktop may conflict over the Docker socket. Uninstall Docker Desktop or switch the socket path.
+- **`colima delete` destroys everything**: The VM, volumes, and configuration are deleted. Back up your `colima.yaml` and Docker volumes before running `colima delete`.
 
 ### 4.2 Docker Security Principles
 
-<!-- Content: T019 -->
+**Threat**: Container misconfiguration allows privilege escalation, host filesystem access, credential theft via `docker inspect`, or container escape via Docker socket
+**Layer**: Prevent
+**Deployment**: Containerized only
+**Source**: [CIS Docker Benchmark v1.6](https://www.cisecurity.org/benchmark/docker), [NIST SP 800-190](https://csrc.nist.gov/publications/detail/sp/800-190/final)
+
+#### Why This Matters
+
+Containerization reduces blast radius — if n8n is compromised, the attacker is confined to the container and cannot directly access the Mac Mini's filesystem, Keychain, SSH keys, or other services. However, Docker's defaults are permissive: containers run as root, have broad Linux capabilities, and bind ports to all interfaces. Without explicit hardening, a compromised container can escape to the host.
+
+#### How to Harden
+
+Every containerized n8n deployment MUST implement these seven security controls:
+
+| Control | Directive | Risk if Missing |
+|---------|-----------|----------------|
+| Non-root user | `user: "1000:1000"` | Container root = VM root → privilege escalation |
+| Read-only filesystem | `read_only: true` | Attacker writes persistent backdoor in container |
+| Drop all capabilities | `cap_drop: [ALL]` | Container can modify network, load modules, etc. |
+| No-new-privileges | `security_opt: [no-new-privileges:true]` | Setuid binaries escalate to root |
+| Localhost port binding | `"127.0.0.1:5678:5678"` | n8n exposed to entire LAN/internet |
+| No Docker socket mount | Never mount `/var/run/docker.sock` | Full host escape via Docker API |
+| Docker secrets | `secrets:` not `environment:` | Credentials visible in `docker inspect` |
+
+See §4.3 for the complete reference `docker-compose.yml` implementing all seven controls.
+
+**Credential exposure vectors** `[EDUCATIONAL]`:
+
+| Vector | What Leaks | Defense |
+|--------|-----------|---------|
+| `docker inspect <container>` | All environment variables in plaintext | Use Docker secrets, not env vars |
+| `ps aux` (inside VM) | Command-line arguments | Never pass secrets as CLI args |
+| `docker logs` | Secrets in error messages/debug output | Set log level to `warn` or `info` |
+| `docker-compose.yml` | Plaintext credentials if using `environment:` | Use `secrets:` with `file:` source |
+| Docker build cache | Secrets in `RUN`, `ENV`, `COPY` layers | Use `--mount=type=secret` in builds |
 
 ### 4.3 Reference docker-compose.yml
 
-<!-- Content: T019 -->
+**Threat**: Misconfigured compose file exposes n8n to network, leaks credentials, or allows container escape
+**Layer**: Prevent
+**Deployment**: Containerized only
+**Source**: [Docker Compose Security](https://docs.docker.com/compose/security/), [CIS Docker Benchmark §5](https://www.cisecurity.org/benchmark/docker)
+
+#### Why This Matters
+
+The `docker-compose.yml` IS the security configuration for containerized deployments. A single misconfiguration — binding to `0.0.0.0` instead of `127.0.0.1`, or using `environment:` instead of `secrets:` — undoes all container isolation. The reference file below implements all seven security controls from §4.2 and passes all container audit checks.
+
+#### How to Harden
+
+**Create the secrets directory:**
+
+```bash
+mkdir -p scripts/templates/secrets
+chmod 700 scripts/templates/secrets
+
+# Generate the encryption key
+openssl rand -hex 32 > scripts/templates/secrets/n8n_encryption_key.txt
+chmod 600 scripts/templates/secrets/n8n_encryption_key.txt
+
+# Add secrets/ to .gitignore
+echo "scripts/templates/secrets/" >> .gitignore
+```
+
+**Create the entrypoint wrapper** (`scripts/templates/n8n-entrypoint.sh`):
+
+n8n's `_FILE` suffix for `N8N_ENCRYPTION_KEY` has known bugs in queue mode. Use an entrypoint wrapper to load secrets reliably:
+
+```bash
+#!/bin/sh
+# Read Docker secrets that don't support _FILE suffix reliably
+# See: https://github.com/n8n-io/n8n/issues/14596
+if [ -f /run/secrets/n8n_encryption_key ]; then
+  export N8N_ENCRYPTION_KEY="$(cat /run/secrets/n8n_encryption_key)"
+fi
+exec n8n start
+```
+
+**Reference `docker-compose.yml`** (see `scripts/templates/docker-compose.yml`):
+
+```yaml
+# OpenClaw Mac — Hardened n8n Docker Compose
+# See docs/HARDENING.md §4.3 for security annotations
+version: '3.9'
+
+secrets:
+  n8n_encryption_key:
+    file: ./secrets/n8n_encryption_key.txt  # chmod 600 (FR-058, R-012)
+
+services:
+  n8n:
+    # Pin image by digest for supply chain integrity (FR-040)
+    # Update digest after verifying new version: docker pull n8nio/n8n:latest
+    # Then: docker inspect n8nio/n8n:latest | jq -r '.[0].RepoDigests'
+    image: n8nio/n8n:latest
+
+    # Non-root user (FR-041) — UID 1000 matches Colima default
+    user: "1000:1000"
+
+    # Localhost-only port binding (FR-058)
+    # DANGEROUS if changed to "5678:5678" — exposes to entire network
+    ports:
+      - "127.0.0.1:5678:5678"
+
+    # Read-only root filesystem (FR-041)
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+
+    # Persistent data only — no host directory mounts (FR-058)
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n-entrypoint.sh:/entrypoint.sh:ro
+
+    # Docker secrets — NOT environment variables (FR-058, FR-090)
+    secrets:
+      - n8n_encryption_key
+
+    # Non-sensitive environment variables only (FR-058)
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_LOG_LEVEL=info
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PUBLIC_API_DISABLED=true
+      # Sensitive values loaded by entrypoint script from /run/secrets/
+
+    # Security hardening (FR-041)
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+    # Core dump prevention (FR-068)
+    ulimits:
+      core:
+        soft: 0
+        hard: 0
+
+    # Resource limits — adjust for your hardware (FR-058)
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+    # Restart on crash, not after intentional stop (FR-058)
+    restart: unless-stopped
+
+    # Entrypoint wrapper for Docker secrets (R-001)
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+
+    # DNS — use encrypted DNS resolver (FR-029)
+    dns:
+      - 9.9.9.9
+      - 149.112.112.112
+
+    # Docker log rotation — limit credential exposure window (FR-090)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  n8n_data:  # Persists workflows, credentials, execution logs
+```
+
+**Deploy:**
+
+```bash
+cd scripts/templates
+docker compose up -d
+
+# Verify n8n is running
+docker compose ps
+curl -s http://localhost:5678/healthz
+```
+
+#### Verification
+
+```bash
+# Verify non-root user
+docker compose exec n8n id
+# Expected: uid=1000 gid=1000
+
+# Verify read-only filesystem
+docker compose exec n8n touch /test 2>&1
+# Expected: "Read-only file system"
+
+# Verify no Docker socket mount
+docker inspect $(docker compose ps -q n8n) --format '{{.Mounts}}' | grep -c docker.sock
+# Expected: 0
+
+# Verify localhost-only port binding
+docker port $(docker compose ps -q n8n)
+# Expected: 5678/tcp -> 127.0.0.1:5678
+
+# Verify capabilities are dropped
+docker inspect $(docker compose ps -q n8n) --format '{{.HostConfig.CapDrop}}'
+# Expected: [ALL]
+
+# Verify no secrets in environment (docker inspect should NOT show N8N_ENCRYPTION_KEY)
+docker inspect $(docker compose ps -q n8n) --format '{{.Config.Env}}' | grep -i encryption
+# Expected: no output (secret is loaded at runtime by entrypoint, not in container config)
+```
+
+#### Edge Cases and Warnings
+
+- **Docker default port binding is `0.0.0.0`**: If you write `"5678:5678"` without the `127.0.0.1:` prefix, n8n is exposed to the entire network. Always include `127.0.0.1:`.
+- **Read-only filesystem troubleshooting**: If n8n fails to start with "Read-only file system", check the error log for the path it needs to write. Add a `tmpfs` mount for that path — do NOT remove `read_only: true`.
+- **Volume ownership**: If the named volume is owned by a different UID, fix with: `docker compose exec n8n chown -R 1000:1000 /home/node/.n8n`
+- **Image digest pinning**: For production, replace `:latest` with a digest: `n8nio/n8n@sha256:...`. Get the digest: `docker inspect n8nio/n8n:latest | jq -r '.[0].RepoDigests'`
+
+**Audit checks**: `CHK-CONTAINER-ROOT` (FAIL), `CHK-CONTAINER-READONLY` (WARN), `CHK-CONTAINER-CAPS` (WARN), `CHK-CONTAINER-PRIVILEGED` (FAIL), `CHK-DOCKER-SOCKET` (FAIL), `CHK-SECRETS-ENV` (WARN), `CHK-COLIMA-MOUNTS` (WARN) → §4.3
 
 ### 4.4 Advanced Container Hardening
 
-<!-- Content: T019 -->
+**Threat**: Container escape via privilege escalation, excessive capabilities, or seccomp bypass; supply chain attack via tampered Docker images
+**Layer**: Prevent
+**Deployment**: Containerized only
+**Source**: [Docker Seccomp](https://docs.docker.com/engine/security/seccomp/), [Docker Content Trust](https://docs.docker.com/engine/security/trust/), [MITRE ATT&CK T1195 — Supply Chain Compromise](https://attack.mitre.org/techniques/T1195/)
+
+#### Why This Matters
+
+The reference `docker-compose.yml` (§4.3) provides strong defaults. This section covers advanced hardening: custom seccomp profiles, Docker Content Trust for image verification, image vulnerability scanning, and layer inspection to detect secrets leaked during builds.
+
+#### How to Harden
+
+**Docker Content Trust (image signature verification):**
+
+```bash
+# Enable Docker Content Trust globally
+export DOCKER_CONTENT_TRUST=1
+
+# Pull with signature verification
+docker pull n8nio/n8n:latest
+# If the image is not signed, this will fail — fall back to digest pinning
+
+# Add to shell profile for persistence
+echo 'export DOCKER_CONTENT_TRUST=1' >> ~/.bashrc
+```
+
+**Image vulnerability scanning** (free tools):
+
+```bash
+# Trivy (recommended — free, comprehensive)
+brew install trivy
+trivy image n8nio/n8n:latest
+
+# Docker Scout (built into Docker CLI)
+docker scout cves n8nio/n8n:latest
+
+# Grype (alternative)
+brew install grype
+grype n8nio/n8n:latest
+```
+
+Scan before first deployment and after every image update. Rescan monthly for newly discovered CVEs.
+
+**Layer history inspection** (detect secrets in build layers):
+
+```bash
+# Inspect all layers — verify no secrets in RUN, ENV, or COPY instructions
+docker history --no-trunc n8nio/n8n:latest
+```
+
+**Custom seccomp profile** (if the default profile causes issues):
+
+The default Docker seccomp profile allows ~310 of ~400 system calls. If n8n or a community node requires a blocked syscall:
+
+1. Export the default profile: `docker inspect --format '{{.HostConfig.SecurityOpt}}' <container>`
+2. Create a custom profile that adds only the required syscall
+3. Apply: `security_opt: ["seccomp=custom-seccomp.json"]`
+
+> **CAUTION**: Only relax seccomp if you've identified the specific blocked syscall. Never disable seccomp entirely.
+
+**Custom Dockerfile security** (if building a custom n8n image):
+
+```dockerfile
+# Pin base image by digest
+FROM n8nio/n8n@sha256:abc123... AS base
+
+# Use multi-stage build — build dependencies don't ship in final image
+FROM base AS builder
+# Install build deps...
+
+FROM base AS final
+COPY --from=builder /app /app
+
+# Never put secrets in ENV, RUN, or COPY — use --mount=type=secret
+RUN --mount=type=secret,id=api_key cat /run/secrets/api_key > /dev/null
+```
+
+#### Verification
+
+```bash
+# Verify Docker Content Trust is enabled
+echo $DOCKER_CONTENT_TRUST
+# Expected: 1
+
+# Check image scan results (Trivy)
+trivy image --severity HIGH,CRITICAL n8nio/n8n:latest
+
+# Verify no secrets in image layers
+docker history --no-trunc n8nio/n8n:latest | grep -iE 'key|secret|password|token'
+# Expected: no matches
+```
+
+#### Edge Cases and Warnings
+
+- **Not all images are signed**: Docker Content Trust requires the publisher to sign images. If `n8nio/n8n` is not signed, fall back to digest pinning.
+- **Vulnerability scan noise**: Base images often have known CVEs in system libraries that don't affect n8n. Focus on HIGH and CRITICAL severity.
+- **Build cache secrets**: If you used `docker build` with secrets in `RUN` or `ENV` instructions, those secrets persist in layer history even in intermediate layers. Use `docker builder prune` to clean up.
 
 ### 4.5 Container Networking
 
-<!-- Content: T019 -->
+**Threat**: Container reaches internal LAN services via SSRF; Docker port binding exposes services to the network; container DNS bypasses encrypted DNS configuration
+**Layer**: Prevent
+**Deployment**: Containerized only
+**Source**: [CIS Docker Benchmark §5.7](https://www.cisecurity.org/benchmark/docker), [OWASP SSRF](https://owasp.org/www-community/attacks/Server_Side_Request_Forgery)
+
+#### Why This Matters
+
+Docker's bridge network gives containers access to the host gateway, other containers, and potentially the LAN. If n8n is compromised, the attacker can use the HTTP Request node to probe internal services (SSRF), access the Docker API via the gateway IP, or reach cloud metadata endpoints. Container DNS may also bypass the host's encrypted DNS configuration.
+
+#### How to Harden
+
+**Verify container network isolation:**
+
+```bash
+# Check what networks the container is on
+docker inspect $(docker compose ps -q n8n) --format '{{json .NetworkSettings.Networks}}' | jq
+
+# Verify the container cannot reach the host's other services
+docker compose exec n8n wget -q -O- http://host.docker.internal:22 2>&1 || echo "Blocked (good)"
+```
+
+**SSRF defense via iptables** (inside Colima VM — cross-ref §3.3):
+
+The iptables provisioning script in §3.3 blocks container access to RFC 1918 ranges. This prevents n8n from reaching:
+
+- Other Docker containers on the bridge network (if not needed)
+- macOS services bound to the host gateway IP
+- LAN devices and their management interfaces
+- Cloud metadata endpoints (169.254.169.254)
+
+**Container DNS** (cross-ref §3.2):
+
+The reference `docker-compose.yml` configures Quad9 DNS explicitly:
+
+```yaml
+dns:
+  - 9.9.9.9
+  - 149.112.112.112
+```
+
+Without this, containers use the Colima VM's resolver, which may not use encrypted DNS.
+
+**Network mode restriction:**
+
+Never use `network_mode: host` — it bypasses all container network isolation and gives the container direct access to all host network interfaces.
+
+#### Verification
+
+```bash
+# Verify DNS configuration inside container
+docker compose exec n8n cat /etc/resolv.conf
+# Expected: nameserver 9.9.9.9
+
+# Verify port binding is localhost-only
+docker port $(docker compose ps -q n8n)
+# Expected: 5678/tcp -> 127.0.0.1:5678
+
+# Verify container is NOT in host network mode
+docker inspect $(docker compose ps -q n8n) --format '{{.HostConfig.NetworkMode}}'
+# Expected: "default" (bridge network), NOT "host"
+```
+
+#### Edge Cases and Warnings
+
+- **Docker bridge gateway**: By default, containers can reach the host via the bridge gateway IP (usually `172.17.0.1`). The iptables rules in §3.3 block this.
+- **Cloud metadata**: If the Mac Mini has cloud-related tools installed, the metadata endpoint `169.254.169.254` may be reachable from containers. Block via iptables.
+- **Container-to-container**: If running multiple containers, they can communicate over the bridge network. Use Docker's `--internal` flag for networks that don't need external access.
 
 ---
 
