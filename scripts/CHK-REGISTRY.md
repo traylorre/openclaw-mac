@@ -40,6 +40,8 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-DOCKER-SOCKET | FAIL | containerized | §4.3 | T024 |
 | CHK-SECRETS-ENV | WARN | containerized | §4.3 | T024 |
 | CHK-COLIMA-MOUNTS | WARN | containerized | §4.3 | T024 |
+| CHK-CONTAINER-NETWORK | FAIL | containerized | §4.5 | T073 |
+| CHK-CONTAINER-RESOURCES | WARN | containerized | §4.3 | T073 |
 | CHK-N8N-BIND | FAIL | both | §5.1 | T029 |
 | CHK-N8N-AUTH | FAIL | both | §5.1 | T029 |
 | CHK-N8N-API | WARN | both | §5.4 | T029 |
@@ -67,4 +69,11 @@ Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`
 | CHK-ICLOUD-KEYCHAIN | WARN | both | §8.6 | T045 |
 | CHK-ICLOUD-DRIVE | WARN | both | §8.6 | T045 |
 | CHK-CANARY | WARN | both | §8.5 | T045 |
-<!-- New checks added by T050, T058 -->
+| CHK-BACKUP-CONFIGURED | WARN | both | §9.3 | T050 |
+| CHK-BACKUP-ENCRYPTED | WARN | both | §9.3 | T050 |
+| CHK-FIND-MY-MAC | WARN | both | §9.5 | T050 |
+| CHK-USB | WARN | both | §9.5 | T050 |
+| CHK-LAUNCHD-AUDIT-JOB | FAIL | both | §10.1 | T058 |
+| CHK-NOTIFICATION-CONFIG | WARN | both | §10.2 | T058 |
+| CHK-LOG-DIR | FAIL | both | §10.4 | T058 |
+| CHK-CLAMAV-FRESHNESS | WARN | both | §10.3 | T058 |
