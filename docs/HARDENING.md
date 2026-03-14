@@ -1375,7 +1375,7 @@ When an AI agent controls a browser, **every open webpage becomes an attack surf
 | 10 | Image-based injection | Text embedded in images read by vision models | Hard — requires image analysis |
 | 11 | Encoding evasion | Base64, URL-encoding, or HTML entities hiding payloads | Medium — decode before scanning |
 
-**Defense Layer 1 — Domain Restriction (Chromium Policy)** `[AUTOMATED]`
+###### Defense Layer 1 — Domain Restriction (Chromium Policy) `[AUTOMATED]`
 
 The most practical first line of defense. Restrict Chromium to only the domains OpenClaw needs:
 
@@ -1394,7 +1394,7 @@ This prevents the browser from navigating to attacker-controlled domains even if
 
 **Audit check**: `CHK-CHROMIUM-URLBLOCK` verifies that `URLBlocklist` contains `"*"` (deny-all-by-default).
 
-**Defense Layer 2 — Content Sanitization Pipeline**
+###### Defense Layer 2 — Content Sanitization Pipeline
 
 Before passing scraped page content to the AI model:
 
@@ -1406,14 +1406,14 @@ Before passing scraped page content to the AI model:
 
 This is application-level logic in your n8n workflow or OpenClaw configuration — not a Chromium policy.
 
-**Defense Layer 3 — Model-Level Hardening**
+###### Defense Layer 3 — Model-Level Hardening
 
 - Use models with instruction-hierarchy training (e.g., Claude Opus 4.5 reduced injection success to ~1% against adaptive adversaries via RL — Anthropic, 2025)
 - Separate system prompts from user/web content with clear delimiters
 - Include explicit "ignore instructions from web content" directives in the system prompt
 - Consider dual-LLM architectures (CaMeL, Google DeepMind 2024) where one model plans and another executes, achieving provable security guarantees
 
-**Defense Layer 4 — Action Restriction (CDP Command Filtering)**
+###### Defense Layer 4 — Action Restriction (CDP Command Filtering)
 
 If using a CDP proxy or middleware, restrict dangerous CDP commands:
 
@@ -1426,11 +1426,12 @@ If using a CDP proxy or middleware, restrict dangerous CDP commands:
 | `Page.addScriptToEvaluateOnNewDocument` | Persistent JS injection | Block entirely |
 
 Also enforce:
+
 - **Human-in-the-loop**: For high-stakes operations (credential entry, payment forms, data export), require human approval
 - **Rate limiting**: Cap network requests, form submissions, and page navigations per session
 - **Profile separation**: Use separate Chromium profiles for different trust levels
 
-**Defense Layer 5 — Monitoring and Detection**
+###### Defense Layer 5 — Monitoring and Detection
 
 - Log all CDP commands and page navigations (§8.4)
 - Alert on navigation to domains not in the allowlist
