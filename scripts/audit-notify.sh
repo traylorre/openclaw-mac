@@ -2,6 +2,15 @@
 # OpenClaw Audit Notification Script
 # Parses the latest audit JSON and sends FAIL-only alerts.
 # See docs/HARDENING.md §10.2 for configuration guide.
+
+# --- Bash 5.x auto-detect (sudo + macOS /bin/bash = 3.x) ---
+if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    for _try_bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [[ -x "$_try_bash" ]]; then exec "$_try_bash" "$0" "$@"; fi
+    done
+    echo "Error: bash 5.x required. Install: brew install bash" >&2; exit 2
+fi
+
 set -euo pipefail
 
 readonly VERSION="0.1.0"
@@ -42,6 +51,7 @@ Options:
   --conf FILE    Path to notify.conf (default: /opt/n8n/etc/notify.conf)
   --log-dir DIR  Path to audit log directory (default: /opt/n8n/logs/audit)
   --no-color     Disable colored output
+  --debug        Enable bash trace output (set -x)
   --version      Show version and exit
   --help         Show this help message and exit
 
@@ -147,6 +157,7 @@ build_notification_body() {
     body+="${FAIL_DETAILS}"
     body+=$'\n\n'
     body+="Run 'hardening-audit.sh' for full results."
+    body+=$'\n'
     body+="Run 'hardening-fix.sh --interactive' to remediate."
     echo "$body"
 }
@@ -176,11 +187,12 @@ send_email() {
         return 1
     fi
 
+    local rc=0
     printf "From: %s\nTo: %s\nSubject: %s\n\n%s" \
         "$from" "$to" "$subject" "$body" \
-        | msmtp -a default "$to" 2>/dev/null
+        | msmtp -a default "$to" 2>/dev/null || rc=$?
 
-    if [[ $? -eq 0 ]]; then
+    if [[ $rc -eq 0 ]]; then
         log_notify "OK: email sent to ${to}"
         printf "  ${GREEN}SENT${NC}  Email → %s\n" "$to"
     else
@@ -194,9 +206,10 @@ send_email() {
 send_osascript() {
     local message="$1"
 
-    osascript -e "display notification \"${message}\" with title \"OpenClaw Security Audit\" subtitle \"Action Required\"" 2>/dev/null
+    local rc=0
+    osascript -e "display notification \"${message}\" with title \"OpenClaw Security Audit\" subtitle \"Action Required\"" 2>/dev/null || rc=$?
 
-    if [[ $? -eq 0 ]]; then
+    if [[ $rc -eq 0 ]]; then
         log_notify "OK: osascript notification sent"
         printf "  ${GREEN}SENT${NC}  macOS Notification Center\n"
     else
@@ -258,11 +271,14 @@ main() {
             --conf)    CONF_FILE="$2"; shift 2 ;;
             --log-dir) LOG_DIR="$2"; shift 2 ;;
             --no-color) RED='' GREEN='' YELLOW='' CYAN='' NC=''; shift ;;
+            --debug)   DEBUG=true; shift ;;
             --version) echo "${SCRIPT_NAME} v${VERSION}"; exit 0 ;;
             --help)    usage; exit 0 ;;
             *)         echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
         esac
     done
+
+    if [[ "${DEBUG:-false}" == true ]]; then set -x; fi
 
     check_platform
     load_config

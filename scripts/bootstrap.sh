@@ -423,6 +423,9 @@ main() {
         echo "  3. Run audit:    sudo /opt/n8n/scripts/hardening-audit.sh"
         echo "  4. Run fix:      sudo /opt/n8n/scripts/hardening-fix.sh --auto"
         echo "  5. Enable cron:  sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist"
+        echo ""
+        echo "  Note: sudo auto-detects Homebrew bash 5.x — no manual PATH needed."
+        echo "  Add --debug to any script for bash trace output."
     fi
 }
 
