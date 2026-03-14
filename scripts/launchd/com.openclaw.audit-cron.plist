@@ -23,6 +23,13 @@
         <integer>0</integer>
     </dict>
 
+    <!-- Ensure Homebrew bash + jq are on PATH under launchd -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
     <!-- Run as root for full system access -->
     <key>UserName</key>
     <string>root</string>

@@ -2,6 +2,15 @@
 # macOS Hardening Auto-Remediation Script for n8n + Apify Deployment
 # Reads audit JSON output and applies fixes for failed checks.
 # See docs/HARDENING.md §11 for full reference
+
+# --- Bash 5.x auto-detect (sudo + macOS /bin/bash = 3.x) ---
+if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    for _try_bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [[ -x "$_try_bash" ]]; then exec "$_try_bash" "$0" "$@"; fi
+    done
+    echo "Error: bash 5.x required. Install: brew install bash" >&2; exit 2
+fi
+
 set -euo pipefail
 
 readonly VERSION="0.1.0"
@@ -32,6 +41,7 @@ DRY_RUN=false
 JSON_OUTPUT=false
 SINGLE_CHECK=""
 AUDIT_FILE=""
+DEBUG=false
 # NO_COLOR is a conventional env flag; --no-color sets color vars directly
 # shellcheck disable=SC2034
 NO_COLOR=false
@@ -49,6 +59,8 @@ _locate_audit_script() {
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     if [[ -x "${script_dir}/hardening-audit.sh" ]]; then
         AUDIT_SCRIPT="${script_dir}/hardening-audit.sh"
+    elif [[ -x "/opt/n8n/scripts/hardening-audit.sh" ]]; then
+        AUDIT_SCRIPT="/opt/n8n/scripts/hardening-audit.sh"
     elif [[ -x "/usr/local/bin/hardening-audit.sh" ]]; then
         AUDIT_SCRIPT="/usr/local/bin/hardening-audit.sh"
     fi
@@ -93,6 +105,7 @@ Options:
   --audit-file FILE  Use specific audit JSON file instead of latest
   --json             Output results in JSON format
   --no-color         Disable colored output (for piping/logging)
+  --debug            Enable bash trace output (set -x)
   --version          Show version and exit
   --help             Show this help message and exit
 
@@ -1410,6 +1423,10 @@ main() {
                 RED='' GREEN='' YELLOW='' CYAN='' NC=''
                 shift
                 ;;
+            --debug)
+                DEBUG=true
+                shift
+                ;;
             --version)
                 echo "${SCRIPT_NAME} v${VERSION}"
                 exit 0
@@ -1425,6 +1442,8 @@ main() {
                 ;;
         esac
     done
+
+    if [[ "$DEBUG" == true ]]; then set -x; fi
 
     # Default to auto mode if --dry-run is set without a mode
     if [[ -z "$MODE" ]]; then
