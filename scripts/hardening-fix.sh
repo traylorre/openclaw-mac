@@ -1,0 +1,1554 @@
+#!/usr/bin/env bash
+# macOS Hardening Auto-Remediation Script for n8n + Apify Deployment
+# Reads audit JSON output and applies fixes for failed checks.
+# See docs/HARDENING.md §11 for full reference
+set -euo pipefail
+
+readonly VERSION="0.1.0"
+SCRIPT_NAME="$(basename "$0")"
+readonly SCRIPT_NAME
+
+# --- Color Setup ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Auto-disable colors when stdout is not a terminal
+if [[ ! -t 1 ]]; then
+    RED='' GREEN='' YELLOW='' CYAN='' NC=''
+fi
+
+# --- Counters ---
+TOTAL=0
+FIXED_COUNT=0
+SKIPPED_COUNT=0
+FAILED_COUNT=0
+
+# --- Options ---
+MODE=""  # auto | interactive
+DRY_RUN=false
+JSON_OUTPUT=false
+SINGLE_CHECK=""
+AUDIT_FILE=""
+# NO_COLOR is a conventional env flag; --no-color sets color vars directly
+# shellcheck disable=SC2034
+NO_COLOR=false
+
+# --- JSON accumulator ---
+JSON_RESULTS="[]"
+
+# --- Paths ---
+AUDIT_LOG_DIR="/opt/n8n/logs/audit"
+AUDIT_SCRIPT=""
+
+# Locate the audit script relative to this script
+_locate_audit_script() {
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [[ -x "${script_dir}/hardening-audit.sh" ]]; then
+        AUDIT_SCRIPT="${script_dir}/hardening-audit.sh"
+    elif [[ -x "/usr/local/bin/hardening-audit.sh" ]]; then
+        AUDIT_SCRIPT="/usr/local/bin/hardening-audit.sh"
+    fi
+}
+
+# --- Platform Check ---
+check_platform() {
+    if [[ "$(uname -s)" != "Darwin" ]]; then
+        echo "Error: This script requires macOS." >&2
+        exit 2
+    fi
+    if ! bash --version | head -1 | grep -q 'version [5-9]'; then
+        echo "Error: This script requires bash 5.x or later." >&2
+        exit 2
+    fi
+}
+
+# --- Dependency Check ---
+check_dependencies() {
+    if ! command -v jq &>/dev/null; then
+        echo "Error: jq is required to parse audit JSON output." >&2
+        echo "Install: brew install jq" >&2
+        exit 2
+    fi
+}
+
+# --- Usage ---
+usage() {
+    cat <<EOF
+Usage: ${SCRIPT_NAME} [OPTIONS]
+
+macOS hardening auto-remediation for n8n + Apify deployments.
+Reads the latest audit JSON and applies fixes for failed checks.
+
+Modes (exactly one required):
+  --auto             Fix SAFE checks only, no prompts
+  --interactive      Prompt for each fix, including CONFIRMATION checks
+  --dry-run          Show commands without executing (combinable with modes)
+
+Options:
+  --check CHK-ID     Fix a single specific check only
+  --audit-file FILE  Use specific audit JSON file instead of latest
+  --json             Output results in JSON format
+  --no-color         Disable colored output (for piping/logging)
+  --version          Show version and exit
+  --help             Show this help message and exit
+
+Exit Codes:
+  0  All attempted fixes applied successfully
+  1  One or more fixes failed
+  2  Script error (missing dependency, bad input)
+
+See docs/HARDENING.md §11 for full documentation.
+EOF
+}
+
+# --- Fix Registry ---
+# Classification: SAFE = can apply without user interaction
+#                 CONFIRMATION = requires explicit user approval (interactive mode)
+declare -A FIX_REGISTRY
+declare -A FIX_FUNCTIONS
+declare -A FIX_DESCRIPTIONS
+
+# SAFE checks (22)
+FIX_REGISTRY[CHK-FIREWALL]=SAFE
+FIX_FUNCTIONS[CHK-FIREWALL]=fix_firewall
+FIX_DESCRIPTIONS[CHK-FIREWALL]="Enable application firewall"
+
+FIX_REGISTRY[CHK-STEALTH]=SAFE
+FIX_FUNCTIONS[CHK-STEALTH]=fix_stealth
+FIX_DESCRIPTIONS[CHK-STEALTH]="Enable firewall stealth mode"
+
+FIX_REGISTRY[CHK-GATEKEEPER]=SAFE
+FIX_FUNCTIONS[CHK-GATEKEEPER]=fix_gatekeeper
+FIX_DESCRIPTIONS[CHK-GATEKEEPER]="Enable Gatekeeper"
+
+FIX_REGISTRY[CHK-AUTO-UPDATES]=SAFE
+FIX_FUNCTIONS[CHK-AUTO-UPDATES]=fix_auto_updates
+FIX_DESCRIPTIONS[CHK-AUTO-UPDATES]="Enable automatic software updates"
+
+FIX_REGISTRY[CHK-NTP]=SAFE
+FIX_FUNCTIONS[CHK-NTP]=fix_ntp
+FIX_DESCRIPTIONS[CHK-NTP]="Enable network time synchronization"
+
+FIX_REGISTRY[CHK-AUTO-LOGIN]=SAFE
+FIX_FUNCTIONS[CHK-AUTO-LOGIN]=fix_auto_login
+FIX_DESCRIPTIONS[CHK-AUTO-LOGIN]="Disable auto-login"
+
+FIX_REGISTRY[CHK-SCREEN-LOCK]=SAFE
+FIX_FUNCTIONS[CHK-SCREEN-LOCK]=fix_screen_lock
+FIX_DESCRIPTIONS[CHK-SCREEN-LOCK]="Configure screen lock to require password immediately"
+
+FIX_REGISTRY[CHK-GUEST]=SAFE
+FIX_FUNCTIONS[CHK-GUEST]=fix_guest
+FIX_DESCRIPTIONS[CHK-GUEST]="Disable guest account"
+
+FIX_REGISTRY[CHK-SHARING-FILE]=SAFE
+FIX_FUNCTIONS[CHK-SHARING-FILE]=fix_sharing_file
+FIX_DESCRIPTIONS[CHK-SHARING-FILE]="Disable file sharing (SMB)"
+
+FIX_REGISTRY[CHK-SHARING-REMOTE-EVENTS]=SAFE
+FIX_FUNCTIONS[CHK-SHARING-REMOTE-EVENTS]=fix_sharing_remote
+FIX_DESCRIPTIONS[CHK-SHARING-REMOTE-EVENTS]="Disable remote Apple events"
+
+FIX_REGISTRY[CHK-SHARING-INTERNET]=SAFE
+FIX_FUNCTIONS[CHK-SHARING-INTERNET]=fix_sharing_internet
+FIX_DESCRIPTIONS[CHK-SHARING-INTERNET]="Disable internet sharing"
+
+FIX_REGISTRY[CHK-SHARING-SCREEN]=SAFE
+FIX_FUNCTIONS[CHK-SHARING-SCREEN]=fix_sharing_screen
+FIX_DESCRIPTIONS[CHK-SHARING-SCREEN]="Disable screen sharing"
+
+FIX_REGISTRY[CHK-AIRDROP]=SAFE
+FIX_FUNCTIONS[CHK-AIRDROP]=fix_airdrop
+FIX_DESCRIPTIONS[CHK-AIRDROP]="Disable AirDrop"
+
+FIX_REGISTRY[CHK-CORE-DUMPS]=SAFE
+FIX_FUNCTIONS[CHK-CORE-DUMPS]=fix_core_dumps
+FIX_DESCRIPTIONS[CHK-CORE-DUMPS]="Disable core dumps"
+
+FIX_REGISTRY[CHK-PRIVACY]=SAFE
+FIX_FUNCTIONS[CHK-PRIVACY]=fix_privacy_siri
+FIX_DESCRIPTIONS[CHK-PRIVACY]="Disable Siri"
+
+FIX_REGISTRY[CHK-SPOTLIGHT]=SAFE
+FIX_FUNCTIONS[CHK-SPOTLIGHT]=fix_spotlight
+FIX_DESCRIPTIONS[CHK-SPOTLIGHT]="Exclude sensitive directories from Spotlight"
+
+FIX_REGISTRY[CHK-BLUETOOTH]=SAFE
+FIX_FUNCTIONS[CHK-BLUETOOTH]=fix_bluetooth
+FIX_DESCRIPTIONS[CHK-BLUETOOTH]="Disable Bluetooth discoverability"
+
+FIX_REGISTRY[CHK-SPOTLIGHT-EXCLUSIONS]=SAFE
+FIX_FUNCTIONS[CHK-SPOTLIGHT-EXCLUSIONS]=fix_spotlight_exclusions
+FIX_DESCRIPTIONS[CHK-SPOTLIGHT-EXCLUSIONS]="Exclude /opt/n8n from Spotlight indexing"
+
+FIX_REGISTRY[CHK-LOG-DIR]=SAFE
+FIX_FUNCTIONS[CHK-LOG-DIR]=fix_log_dir
+FIX_DESCRIPTIONS[CHK-LOG-DIR]="Create audit log directory"
+
+FIX_REGISTRY[CHK-NOTIFICATION-CONFIG]=SAFE
+FIX_FUNCTIONS[CHK-NOTIFICATION-CONFIG]=fix_notification_config
+FIX_DESCRIPTIONS[CHK-NOTIFICATION-CONFIG]="Create default notification configuration"
+
+FIX_REGISTRY[CHK-LAUNCHD-AUDIT-JOB]=SAFE
+FIX_FUNCTIONS[CHK-LAUNCHD-AUDIT-JOB]=fix_launchd_audit
+FIX_DESCRIPTIONS[CHK-LAUNCHD-AUDIT-JOB]="Bootstrap audit launchd job"
+
+FIX_REGISTRY[CHK-CLAMAV-FRESHNESS]=SAFE
+FIX_FUNCTIONS[CHK-CLAMAV-FRESHNESS]=fix_clamav_freshness
+FIX_DESCRIPTIONS[CHK-CLAMAV-FRESHNESS]="Update ClamAV signatures"
+
+# CONFIRMATION checks (18)
+FIX_REGISTRY[CHK-FILEVAULT]=CONFIRMATION
+FIX_FUNCTIONS[CHK-FILEVAULT]=fix_filevault
+FIX_DESCRIPTIONS[CHK-FILEVAULT]="Enable FileVault disk encryption"
+
+FIX_REGISTRY[CHK-SSH-KEY-ONLY]=CONFIRMATION
+FIX_FUNCTIONS[CHK-SSH-KEY-ONLY]=fix_ssh_key_only
+FIX_DESCRIPTIONS[CHK-SSH-KEY-ONLY]="Disable SSH password authentication"
+
+FIX_REGISTRY[CHK-SSH-ROOT]=CONFIRMATION
+FIX_FUNCTIONS[CHK-SSH-ROOT]=fix_ssh_root
+FIX_DESCRIPTIONS[CHK-SSH-ROOT]="Disable SSH root login"
+
+FIX_REGISTRY[CHK-N8N-BIND]=CONFIRMATION
+FIX_FUNCTIONS[CHK-N8N-BIND]=fix_n8n_bind
+FIX_DESCRIPTIONS[CHK-N8N-BIND]="Bind n8n to localhost only"
+
+FIX_REGISTRY[CHK-N8N-AUTH]=CONFIRMATION
+FIX_FUNCTIONS[CHK-N8N-AUTH]=fix_n8n_auth
+FIX_DESCRIPTIONS[CHK-N8N-AUTH]="Enable n8n user management"
+
+FIX_REGISTRY[CHK-N8N-ENV-BLOCK]=CONFIRMATION
+FIX_FUNCTIONS[CHK-N8N-ENV-BLOCK]=fix_n8n_env_block
+FIX_DESCRIPTIONS[CHK-N8N-ENV-BLOCK]="Block code node environment access"
+
+FIX_REGISTRY[CHK-N8N-ENV-DIAGNOSTICS]=CONFIRMATION
+FIX_FUNCTIONS[CHK-N8N-ENV-DIAGNOSTICS]=fix_n8n_env_diagnostics
+FIX_DESCRIPTIONS[CHK-N8N-ENV-DIAGNOSTICS]="Disable n8n diagnostics/telemetry"
+
+FIX_REGISTRY[CHK-N8N-ENV-API]=CONFIRMATION
+FIX_FUNCTIONS[CHK-N8N-ENV-API]=fix_n8n_env_api
+FIX_DESCRIPTIONS[CHK-N8N-ENV-API]="Disable n8n public API"
+
+FIX_REGISTRY[CHK-N8N-NODES]=CONFIRMATION
+FIX_FUNCTIONS[CHK-N8N-NODES]=fix_n8n_nodes
+FIX_DESCRIPTIONS[CHK-N8N-NODES]="Exclude dangerous node types"
+
+FIX_REGISTRY[CHK-CONTAINER-ROOT]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CONTAINER-ROOT]=fix_container_root
+FIX_DESCRIPTIONS[CHK-CONTAINER-ROOT]="Run container as non-root user"
+
+FIX_REGISTRY[CHK-CONTAINER-READONLY]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CONTAINER-READONLY]=fix_container_readonly
+FIX_DESCRIPTIONS[CHK-CONTAINER-READONLY]="Set container filesystem to read-only"
+
+FIX_REGISTRY[CHK-CONTAINER-CAPS]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CONTAINER-CAPS]=fix_container_caps
+FIX_DESCRIPTIONS[CHK-CONTAINER-CAPS]="Drop all container capabilities"
+
+FIX_REGISTRY[CHK-CONTAINER-PRIVILEGED]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CONTAINER-PRIVILEGED]=fix_container_privileged
+FIX_DESCRIPTIONS[CHK-CONTAINER-PRIVILEGED]="Remove container privileged mode"
+
+FIX_REGISTRY[CHK-DOCKER-SOCKET]=CONFIRMATION
+FIX_FUNCTIONS[CHK-DOCKER-SOCKET]=fix_docker_socket
+FIX_DESCRIPTIONS[CHK-DOCKER-SOCKET]="Remove Docker socket mount"
+
+FIX_REGISTRY[CHK-CONTAINER-NETWORK]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CONTAINER-NETWORK]=fix_container_network
+FIX_DESCRIPTIONS[CHK-CONTAINER-NETWORK]="Use bridge network instead of host"
+
+FIX_REGISTRY[CHK-SERVICE-ACCOUNT]=CONFIRMATION
+FIX_FUNCTIONS[CHK-SERVICE-ACCOUNT]=fix_service_account
+FIX_DESCRIPTIONS[CHK-SERVICE-ACCOUNT]="Create _n8n service account"
+
+FIX_REGISTRY[CHK-SERVICE-HOME-PERMS]=CONFIRMATION
+FIX_FUNCTIONS[CHK-SERVICE-HOME-PERMS]=fix_service_home_perms
+FIX_DESCRIPTIONS[CHK-SERVICE-HOME-PERMS]="Restrict operator home directory permissions"
+
+FIX_REGISTRY[CHK-SERVICE-DATA-PERMS]=CONFIRMATION
+FIX_FUNCTIONS[CHK-SERVICE-DATA-PERMS]=fix_service_data_perms
+FIX_DESCRIPTIONS[CHK-SERVICE-DATA-PERMS]="Fix n8n data directory ownership and permissions"
+
+# --- Result Reporting ---
+# Usage: report_fix ID DESCRIPTION STATUS [DETAIL]
+# STATUS: FIXED | SKIPPED | FAILED | DRY-RUN | INSTRUCTED
+report_fix() {
+    local id="$1"
+    local description="$2"
+    local status="$3"
+    local detail="${4:-}"
+
+    TOTAL=$((TOTAL + 1))
+    case "$status" in
+        FIXED)      FIXED_COUNT=$((FIXED_COUNT + 1)) ;;
+        SKIPPED)    SKIPPED_COUNT=$((SKIPPED_COUNT + 1)) ;;
+        FAILED)     FAILED_COUNT=$((FAILED_COUNT + 1)) ;;
+        DRY-RUN)    SKIPPED_COUNT=$((SKIPPED_COUNT + 1)) ;;
+        INSTRUCTED) FIXED_COUNT=$((FIXED_COUNT + 1)) ;;
+    esac
+
+    local classification="${FIX_REGISTRY[$id]:-UNKNOWN}"
+
+    # JSON accumulation
+    if $JSON_OUTPUT; then
+        local json_entry
+        local escaped_desc
+        escaped_desc=$(printf '%s' "$description" | sed 's/"/\\"/g')
+        local escaped_detail
+        escaped_detail=$(printf '%s' "$detail" | sed 's/"/\\"/g')
+        json_entry=$(printf '{"id":"%s","classification":"%s","status":"%s","description":"%s"' \
+            "$id" "$classification" "$status" "$escaped_desc")
+        if [[ -n "$detail" ]]; then
+            json_entry="${json_entry},\"detail\":\"${escaped_detail}\"}"
+        else
+            json_entry="${json_entry}}"
+        fi
+        if [[ "$JSON_RESULTS" == "[]" ]]; then
+            JSON_RESULTS="[${json_entry}]"
+        else
+            JSON_RESULTS="${JSON_RESULTS%]},$json_entry]"
+        fi
+        return
+    fi
+
+    # Terminal output
+    local color=""
+    case "$status" in
+        FIXED)      color="$GREEN" ;;
+        SKIPPED)    color="$YELLOW" ;;
+        FAILED)     color="$RED" ;;
+        DRY-RUN)    color="$CYAN" ;;
+        INSTRUCTED) color="$GREEN" ;;
+    esac
+
+    printf "  ${color}%-10s${NC}  %-14s  %s" "$status" "$id" "$description"
+    if [[ -n "$detail" ]]; then
+        printf " — %s" "$detail"
+    fi
+    echo ""
+}
+
+# --- Helper: execute or dry-run a command ---
+# Usage: run_fix_cmd DESCRIPTION CMD [ARGS...]
+# Returns the exit code of the command (or 0 for dry-run)
+run_fix_cmd() {
+    local desc="$1"
+    shift
+    if $DRY_RUN; then
+        if ! $JSON_OUTPUT; then
+            printf "    %s[DRY-RUN]%s Would execute: %s\n" "$CYAN" "$NC" "$*"
+        fi
+        return 0
+    fi
+    if "$@"; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# --- Helper: print instruction for manual fix ---
+# Usage: print_instruction LINES...
+print_instruction() {
+    if $DRY_RUN; then
+        if ! $JSON_OUTPUT; then
+            printf "    %s[DRY-RUN]%s Would show instructions:\n" "$CYAN" "$NC"
+            for line in "$@"; do
+                printf "    %s|%s %s\n" "$CYAN" "$NC" "$line"
+            done
+        fi
+        return 0
+    fi
+    if ! $JSON_OUTPUT; then
+        printf "    %sManual action required:%s\n" "$YELLOW" "$NC"
+        for line in "$@"; do
+            printf "    %s|%s %s\n" "$YELLOW" "$NC" "$line"
+        done
+    fi
+    return 0
+}
+
+# --- Prompt for CONFIRMATION check ---
+# Returns 0 if user confirms, 1 if declined
+prompt_confirm() {
+    local id="$1"
+    local desc="$2"
+    local classification="${FIX_REGISTRY[$id]:-UNKNOWN}"
+
+    if [[ "$MODE" == "auto" && "$classification" == "CONFIRMATION" ]]; then
+        return 1  # Auto mode skips CONFIRMATION checks
+    fi
+
+    if [[ "$MODE" == "interactive" ]]; then
+        if ! $JSON_OUTPUT; then
+            printf "\n  ${YELLOW}[CONFIRMATION]${NC} %s: %s\n" "$id" "$desc"
+            printf "  Apply this fix? [y/N] "
+            local reply
+            read -r reply </dev/tty 2>/dev/null || reply="n"
+            case "$reply" in
+                [yY]|[yY][eE][sS]) return 0 ;;
+                *) return 1 ;;
+            esac
+        fi
+    fi
+
+    return 0
+}
+
+# =============================================================================
+# Fix Functions — SAFE (22 checks)
+# =============================================================================
+
+fix_firewall() {
+    local id="CHK-FIREWALL"
+    if run_fix_cmd "Enable application firewall" \
+        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate on; then
+        if $DRY_RUN; then
+            report_fix "$id" "Enabled application firewall" "DRY-RUN"
+        else
+            report_fix "$id" "Enabled application firewall" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to enable application firewall" "FAILED"
+        return 1
+    fi
+}
+
+fix_stealth() {
+    local id="CHK-STEALTH"
+    if run_fix_cmd "Enable stealth mode" \
+        sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on; then
+        if $DRY_RUN; then
+            report_fix "$id" "Enabled firewall stealth mode" "DRY-RUN"
+        else
+            report_fix "$id" "Enabled firewall stealth mode" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to enable stealth mode" "FAILED"
+        return 1
+    fi
+}
+
+fix_gatekeeper() {
+    local id="CHK-GATEKEEPER"
+    if run_fix_cmd "Enable Gatekeeper" sudo spctl --master-enable; then
+        if $DRY_RUN; then
+            report_fix "$id" "Enabled Gatekeeper" "DRY-RUN"
+        else
+            report_fix "$id" "Enabled Gatekeeper" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to enable Gatekeeper" "FAILED"
+        return 1
+    fi
+}
+
+fix_auto_updates() {
+    local id="CHK-AUTO-UPDATES"
+    local ok=true
+    if ! run_fix_cmd "Enable automatic check" \
+        sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool true; then
+        ok=false
+    fi
+    if ! run_fix_cmd "Enable critical updates" \
+        sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool true; then
+        ok=false
+    fi
+    if $ok; then
+        if $DRY_RUN; then
+            report_fix "$id" "Enabled automatic software updates" "DRY-RUN"
+        else
+            report_fix "$id" "Enabled automatic software updates" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to enable automatic updates" "FAILED"
+        return 1
+    fi
+}
+
+fix_ntp() {
+    local id="CHK-NTP"
+    if run_fix_cmd "Enable network time" sudo systemsetup -setusingnetworktime on; then
+        if $DRY_RUN; then
+            report_fix "$id" "Enabled network time synchronization" "DRY-RUN"
+        else
+            report_fix "$id" "Enabled network time synchronization" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to enable network time" "FAILED"
+        return 1
+    fi
+}
+
+fix_auto_login() {
+    local id="CHK-AUTO-LOGIN"
+    if $DRY_RUN; then
+        run_fix_cmd "Disable auto-login" true
+        report_fix "$id" "Disabled auto-login" "DRY-RUN"
+        return 0
+    fi
+    # 2>/dev/null because the key may not exist (which is fine — already disabled)
+    if sudo defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null; then
+        report_fix "$id" "Disabled auto-login" "FIXED"
+    else
+        # Key didn't exist — auto-login was already off, but audit said FAIL,
+        # so report as fixed (the state is correct)
+        report_fix "$id" "Disabled auto-login" "FIXED" "autoLoginUser key already absent"
+    fi
+    return 0
+}
+
+fix_screen_lock() {
+    local id="CHK-SCREEN-LOCK"
+    local ok=true
+    if ! run_fix_cmd "Set askForPassword" \
+        defaults write com.apple.screensaver askForPassword -int 1; then
+        ok=false
+    fi
+    if ! run_fix_cmd "Set askForPasswordDelay" \
+        defaults write com.apple.screensaver askForPasswordDelay -int 0; then
+        ok=false
+    fi
+    if $ok; then
+        if $DRY_RUN; then
+            report_fix "$id" "Configured screen lock to require password immediately" "DRY-RUN"
+        else
+            report_fix "$id" "Configured screen lock to require password immediately" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to configure screen lock" "FAILED"
+        return 1
+    fi
+}
+
+fix_guest() {
+    local id="CHK-GUEST"
+    if run_fix_cmd "Disable guest account" \
+        sudo defaults write /Library/Preferences/com.apple.loginwindow GuestEnabled -bool false; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled guest account" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled guest account" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable guest account" "FAILED"
+        return 1
+    fi
+}
+
+fix_sharing_file() {
+    local id="CHK-SHARING-FILE"
+    if run_fix_cmd "Disable file sharing" sudo launchctl disable system/com.apple.smbd; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled file sharing (SMB)" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled file sharing (SMB)" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable file sharing" "FAILED"
+        return 1
+    fi
+}
+
+fix_sharing_remote() {
+    local id="CHK-SHARING-REMOTE-EVENTS"
+    if run_fix_cmd "Disable remote Apple events" sudo systemsetup -setremoteappleevents off; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled remote Apple events" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled remote Apple events" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable remote Apple events" "FAILED"
+        return 1
+    fi
+}
+
+fix_sharing_internet() {
+    local id="CHK-SHARING-INTERNET"
+    if run_fix_cmd "Disable internet sharing" \
+        sudo defaults write /Library/Preferences/SystemConfiguration/com.apple.nat NAT -dict Enabled -int 0; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled internet sharing" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled internet sharing" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable internet sharing" "FAILED"
+        return 1
+    fi
+}
+
+fix_sharing_screen() {
+    local id="CHK-SHARING-SCREEN"
+    if run_fix_cmd "Disable screen sharing" sudo launchctl disable system/com.apple.screensharing; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled screen sharing" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled screen sharing" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable screen sharing" "FAILED"
+        return 1
+    fi
+}
+
+fix_airdrop() {
+    local id="CHK-AIRDROP"
+    if run_fix_cmd "Disable AirDrop" \
+        defaults write com.apple.NetworkBrowser DisableAirDrop -bool true; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled AirDrop" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled AirDrop" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable AirDrop" "FAILED"
+        return 1
+    fi
+}
+
+fix_core_dumps() {
+    local id="CHK-CORE-DUMPS"
+    if run_fix_cmd "Disable core dumps" sudo launchctl limit core 0; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled core dumps" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled core dumps" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable core dumps" "FAILED"
+        return 1
+    fi
+}
+
+fix_privacy_siri() {
+    local id="CHK-PRIVACY"
+    if run_fix_cmd "Disable Siri" \
+        defaults write com.apple.assistant.support 'Assistant Enabled' -bool false; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled Siri" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled Siri" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable Siri" "FAILED"
+        return 1
+    fi
+}
+
+fix_spotlight() {
+    local id="CHK-SPOTLIGHT"
+    local ok=true
+    local paths_fixed=0
+    for path in "$HOME/.n8n" "$HOME/.colima"; do
+        if [[ -d "$path" ]]; then
+            if run_fix_cmd "Exclude $path from Spotlight" \
+                sudo mdutil -i off "$path" 2>/dev/null; then
+                paths_fixed=$((paths_fixed + 1))
+            fi
+        fi
+    done
+    if $DRY_RUN; then
+        report_fix "$id" "Excluded sensitive directories from Spotlight" "DRY-RUN"
+    elif [[ $paths_fixed -gt 0 ]] || $ok; then
+        report_fix "$id" "Excluded sensitive directories from Spotlight" "FIXED" \
+            "${paths_fixed} path(s) updated"
+    else
+        report_fix "$id" "No sensitive directories found to exclude" "SKIPPED"
+    fi
+    return 0
+}
+
+fix_bluetooth() {
+    local id="CHK-BLUETOOTH"
+    if run_fix_cmd "Disable Bluetooth discoverability" \
+        sudo defaults write /Library/Preferences/com.apple.Bluetooth DiscoverableState -bool false; then
+        if $DRY_RUN; then
+            report_fix "$id" "Disabled Bluetooth discoverability" "DRY-RUN"
+        else
+            report_fix "$id" "Disabled Bluetooth discoverability" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to disable Bluetooth discoverability" "FAILED"
+        return 1
+    fi
+}
+
+fix_spotlight_exclusions() {
+    local id="CHK-SPOTLIGHT-EXCLUSIONS"
+    if run_fix_cmd "Exclude /opt/n8n from Spotlight" \
+        sudo mdutil -i off /opt/n8n 2>/dev/null; then
+        if $DRY_RUN; then
+            report_fix "$id" "Excluded /opt/n8n from Spotlight indexing" "DRY-RUN"
+        else
+            report_fix "$id" "Excluded /opt/n8n from Spotlight indexing" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to exclude /opt/n8n from Spotlight" "FAILED"
+        return 1
+    fi
+}
+
+fix_log_dir() {
+    local id="CHK-LOG-DIR"
+    local log_dir="/opt/n8n/logs/audit"
+    if $DRY_RUN; then
+        run_fix_cmd "Create audit log directory" true
+        report_fix "$id" "Created audit log directory" "DRY-RUN"
+        return 0
+    fi
+    if sudo mkdir -p "$log_dir" && sudo chmod 755 "$log_dir"; then
+        report_fix "$id" "Created audit log directory" "FIXED" "$log_dir"
+    else
+        report_fix "$id" "Failed to create audit log directory" "FAILED"
+        return 1
+    fi
+    return 0
+}
+
+fix_notification_config() {
+    local id="CHK-NOTIFICATION-CONFIG"
+    local conf="/opt/n8n/etc/notify.conf"
+    if $DRY_RUN; then
+        run_fix_cmd "Create default notify.conf" true
+        report_fix "$id" "Created default notification configuration" "DRY-RUN"
+        return 0
+    fi
+    if [[ -f "$conf" ]]; then
+        report_fix "$id" "Notification configuration already exists" "SKIPPED"
+        return 0
+    fi
+    if sudo mkdir -p "$(dirname "$conf")" && \
+       sudo tee "$conf" > /dev/null <<'NOTIFY_EOF'
+# OpenClaw notification configuration
+# See docs/HARDENING.md §10.2
+
+# Notification method: terminal | log | webhook
+METHOD=log
+
+# Log file for notifications
+LOG_FILE=/opt/n8n/logs/audit/notifications.log
+
+# Webhook URL (if METHOD=webhook)
+# WEBHOOK_URL=https://example.com/webhook
+
+# Alert on these severity levels: FAIL | WARN | ALL
+ALERT_ON=FAIL
+NOTIFY_EOF
+    then
+        sudo chmod 644 "$conf"
+        report_fix "$id" "Created default notification configuration" "FIXED" "$conf"
+    else
+        report_fix "$id" "Failed to create notification configuration" "FAILED"
+        return 1
+    fi
+    return 0
+}
+
+fix_launchd_audit() {
+    local id="CHK-LAUNCHD-AUDIT-JOB"
+    local plist="/Library/LaunchDaemons/com.openclaw.audit.plist"
+    if [[ ! -f "$plist" ]]; then
+        report_fix "$id" "Audit plist not found" "SKIPPED" \
+            "$plist does not exist — install it first"
+        return 0
+    fi
+    if run_fix_cmd "Bootstrap audit launchd job" \
+        sudo launchctl bootstrap system "$plist"; then
+        if $DRY_RUN; then
+            report_fix "$id" "Bootstrapped audit launchd job" "DRY-RUN"
+        else
+            report_fix "$id" "Bootstrapped audit launchd job" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to bootstrap audit launchd job" "FAILED"
+        return 1
+    fi
+}
+
+fix_clamav_freshness() {
+    local id="CHK-CLAMAV-FRESHNESS"
+    if ! command -v freshclam &>/dev/null; then
+        report_fix "$id" "freshclam not found" "SKIPPED" \
+            "ClamAV is not installed — install with: brew install clamav"
+        return 0
+    fi
+    if run_fix_cmd "Update ClamAV signatures" sudo freshclam 2>/dev/null; then
+        if $DRY_RUN; then
+            report_fix "$id" "Updated ClamAV signatures" "DRY-RUN"
+        else
+            report_fix "$id" "Updated ClamAV signatures" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to update ClamAV signatures" "FAILED"
+        return 1
+    fi
+}
+
+# =============================================================================
+# Fix Functions — CONFIRMATION (18 checks)
+# =============================================================================
+
+fix_filevault() {
+    local id="CHK-FILEVAULT"
+    if ! prompt_confirm "$id" "Enable FileVault disk encryption (requires restart, generates recovery key)"; then
+        report_fix "$id" "Enable FileVault disk encryption" "SKIPPED" "User declined"
+        return 0
+    fi
+    if run_fix_cmd "Enable FileVault" sudo fdesetup enable; then
+        if $DRY_RUN; then
+            report_fix "$id" "Enabled FileVault disk encryption" "DRY-RUN"
+        else
+            report_fix "$id" "Enabled FileVault disk encryption" "FIXED" \
+                "WARNING: System restart required. Save your recovery key!"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to enable FileVault" "FAILED"
+        return 1
+    fi
+}
+
+fix_ssh_key_only() {
+    local id="CHK-SSH-KEY-ONLY"
+    if ! prompt_confirm "$id" "Disable SSH password authentication"; then
+        report_fix "$id" "Disable SSH password authentication" "SKIPPED" "User declined"
+        return 0
+    fi
+    local conf_dir="/etc/ssh/sshd_config.d"
+    local conf_file="${conf_dir}/hardening.conf"
+    if $DRY_RUN; then
+        run_fix_cmd "Add PasswordAuthentication no" true
+        report_fix "$id" "Disabled SSH password authentication" "DRY-RUN"
+        return 0
+    fi
+    sudo mkdir -p "$conf_dir"
+    # Avoid duplicate entries
+    if [[ -f "$conf_file" ]] && grep -q "^PasswordAuthentication no" "$conf_file" 2>/dev/null; then
+        report_fix "$id" "SSH password auth already disabled in hardening.conf" "SKIPPED"
+        return 0
+    fi
+    if echo 'PasswordAuthentication no' | sudo tee -a "$conf_file" > /dev/null; then
+        report_fix "$id" "Disabled SSH password authentication" "FIXED" "$conf_file"
+        return 0
+    else
+        report_fix "$id" "Failed to update SSH configuration" "FAILED"
+        return 1
+    fi
+}
+
+fix_ssh_root() {
+    local id="CHK-SSH-ROOT"
+    if ! prompt_confirm "$id" "Disable SSH root login"; then
+        report_fix "$id" "Disable SSH root login" "SKIPPED" "User declined"
+        return 0
+    fi
+    local conf_dir="/etc/ssh/sshd_config.d"
+    local conf_file="${conf_dir}/hardening.conf"
+    if $DRY_RUN; then
+        run_fix_cmd "Add PermitRootLogin no" true
+        report_fix "$id" "Disabled SSH root login" "DRY-RUN"
+        return 0
+    fi
+    sudo mkdir -p "$conf_dir"
+    # Avoid duplicate entries
+    if [[ -f "$conf_file" ]] && grep -q "^PermitRootLogin no" "$conf_file" 2>/dev/null; then
+        report_fix "$id" "SSH root login already disabled in hardening.conf" "SKIPPED"
+        return 0
+    fi
+    if echo 'PermitRootLogin no' | sudo tee -a "$conf_file" > /dev/null; then
+        report_fix "$id" "Disabled SSH root login" "FIXED" "$conf_file"
+        return 0
+    else
+        report_fix "$id" "Failed to update SSH configuration" "FAILED"
+        return 1
+    fi
+}
+
+fix_n8n_bind() {
+    local id="CHK-N8N-BIND"
+    if ! prompt_confirm "$id" "Bind n8n to localhost only (requires docker-compose.yml edit)"; then
+        report_fix "$id" "Bind n8n to localhost" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml and change the ports mapping:" \
+        "" \
+        "  Before:  ports:" \
+        "             - \"5678:5678\"" \
+        "" \
+        "  After:   ports:" \
+        "             - \"127.0.0.1:5678:5678\"" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Bind n8n to localhost" "DRY-RUN"
+    else
+        report_fix "$id" "Bind n8n to localhost" "INSTRUCTED" \
+            "Edit docker-compose.yml ports to 127.0.0.1:5678:5678"
+    fi
+    return 0
+}
+
+fix_n8n_auth() {
+    local id="CHK-N8N-AUTH"
+    if ! prompt_confirm "$id" "Enable n8n user management"; then
+        report_fix "$id" "Enable n8n user management" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Enable n8n user management by setting up the owner account:" \
+        "" \
+        "  1. Open n8n in your browser: http://localhost:5678" \
+        "  2. Follow the setup wizard to create an owner account" \
+        "  3. Or set via environment: N8N_USER_MANAGEMENT_DISABLED=false" \
+        "" \
+        "See docs/HARDENING.md §5.1 for details."
+    if $DRY_RUN; then
+        report_fix "$id" "Enable n8n user management" "DRY-RUN"
+    else
+        report_fix "$id" "Enable n8n user management" "INSTRUCTED" \
+            "Set up owner account via n8n setup wizard"
+    fi
+    return 0
+}
+
+fix_n8n_env_block() {
+    local id="CHK-N8N-ENV-BLOCK"
+    if ! prompt_confirm "$id" "Block code node environment access"; then
+        report_fix "$id" "Block code node env access" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Add to your docker-compose.yml environment section (or .env file):" \
+        "" \
+        "  environment:" \
+        "    - N8N_BLOCK_ENV_ACCESS_IN_NODE=true" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Block code node env access" "DRY-RUN"
+    else
+        report_fix "$id" "Block code node env access" "INSTRUCTED" \
+            "Set N8N_BLOCK_ENV_ACCESS_IN_NODE=true"
+    fi
+    return 0
+}
+
+fix_n8n_env_diagnostics() {
+    local id="CHK-N8N-ENV-DIAGNOSTICS"
+    if ! prompt_confirm "$id" "Disable n8n diagnostics/telemetry"; then
+        report_fix "$id" "Disable n8n diagnostics" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Add to your docker-compose.yml environment section (or .env file):" \
+        "" \
+        "  environment:" \
+        "    - N8N_DIAGNOSTICS_ENABLED=false" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Disable n8n diagnostics" "DRY-RUN"
+    else
+        report_fix "$id" "Disable n8n diagnostics" "INSTRUCTED" \
+            "Set N8N_DIAGNOSTICS_ENABLED=false"
+    fi
+    return 0
+}
+
+fix_n8n_env_api() {
+    local id="CHK-N8N-ENV-API"
+    if ! prompt_confirm "$id" "Disable n8n public API"; then
+        report_fix "$id" "Disable n8n public API" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Add to your docker-compose.yml environment section (or .env file):" \
+        "" \
+        "  environment:" \
+        "    - N8N_PUBLIC_API_DISABLED=true" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Disable n8n public API" "DRY-RUN"
+    else
+        report_fix "$id" "Disable n8n public API" "INSTRUCTED" \
+            "Set N8N_PUBLIC_API_DISABLED=true"
+    fi
+    return 0
+}
+
+fix_n8n_nodes() {
+    local id="CHK-N8N-NODES"
+    if ! prompt_confirm "$id" "Exclude dangerous node types"; then
+        report_fix "$id" "Exclude dangerous node types" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Add to your docker-compose.yml environment section (or .env file):" \
+        "" \
+        "  environment:" \
+        "    - NODES_EXCLUDE=[\"n8n-nodes-base.executeCommand\",\"n8n-nodes-base.ssh\"]" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Exclude dangerous node types" "DRY-RUN"
+    else
+        report_fix "$id" "Exclude dangerous node types" "INSTRUCTED" \
+            "Set NODES_EXCLUDE with executeCommand and ssh"
+    fi
+    return 0
+}
+
+fix_container_root() {
+    local id="CHK-CONTAINER-ROOT"
+    if ! prompt_confirm "$id" "Run container as non-root user"; then
+        report_fix "$id" "Run container as non-root" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml service definition:" \
+        "" \
+        "  services:" \
+        "    n8n:" \
+        "      user: '1000:1000'" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Run container as non-root" "DRY-RUN"
+    else
+        report_fix "$id" "Run container as non-root" "INSTRUCTED" \
+            "Set user: '1000:1000' in docker-compose.yml"
+    fi
+    return 0
+}
+
+fix_container_readonly() {
+    local id="CHK-CONTAINER-READONLY"
+    if ! prompt_confirm "$id" "Set container filesystem to read-only"; then
+        report_fix "$id" "Set container read-only" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml service definition:" \
+        "" \
+        "  services:" \
+        "    n8n:" \
+        "      read_only: true" \
+        "      tmpfs:" \
+        "        - /tmp" \
+        "        - /run" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Set container read-only" "DRY-RUN"
+    else
+        report_fix "$id" "Set container read-only" "INSTRUCTED" \
+            "Set read_only: true with tmpfs for write paths"
+    fi
+    return 0
+}
+
+fix_container_caps() {
+    local id="CHK-CONTAINER-CAPS"
+    if ! prompt_confirm "$id" "Drop all container capabilities"; then
+        report_fix "$id" "Drop all capabilities" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml service definition:" \
+        "" \
+        "  services:" \
+        "    n8n:" \
+        "      cap_drop:" \
+        "        - ALL" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Drop all capabilities" "DRY-RUN"
+    else
+        report_fix "$id" "Drop all capabilities" "INSTRUCTED" \
+            "Set cap_drop: [ALL] in docker-compose.yml"
+    fi
+    return 0
+}
+
+fix_container_privileged() {
+    local id="CHK-CONTAINER-PRIVILEGED"
+    if ! prompt_confirm "$id" "Remove container privileged mode"; then
+        report_fix "$id" "Remove privileged mode" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml service definition:" \
+        "" \
+        "  Remove or set to false:" \
+        "    privileged: true   -->   (delete this line)" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Remove privileged mode" "DRY-RUN"
+    else
+        report_fix "$id" "Remove privileged mode" "INSTRUCTED" \
+            "Remove privileged: true from docker-compose.yml"
+    fi
+    return 0
+}
+
+fix_docker_socket() {
+    local id="CHK-DOCKER-SOCKET"
+    if ! prompt_confirm "$id" "Remove Docker socket mount (host escape risk)"; then
+        report_fix "$id" "Remove docker.sock mount" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml volumes section:" \
+        "" \
+        "  Remove this line:" \
+        "    - /var/run/docker.sock:/var/run/docker.sock" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Remove docker.sock mount" "DRY-RUN"
+    else
+        report_fix "$id" "Remove docker.sock mount" "INSTRUCTED" \
+            "Remove /var/run/docker.sock volume mount"
+    fi
+    return 0
+}
+
+fix_container_network() {
+    local id="CHK-CONTAINER-NETWORK"
+    if ! prompt_confirm "$id" "Use bridge network instead of host network"; then
+        report_fix "$id" "Use bridge network" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "Edit your docker-compose.yml service definition:" \
+        "" \
+        "  Remove:" \
+        "    network_mode: host" \
+        "" \
+        "  Replace with (or simply remove — bridge is the default):" \
+        "    networks:" \
+        "      - n8n-net" \
+        "" \
+        "  And add at the top level:" \
+        "    networks:" \
+        "      n8n-net:" \
+        "        driver: bridge" \
+        "" \
+        "Then restart: docker compose up -d"
+    if $DRY_RUN; then
+        report_fix "$id" "Use bridge network" "DRY-RUN"
+    else
+        report_fix "$id" "Use bridge network" "INSTRUCTED" \
+            "Remove network_mode: host, use bridge network"
+    fi
+    return 0
+}
+
+fix_service_account() {
+    local id="CHK-SERVICE-ACCOUNT"
+    if ! prompt_confirm "$id" "Create _n8n service account (bare-metal deployments)"; then
+        report_fix "$id" "Create _n8n service account" "SKIPPED" "User declined"
+        return 0
+    fi
+    if run_fix_cmd "Create _n8n service account" \
+        sudo sysadminctl -addUser _n8n -shell /usr/bin/false -home /opt/n8n; then
+        if $DRY_RUN; then
+            report_fix "$id" "Created _n8n service account" "DRY-RUN"
+        else
+            report_fix "$id" "Created _n8n service account" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to create _n8n service account" "FAILED"
+        return 1
+    fi
+}
+
+fix_service_home_perms() {
+    local id="CHK-SERVICE-HOME-PERMS"
+    local admin_home
+    admin_home=$(eval echo "~$(whoami)") || true
+    if ! prompt_confirm "$id" "Restrict operator home directory permissions (chmod 750 ${admin_home})"; then
+        report_fix "$id" "Restrict home directory permissions" "SKIPPED" "User declined"
+        return 0
+    fi
+    if run_fix_cmd "Restrict home directory" sudo chmod 750 "$admin_home"; then
+        if $DRY_RUN; then
+            report_fix "$id" "Restricted home directory permissions" "DRY-RUN"
+        else
+            report_fix "$id" "Restricted home directory permissions" "FIXED" \
+                "chmod 750 ${admin_home}"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to restrict home directory permissions" "FAILED"
+        return 1
+    fi
+}
+
+fix_service_data_perms() {
+    local id="CHK-SERVICE-DATA-PERMS"
+    if ! prompt_confirm "$id" "Fix n8n data directory ownership and permissions"; then
+        report_fix "$id" "Fix data directory permissions" "SKIPPED" "User declined"
+        return 0
+    fi
+    if $DRY_RUN; then
+        run_fix_cmd "Fix data dir ownership" true
+        run_fix_cmd "Fix data dir permissions" true
+        report_fix "$id" "Fixed n8n data directory permissions" "DRY-RUN"
+        return 0
+    fi
+    local ok=true
+    if ! sudo mkdir -p /opt/n8n/data; then
+        ok=false
+    fi
+    if ! sudo chown -R _n8n:_n8n /opt/n8n/data; then
+        ok=false
+    fi
+    if ! sudo chmod 700 /opt/n8n/data; then
+        ok=false
+    fi
+    if $ok; then
+        report_fix "$id" "Fixed n8n data directory permissions" "FIXED" \
+            "chown _n8n:_n8n, chmod 700 /opt/n8n/data"
+    else
+        report_fix "$id" "Failed to fix data directory permissions" "FAILED"
+        return 1
+    fi
+    return 0
+}
+
+# =============================================================================
+# Audit JSON Input
+# =============================================================================
+
+# Find the latest audit JSON file
+find_latest_audit() {
+    if [[ -n "$AUDIT_FILE" ]]; then
+        if [[ ! -f "$AUDIT_FILE" ]]; then
+            echo "Error: Specified audit file not found: ${AUDIT_FILE}" >&2
+            exit 2
+        fi
+        echo "$AUDIT_FILE"
+        return
+    fi
+    local latest=""
+    if [[ -d "$AUDIT_LOG_DIR" ]]; then
+        latest=$(find "$AUDIT_LOG_DIR" -name "audit-*.json" -type f 2>/dev/null \
+            | sort -r | head -1) || true
+    fi
+    if [[ -z "$latest" ]]; then
+        echo "Error: No audit JSON files found in ${AUDIT_LOG_DIR}." >&2
+        echo "Run the audit first: hardening-audit.sh --json > ${AUDIT_LOG_DIR}/audit-\$(date +%Y%m%d).json" >&2
+        exit 2
+    fi
+    echo "$latest"
+}
+
+# Extract failed/warned check IDs from audit JSON
+# Returns one CHK-ID per line
+extract_failed_checks() {
+    local audit_file="$1"
+    jq -r '.results[] | select(.status == "FAIL" or .status == "WARN") | .id' "$audit_file" 2>/dev/null
+}
+
+# =============================================================================
+# Main Fix Logic
+# =============================================================================
+
+# Process a single check ID
+process_check() {
+    local check_id="$1"
+
+    # Skip checks that have no registered fix
+    if [[ -z "${FIX_REGISTRY[$check_id]+x}" ]]; then
+        if ! $JSON_OUTPUT; then
+            printf "  ${CYAN}%-10s${NC}  %-14s  %s\n" "NO-FIX" "$check_id" "No auto-fix registered for this check"
+        fi
+        return 0
+    fi
+
+    local classification="${FIX_REGISTRY[$check_id]}"
+    local fix_fn="${FIX_FUNCTIONS[$check_id]}"
+    local fix_desc="${FIX_DESCRIPTIONS[$check_id]}"
+
+    # In auto mode, skip CONFIRMATION checks
+    if [[ "$MODE" == "auto" && "$classification" == "CONFIRMATION" ]]; then
+        report_fix "$check_id" "$fix_desc" "SKIPPED" "CONFIRMATION check — use --interactive"
+        return 0
+    fi
+
+    # In interactive mode for SAFE checks, still apply without prompting
+    # (CONFIRMATION checks prompt inside their fix function)
+
+    # Execute the fix function
+    ( "$fix_fn" ) || true
+}
+
+# Post-fix verification
+verify_fixes() {
+    if $DRY_RUN; then
+        return 0
+    fi
+    if [[ $FIXED_COUNT -eq 0 ]]; then
+        return 0
+    fi
+    if [[ -z "$AUDIT_SCRIPT" || ! -x "$AUDIT_SCRIPT" ]]; then
+        if ! $JSON_OUTPUT; then
+            echo ""
+            echo "  Audit script not found — skipping post-fix verification."
+            echo "  Re-run manually: hardening-audit.sh --json"
+        fi
+        return 0
+    fi
+
+    if ! $JSON_OUTPUT; then
+        echo ""
+        echo "  Re-running audit to verify fixes..."
+    fi
+
+    local post_fix_file="/tmp/openclaw-post-fix.json"
+    if "$AUDIT_SCRIPT" --json > "$post_fix_file" 2>/dev/null; then
+        local before_fails after_fails
+        before_fails=$(jq '[.results[] | select(.status == "FAIL")] | length' "$AUDIT_FILE" 2>/dev/null) || before_fails="?"
+        after_fails=$(jq '[.results[] | select(.status == "FAIL")] | length' "$post_fix_file" 2>/dev/null) || after_fails="?"
+        local before_warns after_warns
+        before_warns=$(jq '[.results[] | select(.status == "WARN")] | length' "$AUDIT_FILE" 2>/dev/null) || before_warns="?"
+        after_warns=$(jq '[.results[] | select(.status == "WARN")] | length' "$post_fix_file" 2>/dev/null) || after_warns="?"
+        if ! $JSON_OUTPUT; then
+            echo ""
+            printf "  Verification: FAIL %s -> %s | WARN %s -> %s\n" \
+                "$before_fails" "$after_fails" "$before_warns" "$after_warns"
+        fi
+    else
+        if ! $JSON_OUTPUT; then
+            echo "  Post-fix audit completed with errors (some checks may require sudo)."
+        fi
+    fi
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+main() {
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --auto)
+                if [[ -n "$MODE" && "$MODE" != "auto" ]]; then
+                    echo "Error: Cannot combine --auto and --interactive" >&2
+                    exit 2
+                fi
+                MODE="auto"
+                shift
+                ;;
+            --interactive)
+                if [[ -n "$MODE" && "$MODE" != "interactive" ]]; then
+                    echo "Error: Cannot combine --auto and --interactive" >&2
+                    exit 2
+                fi
+                MODE="interactive"
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --check)
+                SINGLE_CHECK="${2:-}"
+                if [[ -z "$SINGLE_CHECK" ]]; then
+                    echo "Error: --check requires a CHK-ID argument" >&2
+                    exit 2
+                fi
+                shift 2
+                ;;
+            --audit-file)
+                AUDIT_FILE="${2:-}"
+                if [[ -z "$AUDIT_FILE" ]]; then
+                    echo "Error: --audit-file requires a file path argument" >&2
+                    exit 2
+                fi
+                shift 2
+                ;;
+            --json)
+                JSON_OUTPUT=true
+                shift
+                ;;
+            --no-color)
+                # shellcheck disable=SC2034
+                NO_COLOR=true
+                RED='' GREEN='' YELLOW='' CYAN='' NC=''
+                shift
+                ;;
+            --version)
+                echo "${SCRIPT_NAME} v${VERSION}"
+                exit 0
+                ;;
+            --help)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Error: Unknown option '$1'" >&2
+                usage >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    # Default to auto mode if --dry-run is set without a mode
+    if [[ -z "$MODE" ]]; then
+        if $DRY_RUN; then
+            MODE="auto"
+        else
+            echo "Error: A mode is required. Use --auto or --interactive (optionally with --dry-run)." >&2
+            usage >&2
+            exit 2
+        fi
+    fi
+
+    check_platform
+    check_dependencies
+    _locate_audit_script
+
+    # Locate audit JSON
+    local audit_file
+    audit_file=$(find_latest_audit)
+    # Store for verify_fixes
+    AUDIT_FILE="$audit_file"
+
+    # Validate JSON
+    if ! jq empty "$audit_file" 2>/dev/null; then
+        echo "Error: Invalid JSON in audit file: ${audit_file}" >&2
+        exit 2
+    fi
+
+    # Extract failed checks
+    local failed_checks
+    failed_checks=$(extract_failed_checks "$audit_file")
+
+    if [[ -z "$failed_checks" ]]; then
+        if ! $JSON_OUTPUT; then
+            echo "No FAIL or WARN checks found in ${audit_file} — nothing to fix."
+        fi
+        if $JSON_OUTPUT; then
+            printf '{
+  "version": "%s",
+  "timestamp": "%s",
+  "mode": "%s",
+  "dry_run": %s,
+  "audit_file": "%s",
+  "results": [],
+  "summary": {"total": 0, "fixed": 0, "skipped": 0, "failed": 0}
+}\n' "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$MODE" "$DRY_RUN" "$audit_file"
+        fi
+        exit 0
+    fi
+
+    # If --check is specified, filter to that single check
+    if [[ -n "$SINGLE_CHECK" ]]; then
+        if ! echo "$failed_checks" | grep -qx "$SINGLE_CHECK"; then
+            echo "Error: ${SINGLE_CHECK} is not in the FAIL/WARN list (or not found in audit)." >&2
+            echo "Failed/warned checks: $(echo "$failed_checks" | tr '\n' ' ')" >&2
+            exit 2
+        fi
+        failed_checks="$SINGLE_CHECK"
+    fi
+
+    local check_count
+    check_count=$(echo "$failed_checks" | wc -l | tr -d ' ')
+
+    if ! $JSON_OUTPUT; then
+        echo "================================================================"
+        echo "  OpenClaw Mac Hardening Fix"
+        printf "  Version: %s | Date: %s\n" "$VERSION" "$(date +%Y-%m-%d)"
+        printf "  Mode: %s | Dry-run: %s\n" "$MODE" "$DRY_RUN"
+        printf "  Audit file: %s\n" "$audit_file"
+        printf "  Checks to process: %d\n" "$check_count"
+        echo "================================================================"
+        echo ""
+    fi
+
+    # Process each failed check
+    while IFS= read -r check_id; do
+        [[ -z "$check_id" ]] && continue
+        process_check "$check_id"
+    done <<< "$failed_checks"
+
+    # --- Output ---
+    if $JSON_OUTPUT; then
+        local json_output
+        json_output=$(printf '{
+  "version": "%s",
+  "timestamp": "%s",
+  "mode": "%s",
+  "dry_run": %s,
+  "audit_file": "%s",
+  "results": %s,
+  "summary": {
+    "total": %d,
+    "fixed": %d,
+    "skipped": %d,
+    "failed": %d
+  }
+}' "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+   "$MODE" "$DRY_RUN" "$audit_file" \
+   "$JSON_RESULTS" \
+   "$TOTAL" "$FIXED_COUNT" "$SKIPPED_COUNT" "$FAILED_COUNT")
+
+        if command -v jq &>/dev/null; then
+            echo "$json_output" | jq .
+        else
+            echo "$json_output"
+        fi
+    else
+        echo ""
+        echo "================================================================"
+        printf "  Results: ${GREEN}%d FIXED${NC} | ${YELLOW}%d SKIPPED${NC} | ${RED}%d FAILED${NC}" \
+            "$FIXED_COUNT" "$SKIPPED_COUNT" "$FAILED_COUNT"
+        echo ""
+        printf "  Total checks processed: %d\n" "$TOTAL"
+        echo "================================================================"
+
+        # Post-fix verification
+        verify_fixes
+    fi
+
+    # Exit code: 1 if any FAILED, 0 otherwise
+    if [[ $FAILED_COUNT -gt 0 ]]; then
+        exit 1
+    fi
+    exit 0
+}
+
+main "$@"
