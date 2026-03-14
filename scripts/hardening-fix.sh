@@ -214,7 +214,19 @@ FIX_REGISTRY[CHK-CLAMAV-FRESHNESS]=SAFE
 FIX_FUNCTIONS[CHK-CLAMAV-FRESHNESS]=fix_clamav_freshness
 FIX_DESCRIPTIONS[CHK-CLAMAV-FRESHNESS]="Update ClamAV signatures"
 
-# CONFIRMATION checks (18)
+FIX_REGISTRY[CHK-CHROMIUM-POLICY]=SAFE
+FIX_FUNCTIONS[CHK-CHROMIUM-POLICY]=fix_chromium_policy
+FIX_DESCRIPTIONS[CHK-CHROMIUM-POLICY]="Deploy Chromium managed security policies"
+
+FIX_REGISTRY[CHK-CHROMIUM-AUTOFILL]=SAFE
+FIX_FUNCTIONS[CHK-CHROMIUM-AUTOFILL]=fix_chromium_policy
+FIX_DESCRIPTIONS[CHK-CHROMIUM-AUTOFILL]="Deploy Chromium managed security policies (autofill)"
+
+FIX_REGISTRY[CHK-CHROMIUM-EXTENSIONS]=SAFE
+FIX_FUNCTIONS[CHK-CHROMIUM-EXTENSIONS]=fix_chromium_policy
+FIX_DESCRIPTIONS[CHK-CHROMIUM-EXTENSIONS]="Deploy Chromium managed security policies (extensions)"
+
+# CONFIRMATION checks (19)
 FIX_REGISTRY[CHK-FILEVAULT]=CONFIRMATION
 FIX_FUNCTIONS[CHK-FILEVAULT]=fix_filevault
 FIX_DESCRIPTIONS[CHK-FILEVAULT]="Enable FileVault disk encryption"
@@ -286,6 +298,10 @@ FIX_DESCRIPTIONS[CHK-SERVICE-HOME-PERMS]="Restrict operator home directory permi
 FIX_REGISTRY[CHK-SERVICE-DATA-PERMS]=CONFIRMATION
 FIX_FUNCTIONS[CHK-SERVICE-DATA-PERMS]=fix_service_data_perms
 FIX_DESCRIPTIONS[CHK-SERVICE-DATA-PERMS]="Fix n8n data directory ownership and permissions"
+
+FIX_REGISTRY[CHK-CHROMIUM-TCC]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CHROMIUM-TCC]=fix_chromium_tcc
+FIX_DESCRIPTIONS[CHK-CHROMIUM-TCC]="Reset Chromium camera/microphone TCC permissions"
 
 # --- Result Reporting ---
 # Usage: report_fix ID DESCRIPTION STATUS [DETAIL]
@@ -822,8 +838,89 @@ fix_clamav_freshness() {
     fi
 }
 
+fix_chromium_policy() {
+    local id="CHK-CHROMIUM-POLICY"
+    local plist_dir="/Library/Managed Preferences"
+    local plist_file="${plist_dir}/org.chromium.Chromium.plist"
+
+    # Detect Chrome vs Chromium
+    if [[ -d "/Applications/Google Chrome.app" && ! -d "/Applications/Chromium.app" ]]; then
+        plist_file="${plist_dir}/com.google.Chrome.plist"
+    fi
+
+    if [[ -f "$plist_file" ]]; then
+        report_fix "$id" "Chromium managed policies already deployed" "SKIPPED"
+        return 0
+    fi
+
+    if $DRY_RUN; then
+        run_fix_cmd "Deploy Chromium security policy plist" true
+        report_fix "$id" "Deploy Chromium managed security policies" "DRY-RUN"
+        return 0
+    fi
+
+    sudo mkdir -p "$plist_dir" 2>/dev/null
+
+    if sudo tee "$plist_file" > /dev/null <<'CHROMIUM_POLICY_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PasswordManagerEnabled</key>
+    <false/>
+    <key>AutofillAddressEnabled</key>
+    <false/>
+    <key>AutofillCreditCardEnabled</key>
+    <false/>
+    <key>BrowserSigninMode</key>
+    <integer>0</integer>
+    <key>SyncDisabled</key>
+    <true/>
+    <key>MetricsReportingEnabled</key>
+    <false/>
+    <key>CrashReportingEnabled</key>
+    <false/>
+    <key>ExtensionInstallBlocklist</key>
+    <array>
+        <string>*</string>
+    </array>
+    <key>SafeBrowsingProtectionLevel</key>
+    <integer>1</integer>
+    <key>BlockThirdPartyCookies</key>
+    <true/>
+    <key>DefaultPopupsSetting</key>
+    <integer>2</integer>
+    <key>DefaultNotificationsSetting</key>
+    <integer>2</integer>
+    <key>AudioCaptureAllowed</key>
+    <false/>
+    <key>VideoCaptureAllowed</key>
+    <false/>
+    <key>DnsOverHttpsMode</key>
+    <string>automatic</string>
+    <key>IncognitoModeAvailability</key>
+    <integer>1</integer>
+    <key>ImportBookmarks</key>
+    <false/>
+    <key>ImportHistory</key>
+    <false/>
+    <key>ImportSavedPasswords</key>
+    <false/>
+</dict>
+</plist>
+CHROMIUM_POLICY_EOF
+    then
+        sudo chmod 644 "$plist_file"
+        report_fix "$id" "Deployed Chromium managed security policies" "FIXED" "$plist_file"
+    else
+        report_fix "$id" "Failed to deploy Chromium policy plist" "FAILED"
+        return 1
+    fi
+    return 0
+}
+
 # =============================================================================
-# Fix Functions — CONFIRMATION (18 checks)
+# Fix Functions — CONFIRMATION (19 checks)
 # =============================================================================
 
 fix_filevault() {
@@ -1257,6 +1354,31 @@ fix_service_data_perms() {
         report_fix "$id" "Failed to fix data directory permissions" "FAILED"
         return 1
     fi
+    return 0
+}
+
+fix_chromium_tcc() {
+    local id="CHK-CHROMIUM-TCC"
+    if ! prompt_confirm "$id" "Reset Chromium camera/microphone TCC permissions (denies access)"; then
+        report_fix "$id" "Reset Chromium TCC permissions" "SKIPPED" "User declined"
+        return 0
+    fi
+    if $DRY_RUN; then
+        run_fix_cmd "Reset Camera TCC for Chromium" true
+        run_fix_cmd "Reset Microphone TCC for Chromium" true
+        report_fix "$id" "Reset Chromium TCC permissions" "DRY-RUN"
+        return 0
+    fi
+
+    local ok=true
+    # Reset for both Chromium and Chrome bundle IDs
+    for bundle_id in org.chromium.Chromium com.google.Chrome; do
+        tccutil reset Camera "$bundle_id" 2>/dev/null || true
+        tccutil reset Microphone "$bundle_id" 2>/dev/null || true
+    done
+
+    report_fix "$id" "Reset camera/microphone TCC for Chromium and Chrome" "FIXED" \
+        "Camera and microphone access denied for both org.chromium.Chromium and com.google.Chrome"
     return 0
 }
 

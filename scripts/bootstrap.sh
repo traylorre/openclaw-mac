@@ -375,6 +375,15 @@ validate_commands() {
     else
         report SKIP "colima not installed (install later per §4.1)"
     fi
+
+    # Chromium (optional, for OpenClaw browser control)
+    if [[ -d "/Applications/Chromium.app" ]] || command -v chromium &>/dev/null; then
+        report OK "Chromium available (browser control enabled)"
+    elif [[ -d "/Applications/Google Chrome.app" ]] || command -v google-chrome &>/dev/null; then
+        report OK "Google Chrome available (browser control enabled)"
+    else
+        report SKIP "Chromium not installed (optional — brew install --cask chromium for OpenClaw §2.11)"
+    fi
 }
 
 # --- Main ---

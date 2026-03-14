@@ -1573,6 +1573,170 @@ check_clamav_freshness() {
     fi
 }
 
+# ===========================================================================
+# §2.11 — Browser Security (Chromium)
+# ===========================================================================
+
+# Helper: detect if Chromium (or Chrome) is installed
+_chromium_installed() {
+    [[ -d "/Applications/Chromium.app" ]] || \
+    [[ -d "/Applications/Google Chrome.app" ]] || \
+    command -v chromium &>/dev/null || \
+    command -v google-chrome &>/dev/null
+}
+
+# Helper: determine policy plist domain and path
+_chromium_policy_plist() {
+    if [[ -d "/Applications/Chromium.app" ]]; then
+        echo "/Library/Managed Preferences/org.chromium.Chromium"
+    elif [[ -d "/Applications/Google Chrome.app" ]]; then
+        echo "/Library/Managed Preferences/com.google.Chrome"
+    else
+        echo "/Library/Managed Preferences/org.chromium.Chromium"
+    fi
+}
+
+check_chromium_policy() {
+    local id="CHK-CHROMIUM-POLICY"
+    if ! _chromium_installed; then
+        report_result "$id" "Browser Security" \
+            "Chromium not installed (browser checks skipped)" "SKIP" "2.11"
+        return
+    fi
+
+    local plist
+    plist="$(_chromium_policy_plist).plist"
+    if [[ -f "$plist" ]]; then
+        report_result "$id" "Browser Security" \
+            "Chromium managed security policies deployed" "PASS" "2.11"
+    else
+        report_result "$id" "Browser Security" \
+            "No Chromium managed policy plist found" "WARN" "2.11" \
+            "Deploy policy: see §2.11.2 in hardening guide"
+    fi
+}
+
+check_chromium_autofill() {
+    local id="CHK-CHROMIUM-AUTOFILL"
+    if ! _chromium_installed; then
+        return  # already reported SKIP in check_chromium_policy
+    fi
+
+    local plist
+    plist="$(_chromium_policy_plist)"
+    if [[ ! -f "${plist}.plist" ]]; then
+        report_result "$id" "Browser Security" \
+            "Cannot check autofill — no managed policy plist" "WARN" "2.11" \
+            "Deploy policy with autofill disabled: §2.11.2"
+        return
+    fi
+
+    local pw_mgr autofill_addr autofill_cc
+    pw_mgr=$(defaults read "$plist" PasswordManagerEnabled 2>/dev/null) || pw_mgr=""
+    autofill_addr=$(defaults read "$plist" AutofillAddressEnabled 2>/dev/null) || autofill_addr=""
+    autofill_cc=$(defaults read "$plist" AutofillCreditCardEnabled 2>/dev/null) || autofill_cc=""
+
+    if [[ "$pw_mgr" == "0" && "$autofill_addr" == "0" && "$autofill_cc" == "0" ]]; then
+        report_result "$id" "Browser Security" \
+            "Password manager and autofill disabled via policy" "PASS" "2.11"
+    else
+        report_result "$id" "Browser Security" \
+            "Password manager or autofill not fully disabled" "WARN" "2.11" \
+            "Set PasswordManagerEnabled, AutofillAddressEnabled, AutofillCreditCardEnabled to false"
+    fi
+}
+
+check_chromium_extensions() {
+    local id="CHK-CHROMIUM-EXTENSIONS"
+    if ! _chromium_installed; then
+        return  # already reported SKIP in check_chromium_policy
+    fi
+
+    local plist
+    plist="$(_chromium_policy_plist)"
+    if [[ ! -f "${plist}.plist" ]]; then
+        report_result "$id" "Browser Security" \
+            "Cannot check extension policy — no managed policy plist" "WARN" "2.11" \
+            "Deploy policy with ExtensionInstallBlocklist: §2.11.2"
+        return
+    fi
+
+    local blocklist
+    blocklist=$(defaults read "$plist" ExtensionInstallBlocklist 2>/dev/null) || blocklist=""
+    if echo "$blocklist" | grep -q '"*"' || echo "$blocklist" | grep -q "'\*'"; then
+        report_result "$id" "Browser Security" \
+            "All extensions blocked by policy (allowlist-only)" "PASS" "2.11"
+    elif [[ -n "$blocklist" ]]; then
+        report_result "$id" "Browser Security" \
+            "Extension blocklist set but not blocking all (*)" "WARN" "2.11" \
+            "Set ExtensionInstallBlocklist to [\"*\"] to block all, then allowlist specific IDs"
+    else
+        report_result "$id" "Browser Security" \
+            "No extension blocklist policy configured" "WARN" "2.11" \
+            "Set ExtensionInstallBlocklist to [\"*\"]: §2.11.8"
+    fi
+}
+
+check_chromium_cdp() {
+    local id="CHK-CHROMIUM-CDP"
+    if ! _chromium_installed; then
+        return  # already reported SKIP in check_chromium_policy
+    fi
+
+    # Check if anything is listening on common CDP ports
+    local cdp_listeners
+    cdp_listeners=$(lsof -i :9222 -sTCP:LISTEN 2>/dev/null) || true
+
+    if [[ -z "$cdp_listeners" ]]; then
+        report_result "$id" "Browser Security" \
+            "No process listening on CDP port 9222" "PASS" "2.11"
+        return
+    fi
+
+    # Check if bound to non-localhost
+    if echo "$cdp_listeners" | grep -q '0\.0\.0\.0:\|:\*:'; then
+        report_result "$id" "Browser Security" \
+            "CDP port 9222 bound to all interfaces (network-exposed)" "WARN" "2.11" \
+            "Ensure --remote-debugging-address=127.0.0.1 and add pf rule: §2.11.3"
+    elif echo "$cdp_listeners" | grep -q '127\.0\.0\.1:\|localhost:'; then
+        report_result "$id" "Browser Security" \
+            "CDP port 9222 bound to localhost only" "PASS" "2.11"
+    else
+        report_result "$id" "Browser Security" \
+            "CDP port 9222 active — verify binding address" "WARN" "2.11" \
+            "Run: lsof -i :9222 -sTCP:LISTEN to check binding"
+    fi
+}
+
+check_chromium_tcc() {
+    local id="CHK-CHROMIUM-TCC"
+    if ! _chromium_installed; then
+        return  # already reported SKIP in check_chromium_policy
+    fi
+
+    local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    if [[ ! -f "$tcc_db" ]]; then
+        report_result "$id" "Browser Security" \
+            "Cannot read TCC database" "SKIP" "2.11"
+        return
+    fi
+
+    # Check for camera or microphone grants (auth_value=2 means allowed)
+    local grants
+    grants=$(sqlite3 "$tcc_db" \
+        "SELECT service FROM access WHERE (client LIKE '%chromium%' OR client LIKE '%Chrome%') AND auth_value=2 AND service IN ('kTCCServiceCamera','kTCCServiceMicrophone')" \
+        2>/dev/null) || grants=""
+
+    if [[ -z "$grants" ]]; then
+        report_result "$id" "Browser Security" \
+            "No camera/microphone TCC grants for Chromium" "PASS" "2.11"
+    else
+        report_result "$id" "Browser Security" \
+            "Chromium has camera/microphone TCC access: ${grants}" "WARN" "2.11" \
+            "Reset: tccutil reset Camera org.chromium.Chromium && tccutil reset Microphone org.chromium.Chromium"
+    fi
+}
+
 # --- Main ---
 main() {
     # Parse arguments
@@ -1702,6 +1866,13 @@ main() {
     run_check check_n8n_env_api
     run_check check_n8n_nodes
     run_check check_n8n_webhook
+
+    # §2.11 Browser Security (Chromium) checks
+    run_check check_chromium_policy
+    run_check check_chromium_autofill
+    run_check check_chromium_extensions
+    run_check check_chromium_cdp
+    run_check check_chromium_tcc
 
     # §6 Bare-Metal Path checks (T032) — bare-metal only
     if [[ "$deployment" == "bare-metal" || "$deployment" == "unknown" ]]; then
