@@ -201,7 +201,7 @@ check_firewall() {
     local id="CHK-FIREWALL"
     local output
     output=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate 2>&1) || true
-    if echo "$output" | grep -q "enabled"; then
+    if echo "$output" | grep -q "Firewall is enabled"; then
         report_result "$id" "Firewall" "Application firewall is enabled" "PASS" "2.2"
     else
         report_result "$id" "Firewall" "Application firewall is disabled" "FAIL" "2.2" \
@@ -213,7 +213,7 @@ check_stealth_mode() {
     local id="CHK-STEALTH"
     local output
     output=$(/usr/libexec/ApplicationFirewall/socketfilterfw --getstealthmode 2>&1) || true
-    if echo "$output" | grep -q "enabled"; then
+    if echo "$output" | grep -q "Stealth mode enabled"; then
         report_result "$id" "Firewall" "Stealth mode is enabled" "PASS" "2.2"
     else
         report_result "$id" "Firewall" "Stealth mode is not enabled" "WARN" "2.2" \
@@ -246,7 +246,9 @@ check_xprotect_fresh() {
         return
     fi
     local update_epoch current_epoch age_days
+    # Try multiple date formats: zero-padded, single-digit, and ISO
     update_epoch=$(date -j -f "%m/%d/%y, %I:%M %p" "$last_update" "+%s" 2>/dev/null) || \
+    update_epoch=$(date -j -f "%-m/%-d/%y, %-I:%M %p" "$last_update" "+%s" 2>/dev/null) || \
     update_epoch=$(date -j -f "%Y-%m-%d" "$last_update" "+%s" 2>/dev/null) || true
     if [[ -z "$update_epoch" ]]; then
         report_result "$id" "XProtect" "XProtect update date: ${last_update}" "WARN" "2.4" \
@@ -333,11 +335,11 @@ check_sharing_file() {
     local id="CHK-SHARING-FILE"
     local output
     output=$(launchctl print system/com.apple.smbd 2>&1) || true
-    if echo "$output" | grep -q "could not find service"; then
+    if echo "$output" | grep -qi "could not find service"; then
         report_result "$id" "Sharing Services" "File Sharing (SMB) is disabled" "PASS" "2.7"
     elif echo "$output" | grep -q "state = running"; then
         report_result "$id" "Sharing Services" "File Sharing (SMB) is running" "FAIL" "2.7" \
-            "Disable: sudo launchctl disable system/com.apple.smbd"
+            "Disable: sudo launchctl disable system/com.apple.smbd (reboot required, or also run: sudo launchctl bootout system/com.apple.smbd)"
     else
         report_result "$id" "Sharing Services" "File Sharing (SMB) is loaded but not running" "WARN" "2.7"
     fi
@@ -351,7 +353,7 @@ check_sharing_remote_events() {
         report_result "$id" "Sharing Services" "Remote Apple Events is disabled" "PASS" "2.7"
     else
         report_result "$id" "Sharing Services" "Remote Apple Events is enabled" "FAIL" "2.7" \
-            "Disable: sudo systemsetup -setremoteappleevents off"
+            "Disable: sudo systemsetup -setremoteappleevents off (Terminal needs Full Disk Access)"
     fi
 }
 
@@ -371,7 +373,7 @@ check_sharing_screen() {
     local id="CHK-SHARING-SCREEN"
     local output
     output=$(launchctl print system/com.apple.screensharing 2>&1) || true
-    if echo "$output" | grep -q "could not find service"; then
+    if echo "$output" | grep -qi "could not find service"; then
         report_result "$id" "Sharing Services" "Screen Sharing is disabled" "PASS" "2.7"
     elif echo "$output" | grep -q "state = running"; then
         report_result "$id" "Sharing Services" "Screen Sharing is running" "WARN" "2.7" \
