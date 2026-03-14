@@ -3,6 +3,15 @@
 # Runs audit + notify + optional auto-fix in a single pipeline.
 # Replaces separate com.openclaw.audit and com.openclaw.notify plists.
 # See docs/HARDENING.md §10.1 for scheduling guide.
+
+# --- Bash 5.x auto-detect (sudo + macOS /bin/bash = 3.x) ---
+if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    for _try_bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [[ -x "$_try_bash" ]]; then exec "$_try_bash" "$0" "$@"; fi
+    done
+    echo "Error: bash 5.x required. Install: brew install bash" >&2; exit 2
+fi
+
 set -euo pipefail
 
 readonly VERSION="0.1.0"
@@ -45,6 +54,7 @@ Options:
   --retention N   Keep last N audit log pairs (default: 30)
   --log-dir DIR   Log directory (default: /opt/n8n/logs/audit)
   --no-color      Disable colored output
+  --debug         Enable bash trace output (set -x)
   --version       Show version and exit
   --help          Show this help message and exit
 
@@ -138,45 +148,54 @@ run_pipeline() {
 
     local pipeline_errors=0
 
-    # Step 1: Run audit (human-readable log)
-    printf "${CYAN}[1/4]${NC} Running audit (text)...\n"
+    # Step 1: Run audit once (JSON), derive text summary
+    printf "${CYAN}[1/3]${NC} Running audit...\n"
     if [[ -x "$AUDIT_SCRIPT" ]]; then
-        "$AUDIT_SCRIPT" --no-color > "$log_file" 2>&1 || true
+        "$AUDIT_SCRIPT" --json > "$json_file" 2>&1 || true
+        # Generate human-readable text log from JSON
+        if [[ -f "$json_file" ]] && jq empty "$json_file" 2>/dev/null; then
+            {
+                echo "OpenClaw Hardening Audit — $(jq -r '.timestamp // "unknown"' "$json_file")"
+                echo "================================================"
+                jq -r '.results[] | "\(.status)\t\(.id)\t\(.description)"' "$json_file"
+                echo ""
+                jq -r '"Summary: \(.summary.pass) PASS | \(.summary.fail) FAIL | \(.summary.warn) WARN (\(.summary.total) total)"' "$json_file"
+            } > "$log_file"
+        fi
     else
         printf "  ${RED}SKIP${NC}  Audit script not found: %s\n" "$AUDIT_SCRIPT"
         pipeline_errors=$((pipeline_errors + 1))
     fi
 
-    # Step 2: Run audit (JSON output)
-    printf "${CYAN}[2/4]${NC} Running audit (JSON)...\n"
-    if [[ -x "$AUDIT_SCRIPT" ]]; then
-        "$AUDIT_SCRIPT" --json > "$json_file" 2>&1 || true
-    else
-        printf "  ${RED}SKIP${NC}  Audit script not found\n"
-        pipeline_errors=$((pipeline_errors + 1))
-    fi
-
-    # Step 3: Optional auto-fix
+    # Step 2: Optional auto-fix
     if [[ "$MODE" == "auto-fix" ]]; then
-        printf "${CYAN}[3/4]${NC} Running auto-fix (SAFE checks only)...\n"
+        printf "${CYAN}[2/3]${NC} Running auto-fix (SAFE checks only)...\n"
         if [[ -x "$FIX_SCRIPT" ]]; then
             local fix_json="${LOG_DIR}/fix-${timestamp}.json"
             "$FIX_SCRIPT" --auto --json --audit-file "$json_file" > "$fix_json" 2>&1 || true
 
-            # Re-audit after fixes
+            # Re-audit after fixes (single run)
             printf "  Re-auditing after fixes...\n"
-            "$AUDIT_SCRIPT" --no-color > "${LOG_DIR}/audit-${timestamp}-post-fix.log" 2>&1 || true
             "$AUDIT_SCRIPT" --json > "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>&1 || true
+            if [[ -f "${LOG_DIR}/audit-${timestamp}-post-fix.json" ]] && jq empty "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>/dev/null; then
+                {
+                    echo "OpenClaw Hardening Audit (post-fix) — $(jq -r '.timestamp // "unknown"' "${LOG_DIR}/audit-${timestamp}-post-fix.json")"
+                    echo "================================================"
+                    jq -r '.results[] | "\(.status)\t\(.id)\t\(.description)"' "${LOG_DIR}/audit-${timestamp}-post-fix.json"
+                    echo ""
+                    jq -r '"Summary: \(.summary.pass) PASS | \(.summary.fail) FAIL | \(.summary.warn) WARN (\(.summary.total) total)"' "${LOG_DIR}/audit-${timestamp}-post-fix.json"
+                } > "${LOG_DIR}/audit-${timestamp}-post-fix.log"
+            fi
         else
             printf "  ${RED}SKIP${NC}  Fix script not found: %s\n" "$FIX_SCRIPT"
             pipeline_errors=$((pipeline_errors + 1))
         fi
     else
-        printf "${CYAN}[3/4]${NC} Auto-fix skipped (use --auto-fix to enable)\n"
+        printf "${CYAN}[2/3]${NC} Auto-fix skipped (use --auto-fix to enable)\n"
     fi
 
-    # Step 4: Notify
-    printf "${CYAN}[4/4]${NC} Sending notifications...\n"
+    # Step 3: Notify
+    printf "${CYAN}[3/3]${NC} Sending notifications...\n"
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
         "$NOTIFY_SCRIPT" --log-dir "$LOG_DIR" 2>&1 || true
     else
@@ -223,11 +242,14 @@ main() {
             --retention)   RETENTION_COUNT="$2"; shift 2 ;;
             --log-dir)     LOG_DIR="$2"; LOCK_DIR="${LOG_DIR}/.audit-cron.lock"; HEALTH_FILE="${LOG_DIR}/.last-run"; shift 2 ;;
             --no-color)    RED='' GREEN='' YELLOW='' CYAN='' NC=''; shift ;;
+            --debug)       DEBUG=true; shift ;;
             --version)     echo "${SCRIPT_NAME} v${VERSION}"; exit 0 ;;
             --help)        usage; exit 0 ;;
             *)             echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
         esac
     done
+
+    if [[ "${DEBUG:-false}" == true ]]; then set -x; fi
 
     check_platform
     acquire_lock

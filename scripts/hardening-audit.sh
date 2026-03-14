@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 # macOS Hardening Audit Script for n8n + Apify Deployment
 # See docs/HARDENING.md §11 for full reference
+
+# --- Bash 5.x auto-detect (sudo + macOS /bin/bash = 3.x) ---
+if [[ "${BASH_VERSINFO[0]}" -lt 5 ]]; then
+    for _try_bash in /opt/homebrew/bin/bash /usr/local/bin/bash; do
+        if [[ -x "$_try_bash" ]]; then exec "$_try_bash" "$0" "$@"; fi
+    done
+    echo "Error: bash 5.x required. Install: brew install bash" >&2; exit 2
+fi
+
 set -euo pipefail
 
 readonly VERSION="0.1.0"
@@ -30,6 +39,7 @@ SKIP_COUNT=0
 JSON_OUTPUT=false
 FILTER_SECTION=""
 QUIET=false
+DEBUG=false
 # NO_COLOR is a conventional env flag; --no-color sets color vars directly
 # shellcheck disable=SC2034
 NO_COLOR=false
@@ -76,6 +86,7 @@ Options:
   --section SEC  Run checks for a specific section only
   --quiet        Suppress PASS output, show only FAIL/WARN
   --no-color     Disable colored output (for piping/logging)
+  --debug        Enable bash trace output (set -x)
   --version      Show version and exit
   --help         Show this help message and exit
 
@@ -1589,6 +1600,10 @@ main() {
                 RED='' GREEN='' YELLOW='' CYAN='' NC=''
                 shift
                 ;;
+            --debug)
+                DEBUG=true
+                shift
+                ;;
             --version)
                 echo "${SCRIPT_NAME} v${VERSION}"
                 exit 0
@@ -1604,6 +1619,8 @@ main() {
                 ;;
         esac
     done
+
+    if [[ "$DEBUG" == true ]]; then set -x; fi
 
     # Warn if --json used without jq
     if $JSON_OUTPUT && ! command -v jq &>/dev/null; then
