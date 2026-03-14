@@ -226,6 +226,10 @@ FIX_REGISTRY[CHK-CHROMIUM-EXTENSIONS]=SAFE
 FIX_FUNCTIONS[CHK-CHROMIUM-EXTENSIONS]=fix_chromium_policy
 FIX_DESCRIPTIONS[CHK-CHROMIUM-EXTENSIONS]="Deploy Chromium managed security policies (extensions)"
 
+FIX_REGISTRY[CHK-CHROMIUM-URLBLOCK]=SAFE
+FIX_FUNCTIONS[CHK-CHROMIUM-URLBLOCK]=fix_chromium_policy
+FIX_DESCRIPTIONS[CHK-CHROMIUM-URLBLOCK]="Deploy Chromium managed security policies (URL blocklist)"
+
 # CONFIRMATION checks (19)
 FIX_REGISTRY[CHK-FILEVAULT]=CONFIRMATION
 FIX_FUNCTIONS[CHK-FILEVAULT]=fix_filevault
@@ -906,11 +910,34 @@ fix_chromium_policy() {
     <false/>
     <key>ImportSavedPasswords</key>
     <false/>
+    <key>WebRtcLocalIpsAllowedUrls</key>
+    <array/>
+    <key>PromptForDownloadLocation</key>
+    <true/>
+    <key>DownloadDirectory</key>
+    <string>/tmp/chromium-downloads</string>
+    <key>URLBlocklist</key>
+    <array>
+        <string>*</string>
+    </array>
+    <key>URLAllowlist</key>
+    <array>
+        <string>https://www.linkedin.com/*</string>
+        <string>https://linkedin.com/*</string>
+    </array>
+    <key>DownloadRestrictions</key>
+    <integer>3</integer>
 </dict>
 </plist>
 CHROMIUM_POLICY_EOF
     then
         sudo chmod 644 "$plist_file"
+        # Validate plist syntax
+        if ! plutil -lint "$plist_file" &>/dev/null; then
+            report_fix "$id" "Policy plist deployed but failed syntax validation" "FAILED" \
+                "Run: plutil -lint $plist_file"
+            return 1
+        fi
         report_fix "$id" "Deployed Chromium managed security policies" "FIXED" "$plist_file"
     else
         report_fix "$id" "Failed to deploy Chromium policy plist" "FAILED"
