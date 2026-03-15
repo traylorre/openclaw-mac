@@ -1248,11 +1248,15 @@ sudo chmod 644 "/Library/Managed Preferences/org.chromium.Chromium.plist"
 
 **Verification**: Open Chromium and navigate to `chrome://policy`. Click "Reload policies". All configured policies should appear with status "OK". Policies marked "Mandatory" cannot be overridden by the user.
 
+> **WARNING — Policy-to-runtime gap**: The audit script verifies that the plist *exists* with correct keys, but cannot confirm Chromium actually *loaded* the policies. A corrupt plist cache, MDM conflict, or Chromium bug can cause policies to be silently ignored. After deploying or modifying policies, **always verify via `chrome://policy`** in a running Chromium instance. If policies show "Unknown" or do not appear, restart Chromium and run `defaults read` to confirm the plist is readable.
+
 ```bash
 # CLI verification
 defaults read "/Library/Managed Preferences/org.chromium.Chromium" 2>/dev/null
 # Expected: shows all policy keys with their values
 ```
+
+> **URLAllowlist maintenance**: The default allowlist permits only `linkedin.com`. If your pipeline requires additional domains (authentication providers, CDN assets, API endpoints), add them to the URLAllowlist in the managed policy plist. Review and update the allowlist whenever you modify your n8n workflows or OpenClaw pipeline targets. An overly narrow allowlist causes silent failures; an overly broad one undermines the domain restriction defense (§2.11.7).
 
 ##### 2.11.3 CDP Port Security
 
@@ -1356,6 +1360,8 @@ chromium --jitless --remote-debugging-port=18800
 ##### 2.11.7 AI Agent Prompt Injection Defense
 
 `[PARTIALLY AUTOMATED]` — Automated domain restriction + manual operational controls.
+
+> **IMPORTANT — Automation coverage**: Of the 5 defense layers below, only **Layer 1 (domain restriction)** is enforced by Chromium policy and verified by the audit script (`CHK-CHROMIUM-URLBLOCK`). Layers 2–5 require application-level implementation in your n8n workflows, OpenClaw configuration, and operational procedures. Deploying the plist alone does **not** provide complete prompt injection defense.
 
 When an AI agent controls a browser, **every open webpage becomes an attack surface**. Adversarial content embedded in web pages can attempt to hijack the agent's behavior. This is fundamentally different from a human browsing the web — the AI agent processes page content as potential instructions. Prompt injection is considered unlikely to ever be fully solved at the model level alone (OpenAI, 2024); defense-in-depth is mandatory.
 
@@ -5714,6 +5720,25 @@ sudo launchctl kickstart system/com.openclaw.audit
 
 **Audit check**: `CHK-LAUNCHD-AUDIT-JOB` (FAIL) → §10.1
 
+#### Script Integrity Baseline
+
+The audit and fix scripts themselves are part of the security boundary. A compromised script could report all-PASS while the system is vulnerable. Create a SHA-256 hash baseline after deploying or updating the scripts:
+
+```bash
+# Create baseline directory
+mkdir -p /opt/n8n/baselines  # or ~/openclaw-baselines
+
+# Generate hash baseline (run from project root)
+shasum -a 256 scripts/hardening-audit.sh scripts/hardening-fix.sh > /opt/n8n/baselines/script-hashes.sha256
+
+# Verify manually at any time
+shasum -a 256 -c /opt/n8n/baselines/script-hashes.sha256
+```
+
+After intentional script updates (e.g., pulling a new version from the repository), regenerate the baseline. Store the baseline file with restricted permissions (`chmod 600`) and consider placing it on a read-only volume or in a separate user's home directory.
+
+**Audit check**: `CHK-SCRIPT-INTEGRITY` (WARN) → §10.1
+
 ### 10.2 Notification Setup
 
 **Threat**: Scheduled audits detect security regressions, but the operator never sees the results because there is no notification mechanism — failures go unaddressed until a breach occurs
@@ -6682,8 +6707,9 @@ Complete reference of all `CHK-*` audit checks. Each check maps to a specific gu
 | CHK-NOTIFICATION-CONFIG | WARN | both | Notification configuration exists | §10.2 |
 | CHK-LOG-DIR | FAIL | both | Audit log directory exists and writable | §10.4 |
 | CHK-CLAMAV-FRESHNESS | WARN | both | ClamAV signatures fresh (<7 days) | §10.3 |
+| CHK-SCRIPT-INTEGRITY | WARN | both | Audit/fix scripts match integrity baseline | §10.1 |
 
-**Total: 81 checks** (23 FAIL severity, 58 WARN severity; 68 both-path, 10 containerized-only, 3 bare-metal-only)
+**Total: 82 checks** (23 FAIL severity, 59 WARN severity; 69 both-path, 10 containerized-only, 3 bare-metal-only)
 
 ### 11.3 JSON Output Schema
 

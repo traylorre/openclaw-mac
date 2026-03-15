@@ -692,7 +692,7 @@ check_n8n_bind() {
         fi
         local port_binding
         port_binding=$(docker port "$container_id" 5678 2>/dev/null) || true
-        if echo "$port_binding" | grep -q "^127\.0\.0\.1:"; then
+        if echo "$port_binding" | grep -qE "^(127\.0\.0\.1|\[::1\]):"; then
             report_result "$id" "n8n Platform" "n8n bound to localhost (container)" "PASS" "5.1"
         elif [[ -z "$port_binding" ]]; then
             report_result "$id" "n8n Platform" "n8n port not mapped (internal only)" "PASS" "5.1"
@@ -703,7 +703,7 @@ check_n8n_bind() {
     elif [[ "$deployment" == "bare-metal" ]]; then
         local bind_addr
         bind_addr=$(sudo lsof -iTCP:5678 -sTCP:LISTEN -P -n 2>/dev/null | awk 'NR>1{print $9}') || true
-        if echo "$bind_addr" | grep -q "^127\.0\.0\.1:"; then
+        if echo "$bind_addr" | grep -qE "^(127\.0\.0\.1|\[::1\]):"; then
             report_result "$id" "n8n Platform" "n8n bound to localhost (bare-metal)" "PASS" "5.1"
         elif [[ -z "$bind_addr" ]]; then
             report_result "$id" "n8n Platform" "n8n not listening on port 5678" "SKIP" "5.1"
@@ -1663,7 +1663,7 @@ check_chromium_extensions() {
 
     local blocklist
     blocklist=$(defaults read "$plist" ExtensionInstallBlocklist 2>/dev/null) || blocklist=""
-    if echo "$blocklist" | grep -q '"*"' || echo "$blocklist" | grep -q "'\*'"; then
+    if echo "$blocklist" | grep -qF '"*"' || echo "$blocklist" | grep -qF "'*'"; then
         report_result "$id" "Browser Security" \
             "All extensions blocked by policy (allowlist-only)" "PASS" "2.11"
     elif [[ -n "$blocklist" ]]; then
@@ -1694,7 +1694,7 @@ check_chromium_cdp() {
             if echo "$listeners" | grep -q '0\.0\.0\.0:\|:\*:'; then
                 exposed=true
             fi
-            if ! echo "$listeners" | grep -q '127\.0\.0\.1:\|localhost:'; then
+            if ! echo "$listeners" | grep -qE '127\.0\.0\.1:|localhost:|\[::1\]:'; then
                 localhost_only=false
             fi
         fi
@@ -1780,11 +1780,19 @@ check_chromium_version() {
         return
     fi
 
-    # Chromium releases roughly every 4 weeks; flag if >2 major versions behind current
-    # We use a rolling minimum: if major_version < 130, it's likely outdated (2025+)
-    if [[ "$major_version" -lt 130 ]]; then
+    # Chromium releases a new major version roughly every 4 weeks.
+    # Chromium 100 shipped 2022-03-29 (epoch 1648512000). We estimate the
+    # current major version from the date, then flag if installed version
+    # is more than 2 major versions behind. This avoids hardcoded thresholds
+    # that silently go stale.
+    local now_epoch chromium100_epoch=1648512000 secs_per_version=2419200  # 28 days
+    now_epoch=$(date +%s)
+    local estimated_current=$(( 100 + (now_epoch - chromium100_epoch) / secs_per_version ))
+    local min_acceptable=$(( estimated_current - 2 ))
+
+    if [[ "$major_version" -lt "$min_acceptable" ]]; then
         report_result "$id" "Browser Security" \
-            "Chromium version $major_version may be outdated (expected ≥130)" "WARN" "2.11" \
+            "Chromium version $major_version may be outdated (expected ≥${min_acceptable})" "WARN" "2.11" \
             "Update Chromium: brew upgrade --cask chromium"
     else
         report_result "$id" "Browser Security" \
@@ -1826,6 +1834,41 @@ check_chromium_dangerflags() {
     fi
 }
 
+check_script_integrity() {
+    local id="CHK-SCRIPT-INTEGRITY"
+    local baseline_dir="/opt/n8n/baselines"
+    if [[ ! -d "$baseline_dir" ]]; then
+        baseline_dir="$HOME/openclaw-baselines"
+    fi
+    local hash_file="$baseline_dir/script-hashes.sha256"
+
+    # Locate the scripts directory relative to this script
+    local script_dir
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+    local audit_script="$script_dir/hardening-audit.sh"
+    local fix_script="$script_dir/hardening-fix.sh"
+
+    if [[ ! -f "$hash_file" ]]; then
+        report_result "$id" "Operational" \
+            "No script integrity baseline found" "WARN" "10.1" \
+            "Create baseline: shasum -a 256 scripts/hardening-audit.sh scripts/hardening-fix.sh > $hash_file"
+        return
+    fi
+
+    # Verify hashes — shasum -c returns 0 only if all hashes match
+    local check_output
+    if check_output=$(cd / && shasum -a 256 -c "$hash_file" 2>&1); then
+        report_result "$id" "Operational" \
+            "Audit and fix scripts match integrity baseline" "PASS" "10.1"
+    else
+        local mismatches
+        mismatches=$(echo "$check_output" | grep -i "FAILED" | head -3) || true
+        report_result "$id" "Operational" \
+            "Script integrity mismatch: ${mismatches}" "WARN" "10.1" \
+            "If scripts were intentionally updated, regenerate baseline: shasum -a 256 $audit_script $fix_script > $hash_file"
+    fi
+}
+
 check_chromium_urlblock() {
     local id="CHK-CHROMIUM-URLBLOCK"
     if ! _chromium_installed; then
@@ -1843,7 +1886,7 @@ check_chromium_urlblock() {
 
     local blocklist
     blocklist=$(defaults read "$plist" URLBlocklist 2>/dev/null) || blocklist=""
-    if echo "$blocklist" | grep -q '"*"' || echo "$blocklist" | grep -q "'\*'"; then
+    if echo "$blocklist" | grep -qF '"*"' || echo "$blocklist" | grep -qF "'*'"; then
         report_result "$id" "Browser Security" \
             "URLBlocklist deny-all-by-default configured" "PASS" "2.11"
     elif [[ -n "$blocklist" ]]; then
@@ -2035,6 +2078,7 @@ main() {
     run_check check_notification_config
     run_check check_log_dir
     run_check check_clamav_freshness
+    run_check check_script_integrity
 
     # --- Output ---
     if $JSON_OUTPUT; then
