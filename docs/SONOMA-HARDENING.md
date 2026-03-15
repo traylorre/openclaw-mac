@@ -29,7 +29,7 @@ Sonoma isn't as aggressive as Tahoe in sandboxing local network requests.
 You don't have the fancy standalone **Passwords App** yet.
 
 * **Location:** Access your vault via **System Settings > Passwords**.
-* **Hardening:** Ensure "AutoFill Passwords and Passkeys" is restricted ONLY to browsers you trust. If you use Bitwarden or 1Password, disable iCloud Keychain AutoFill to reduce your attack surface.
+* **Hardening:** Ensure "AutoFill Passwords and Passkeys" is restricted ONLY to browsers you trust (e.g., Safari, Chromium with managed policies per §2.11 of the main hardening guide). If you use Bitwarden or 1Password, disable iCloud Keychain AutoFill to reduce your attack surface.
 
 ## 4. Firewall "Stealth Mode" (Crucial for Sonoma)
 
