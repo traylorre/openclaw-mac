@@ -1507,14 +1507,17 @@ check_usb() {
     policy=$(defaults read /Library/Preferences/com.apple.security.accessory AccessorySecurityPolicy 2>/dev/null || echo "")
 
     if [[ -z "$policy" ]]; then
-        # Setting may not exist on older macOS or if never configured
-        local macos_major
-        macos_major=$(sw_vers -productVersion 2>/dev/null | cut -d. -f1)
-        if [[ "${macos_major:-0}" -ge 14 ]]; then
+        # Accessory security requires T2 chip or Apple Silicon (Ventura 13+)
+        local has_secure_enclave
+        has_secure_enclave=$(system_profiler SPiBridgeDataType 2>/dev/null | grep -qi "T2\|Apple" && echo "yes" || echo "")
+        if [[ -z "$has_secure_enclave" ]]; then
+            has_secure_enclave=$(sysctl -n hw.optional.arm64 2>/dev/null | grep -q "1" && echo "yes" || echo "")
+        fi
+        if [[ -n "$has_secure_enclave" ]]; then
             report_result "$id" "Physical" "USB accessory security policy not configured" "WARN" "9.5" \
                 "Configure: System Settings > Privacy & Security > Allow accessories to connect"
         else
-            report_result "$id" "Physical" "USB accessory security not available on this macOS version" "SKIP" "9.5"
+            report_result "$id" "Physical" "USB accessory security not available (requires T2 or Apple Silicon)" "SKIP" "9.5"
         fi
     elif [[ "$policy" -le 2 ]]; then
         report_result "$id" "Physical" "USB accessory security is configured (policy: $policy)" "PASS" "9.5"

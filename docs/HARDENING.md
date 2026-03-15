@@ -28,7 +28,7 @@
 
 ### Purpose and Scope
 
-This guide provides a comprehensive, CLI-first hardening procedure for a Mac Mini running **n8n** (workflow automation) and **Apify** (web scraping) in a LinkedIn lead-generation pipeline. It covers macOS Sonoma (14) and Tahoe (26) and is written for an operator who manages the system but is not a macOS security specialist.
+This guide provides a comprehensive, CLI-first hardening procedure for a Mac Mini running **n8n** (workflow automation) and **Apify** (web scraping) in a LinkedIn lead-generation pipeline. It covers macOS Ventura (13) and later (including Sonoma 14 and Tahoe 26) and is written for an operator who manages the system but is not a macOS security specialist.
 
 The guide assumes:
 
@@ -397,7 +397,7 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
 - **macOS updates can reset firewall state**: After macOS upgrades, verify the firewall is still enabled (§10.3 post-update checklist).
 - **Application-level vs packet-level**: The macOS application firewall operates at the application level. For packet-level filtering (IP/port rules), use `pf` (§3.3).
 - **Signed applications bypass**: By default, signed applications can receive incoming connections. Use `--setallowsigned off` for stricter control, but test first — this can break macOS services.
-- **Tahoe vs Sonoma**: On Tahoe (macOS 26), the application firewall persists more reliably across updates but may reset after major upgrades. Sonoma (macOS 14) is more prone to firewall state resets during minor updates. On both versions, verify firewall state after any system update. Tahoe also adds improved logging granularity for blocked connections via `log show --predicate 'subsystem == "com.apple.alf"'`.
+- **Version differences**: On Tahoe (macOS 26), the application firewall persists more reliably across updates. Sonoma (14) and Ventura (13) are more prone to firewall state resets during minor updates. On all versions, verify firewall state after any system update. Tahoe also adds improved logging granularity for blocked connections via `log show --predicate 'subsystem == "com.apple.alf"'`.
 
 **Audit checks**: `CHK-FIREWALL` (FAIL), `CHK-STEALTH` (WARN) → §2.2
 
@@ -439,7 +439,7 @@ csrutil status
 #### Edge Cases and Warnings
 
 - **Cannot enable/disable from normal boot**: SIP changes require Recovery Mode — this is by design.
-- **Tahoe vs Sonoma**: Tahoe (macOS 26) extends SIP to protect more system volume components. The same `csrutil status` command works on both versions.
+- **Version differences**: Tahoe (macOS 26) extends SIP to protect more system volume components. The same `csrutil status` command works on Ventura, Sonoma, and Tahoe.
 - **Some developer tools request SIP disable**: Never disable SIP on a production server. Developer workflows requiring SIP changes should use a separate development machine.
 - **Single User Mode**: Disabled by SIP on macOS Catalina and later. Unavailable on Apple Silicon.
 
@@ -506,14 +506,14 @@ system_profiler SPInstallHistoryDataType 2>/dev/null | grep -A 2 "XProtect"
 # Gatekeeper status
 spctl --status
 
-# XProtect version (Sonoma/Tahoe)
+# XProtect version (Ventura/Sonoma/Tahoe)
 system_profiler SPInstallHistoryDataType 2>/dev/null | grep -A 5 "XProtect" | tail -6
 ```
 
 #### Edge Cases and Warnings
 
 - **Homebrew tools**: Some Homebrew-installed CLI tools are not notarized. Gatekeeper may flag them as "damaged" or block execution. Use `xattr -d com.apple.quarantine /path/to/binary` on verified tools only — never blindly remove quarantine attributes.
-- **Tahoe vs Sonoma**: Tahoe (macOS 26) enforces stricter Gatekeeper runtime checks and flags apps "damaged" more aggressively. Verify Homebrew tools still work after upgrading.
+- **Version differences**: Tahoe (macOS 26) enforces stricter Gatekeeper runtime checks and flags apps "damaged" more aggressively. Verify Homebrew tools still work after upgrading. On Ventura (13), Gatekeeper is slightly more permissive — the "Open Anyway" button in System Settings is easier to reach.
 - **Notarization is not a guarantee**: Apple scans for known malware at notarization time. A clean notarization does not mean the app is safe — it means Apple didn't detect anything at submission time.
 - **XProtect is baseline only**: XProtect's signature database is much smaller than ClamAV. Install additional antivirus for broader coverage (§8.1).
 
@@ -1172,8 +1172,8 @@ mdutil -s /path/to/n8n/data 2>/dev/null
 - **TCC database access**: Reading the TCC database requires Full Disk Access for the querying process. The audit script will attempt to check TCC but may report SKIP if permissions are insufficient.
 - **Spotlight exclusion timing**: Adding Spotlight exclusions does not remove previously indexed data. You must rebuild the index (`mdutil -E /`) to purge stale entries containing PII.
 - **Configuration profiles**: Legitimate management software (MDM) may install profiles. Verify with your IT department before removing profiles you don't recognize.
-- **Tahoe TCC changes**: On Tahoe (macOS 26), TCC enforcement is stricter across the board. Key differences from Sonoma (macOS 14):
-  - **Local Network Privacy**: Tahoe requires explicit user consent for any process that accesses the local network (mDNS, Bonjour, multicast). This affects n8n workflows that interact with LAN services, Colima's VM networking, and tools like `nmap` or `arp-scan`. On Sonoma, these prompts are less frequent. If running headless, pre-approve network access via `tccutil` or a configuration profile before going headless — prompts cannot be answered without a GUI session.
+- **TCC version differences**: On Tahoe (macOS 26), TCC enforcement is stricter across the board. Key differences:
+  - **Local Network Privacy**: Tahoe requires explicit user consent for any process that accesses the local network (mDNS, Bonjour, multicast). This affects n8n workflows that interact with LAN services, Colima's VM networking, and tools like `nmap` or `arp-scan`. On Ventura (13) and Sonoma (14), these prompts are less frequent. If running headless, pre-approve network access via `tccutil` or a configuration profile before going headless — prompts cannot be answered without a GUI session.
   - **Background service TCC**: Launch daemons on Tahoe may trigger additional consent prompts when accessing protected resources (contacts, calendar, camera, microphone). Ensure `_n8n` service account has no unnecessary TCC grants.
   - **Automation permissions**: AppleScript and `osascript` commands (used for notification fallback in §10.2) require explicit Automation permission grants on Tahoe.
 - **Docker build cache**: If using custom Dockerfiles, `docker builder prune` removes cached layers that may contain sensitive data. See §4.4.
@@ -3432,7 +3432,7 @@ sudo sysadminctl -addUser _n8n -fullName "n8n Service" -shell /usr/bin/false -ho
 dscl . -read /Users/_n8n
 ```
 
-> **NOTE**: `sysadminctl` requires admin privileges and may prompt for the admin password. On macOS Sonoma 14.x+, use `-password -` to skip setting a password (the account will have no password and cannot be used for login).
+> **NOTE**: `sysadminctl` requires admin privileges and may prompt for the admin password. On macOS Sonoma (14+), use `-password -` to skip setting a password (the account will have no password and cannot be used for login). On Ventura (13), you must provide a password — use a long random string that you discard if the account should not have interactive login.
 
 **Restrict group memberships:**
 
@@ -3785,7 +3785,7 @@ ps -p "$(pgrep -f 'n8n start')" -o args= 2>/dev/null
 - **Plist syntax errors**: Use `plutil -lint /Library/LaunchDaemons/com.openclaw.n8n.plist` to validate XML before loading.
 - **Log rotation**: launchd does not rotate logs. Configure `newsyslog` or a manual rotation script for `/opt/n8n/logs/` (§10.4).
 - **`launchctl bootstrap` vs `load`**: On macOS 10.11+, Apple recommends `launchctl bootstrap system /path/to/plist`. Both work; `load` is more widely documented.
-- **Tahoe vs Sonoma**: Tahoe (macOS 26) enforces stricter background service restrictions — unsigned or ad-hoc signed launch daemons may trigger additional TCC prompts or Gatekeeper blocks on first load. Ensure the `start-n8n.sh` script is not quarantined (`xattr -d com.apple.quarantine /opt/n8n/start-n8n.sh`). Sonoma (macOS 14) is more permissive with LaunchDaemon loading but still requires root ownership. On Tahoe, `launchctl bootstrap` is the preferred method over `launchctl load` (which Apple marks deprecated). Both versions honor `KeepAlive` and `RunAtLoad` identically.
+- **Version differences**: Tahoe (macOS 26) enforces stricter background service restrictions — unsigned or ad-hoc signed launch daemons may trigger additional TCC prompts or Gatekeeper blocks on first load. Ensure the `start-n8n.sh` script is not quarantined (`xattr -d com.apple.quarantine /opt/n8n/start-n8n.sh`). Ventura (13) and Sonoma (14) are more permissive with LaunchDaemon loading but still require root ownership. On Tahoe, `launchctl bootstrap` is the preferred method over `launchctl load` (which Apple marks deprecated). All versions honor `KeepAlive` and `RunAtLoad` identically.
 
 ### 6.4 Filesystem Permissions
 
@@ -5765,7 +5765,7 @@ defaults read com.apple.icloud.findmymac FMMEnabled 2>/dev/null
 | **USB mass storage** | Introduces malware via autorun or social engineering | Medium |
 | **Thunderbolt DMA** | Direct memory access to read/write system RAM | Low on Apple Silicon (IOMMU protection), Medium on Intel |
 
-**Configure macOS accessory security (Sonoma+):**
+**Configure macOS accessory security (Ventura 13+, requires T2 chip or Apple Silicon):**
 
 ```bash
 # Set accessory security policy
