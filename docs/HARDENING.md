@@ -92,19 +92,21 @@ These controls close critical attack vectors with minimal effort and no tool ins
 4. [ ] Verify Gatekeeper is enabled (§2.4)
 5. [ ] Enable automatic software updates (§2.5)
 6. [ ] Enable screen lock and set login window security (§2.6)
-7. [ ] Disable guest account (§2.7)
-8. [ ] Disable automatic login (§2.6)
-9. [ ] Disable sharing services — Screen Sharing, File Sharing, Remote Login, Remote Management, AirDrop, Handoff (§2.7)
-   - > **WARNING**: On a headless server, verify SSH or Screen Sharing is working BEFORE disabling other remote access methods.
-10. [ ] Change SSH defaults — key-only auth, disable root login, `AllowUsers`, ed25519 keys (§3.1)
+7. [ ] Set password policy — minimum 14 characters, lockout after 5 failures (§2.6.1)
+   - > **WARNING**: On a headless server, ensure SSH key auth is working BEFORE enabling account lockout — failed password attempts count toward the threshold.
+8. [ ] Disable guest account (§2.7)
+9. [ ] Disable automatic login (§2.6)
+10. [ ] Disable sharing services — Screen Sharing, File Sharing, Remote Login, Remote Management, AirDrop, Handoff (§2.7)
+    - > **WARNING**: On a headless server, verify SSH or Screen Sharing is working BEFORE disabling other remote access methods.
+11. [ ] Change SSH defaults — key-only auth, disable root login, `AllowUsers`, ed25519 keys (§3.1)
     - > **WARNING**: Install and test your SSH key BEFORE disabling password authentication — otherwise you are locked out of a headless server.
-11. [ ] Disable or restrict n8n REST API access — set `N8N_PUBLIC_API_DISABLED=true` (§5.4)
-12. [ ] Configure n8n webhook authentication (§5.5)
+12. [ ] Disable or restrict n8n REST API access — set `N8N_PUBLIC_API_DISABLED=true` (§5.4)
+13. [ ] Configure n8n webhook authentication (§5.5)
     - > **WARNING**: Enable n8n authentication BEFORE binding n8n to a network interface if remote access is needed.
-13. [ ] Enable NTP time synchronization integrity (§2.5)
-14. [ ] Disable core dumps (§2.10)
-15. [ ] Disable unnecessary iCloud services (§8.6)
-16. [ ] Physical security basics — recovery mode password, secure location (§9.5)
+14. [ ] Enable NTP time synchronization integrity (§2.5)
+15. [ ] Disable core dumps (§2.10)
+16. [ ] Disable unnecessary iCloud services (§8.6)
+17. [ ] Physical security basics — recovery mode password, secure location (§9.5)
 
 #### Tier 2: Follow-up (do next)
 
@@ -676,7 +678,97 @@ sudo defaults read /Library/Preferences/com.apple.loginwindow SHOWFULLNAME
 - **Headless servers**: Screen lock still matters — Screen Sharing sessions inherit the screen state. If the screen is unlocked, a Screen Sharing connection gets immediate access.
 - **Memory and swap security**: See §2.10 for hibernation mode, core dump, and swap encryption controls that protect credentials in volatile storage.
 
-**Audit checks**: `CHK-AUTO-LOGIN` (FAIL), `CHK-SCREEN-LOCK` (WARN) → §2.6
+**Audit checks**: `CHK-AUTO-LOGIN` (FAIL), `CHK-SCREEN-LOCK` (WARN), `CHK-PASSWORD-POLICY` (WARN) → §2.6
+
+#### 2.6.1 Password Policy and Account Lockout
+
+**Threat**: Weak or default passwords allow brute-force access via SSH, Screen Sharing, or physical login
+**Layer**: Prevent
+**Deployment**: Both
+**Source**: [CIS Apple macOS Benchmark — 1.2](https://www.cisecurity.org/benchmark/apple_os), [NIST SP 800-63B §5.1.1](https://pages.nist.gov/800-63-3/sp800-63b.html)
+
+##### Why This Matters
+
+macOS ships with no password policy — any password (including a single character) is accepted. On a server handling credentials and PII, a weak admin password is the single highest-impact vulnerability. Account lockout prevents brute-force attacks against local login and SSH.
+
+##### How to Harden
+
+**Set a global password policy** (minimum 14 characters, lockout after 5 failures):
+
+```bash
+# Create a policy XML file
+cat > /tmp/pwpolicy.xml <<'POLICY_EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>policyCategoryPasswordContent</key>
+    <array>
+        <dict>
+            <key>policyContent</key>
+            <string>policyAttributePassword matches '.{14,}'</string>
+            <key>policyIdentifier</key>
+            <string>com.openclaw.minLength</string>
+            <key>policyParameters</key>
+            <dict>
+                <key>policyAttributePasswordMinLength</key>
+                <integer>14</integer>
+            </dict>
+        </dict>
+    </array>
+    <key>policyCategoryAuthentication</key>
+    <array>
+        <dict>
+            <key>policyContent</key>
+            <string>policyAttributeFailedAuthentications &lt; policyAttributeMaximumFailedAuthentications</string>
+            <key>policyIdentifier</key>
+            <string>com.openclaw.maxFailedLogin</string>
+            <key>policyParameters</key>
+            <dict>
+                <key>policyAttributeMaximumFailedAuthentications</key>
+                <integer>5</integer>
+                <key>autoEnableInSeconds</key>
+                <integer>900</integer>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>
+POLICY_EOF
+
+# Apply the policy
+pwpolicy setaccountpolicies /tmp/pwpolicy.xml
+
+# Verify
+pwpolicy getaccountpolicies
+
+# Clean up
+rm /tmp/pwpolicy.xml
+```
+
+> **WARNING — Lockout risk on headless servers**: The lockout policy locks the account after 5 failed attempts for 15 minutes (`autoEnableInSeconds=900`). If you manage the server exclusively via SSH, ensure your SSH key is working (§3.1) before enabling this policy. Password-based SSH login attempts count toward the lockout threshold.
+
+##### Verification
+
+```bash
+# Check current policy
+pwpolicy getaccountpolicies
+# Expected: XML output containing policyAttributePasswordMinLength and
+# policyAttributeMaximumFailedAuthentications
+
+# Test minimum length enforcement (will fail if policy is active)
+# dscl . -passwd /Users/testuser "short"
+# Expected: error about password not meeting requirements
+```
+
+##### Edge Cases and Warnings
+
+- **Touch ID for sudo**: On Macs with Touch ID, add `auth sufficient pam_tid.so` to `/etc/pam.d/sudo_local` to allow Touch ID for sudo. This is more secure than typing passwords repeatedly but requires physical presence — good for the Mac Mini operator, not for automated processes.
+- **Apple Watch auto-unlock**: Disable on servers — it bypasses the password requirement: `sudo defaults write /Library/Preferences/com.apple.sharing.advertised.autoUnlockDisabled -bool true`
+- **Password history**: macOS does not enforce password history by default. NIST SP 800-63B (2024 revision) no longer recommends periodic password rotation — focus on length and breach detection instead.
+- **Biometric vs password**: FileVault always requires the full password at boot, regardless of Touch ID configuration. Touch ID is a convenience layer, not a security weakening.
+
+**Audit check**: `CHK-PASSWORD-POLICY` (WARN) → §2.6
 
 ### 2.7 Guest Account and Sharing Services
 
@@ -6591,6 +6683,7 @@ Complete reference of all `CHK-*` audit checks. Each check maps to a specific gu
 | CHK-NTP | WARN | both | NTP time synchronization configured | §2.5 |
 | CHK-AUTO-LOGIN | FAIL | both | Automatic login disabled | §2.6 |
 | CHK-SCREEN-LOCK | WARN | both | Screen lock configured | §2.6 |
+| CHK-PASSWORD-POLICY | WARN | both | Password policy with length + lockout | §2.6 |
 | CHK-GUEST | FAIL | both | Guest account disabled | §2.7 |
 | CHK-SHARING-FILE | FAIL | both | File Sharing disabled | §2.7 |
 | CHK-SHARING-REMOTE-EVENTS | FAIL | both | Remote Apple Events disabled | §2.7 |
@@ -6709,7 +6802,7 @@ Complete reference of all `CHK-*` audit checks. Each check maps to a specific gu
 | CHK-CLAMAV-FRESHNESS | WARN | both | ClamAV signatures fresh (<7 days) | §10.3 |
 | CHK-SCRIPT-INTEGRITY | WARN | both | Audit/fix scripts match integrity baseline | §10.1 |
 
-**Total: 82 checks** (23 FAIL severity, 59 WARN severity; 69 both-path, 10 containerized-only, 3 bare-metal-only)
+**Total: 83 checks** (23 FAIL severity, 60 WARN severity; 70 both-path, 10 containerized-only, 3 bare-metal-only)
 
 ### 11.3 JSON Output Schema
 

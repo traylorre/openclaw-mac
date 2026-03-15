@@ -1399,13 +1399,39 @@ fix_chromium_tcc() {
 
     local ok=true
     # Reset for both Chromium and Chrome bundle IDs
+    # tccutil may require sudo for system-level TCC entries (macOS 11+)
     for bundle_id in org.chromium.Chromium com.google.Chrome; do
-        tccutil reset Camera "$bundle_id" 2>/dev/null || true
-        tccutil reset Microphone "$bundle_id" 2>/dev/null || true
+        if ! tccutil reset Camera "$bundle_id" 2>/dev/null; then
+            sudo tccutil reset Camera "$bundle_id" 2>/dev/null || true
+        fi
+        if ! tccutil reset Microphone "$bundle_id" 2>/dev/null; then
+            sudo tccutil reset Microphone "$bundle_id" 2>/dev/null || true
+        fi
     done
 
-    report_fix "$id" "Reset camera/microphone TCC for Chromium and Chrome" "FIXED" \
-        "Camera and microphone access denied for both org.chromium.Chromium and com.google.Chrome"
+    # Verify at least one reset worked by checking if grants remain
+    local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
+    if [[ -f "$tcc_db" ]]; then
+        local remaining
+        remaining=$(sqlite3 "$tcc_db" \
+            "SELECT COUNT(*) FROM access WHERE (client LIKE '%chromium%' OR client LIKE '%Chrome%') AND auth_value=2 AND service IN ('kTCCServiceCamera','kTCCServiceMicrophone')" \
+            2>/dev/null) || remaining=""
+        if [[ "$remaining" == "0" || -z "$remaining" ]]; then
+            report_fix "$id" "Reset camera/microphone TCC for Chromium and Chrome" "FIXED" \
+                "Camera and microphone access denied for both org.chromium.Chromium and com.google.Chrome"
+        else
+            ok=false
+        fi
+    else
+        report_fix "$id" "Reset camera/microphone TCC for Chromium and Chrome" "FIXED" \
+            "TCC reset commands executed (could not verify — TCC database not readable)"
+    fi
+
+    if ! $ok; then
+        report_fix "$id" "TCC reset may not have taken effect" "FAILED" \
+            "Try manually: sudo tccutil reset Camera org.chromium.Chromium"
+        return 1
+    fi
     return 0
 }
 

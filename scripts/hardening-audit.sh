@@ -330,6 +330,47 @@ check_screen_lock() {
     fi
 }
 
+check_password_policy() {
+    local id="CHK-PASSWORD-POLICY"
+    # pwpolicy getaccountpolicies returns XML with policy rules
+    local policy_xml
+    policy_xml=$(pwpolicy getaccountpolicies 2>/dev/null) || policy_xml=""
+
+    if [[ -z "$policy_xml" || "$policy_xml" == *"No account policies"* ]]; then
+        report_result "$id" "Login Security" \
+            "No password policy configured (no minimum length or lockout)" "WARN" "2.6" \
+            "Set policy: see §2.6.1 in hardening guide"
+        return
+    fi
+
+    # Check for minimum length requirement (minChars or policyAttributePassword has minLength)
+    local has_length=false has_lockout=false
+    if echo "$policy_xml" | grep -qiE 'minLength|minChars|policyAttributePasswordMinLength'; then
+        has_length=true
+    fi
+    # Check for account lockout (maxFailedLoginAttempts or policyAttributeMaximumFailedAuthentications)
+    if echo "$policy_xml" | grep -qiE 'maxFailedLoginAttempts|policyAttributeMaximumFailedAuthentications|maximumFailedAuthentication'; then
+        has_lockout=true
+    fi
+
+    if $has_length && $has_lockout; then
+        report_result "$id" "Login Security" \
+            "Password policy active (minimum length + account lockout)" "PASS" "2.6"
+    elif $has_length; then
+        report_result "$id" "Login Security" \
+            "Password policy has minimum length but no account lockout" "WARN" "2.6" \
+            "Add account lockout: see §2.6.1"
+    elif $has_lockout; then
+        report_result "$id" "Login Security" \
+            "Password policy has account lockout but no minimum length" "WARN" "2.6" \
+            "Add minimum length: see §2.6.1"
+    else
+        report_result "$id" "Login Security" \
+            "Password policy exists but lacks length and lockout rules" "WARN" "2.6" \
+            "See §2.6.1 for recommended policy"
+    fi
+}
+
 check_guest() {
     local id="CHK-GUEST"
     local output
@@ -1985,6 +2026,7 @@ main() {
     run_check check_ntp
     run_check check_auto_login
     run_check check_screen_lock
+    run_check check_password_policy
     run_check check_guest
     run_check check_sharing_file
     run_check check_sharing_remote_events
