@@ -1,8 +1,8 @@
-# NetworkChuck Style: macOS Sonoma (14) Hardening Addendum
+# NetworkChuck Style: macOS Hardening Quick Reference
 
 > **DEPRECATED**: This document has been superseded by the comprehensive
 > [macOS Hardening Guide](HARDENING.md). See §2 for OS foundation controls
-> covering both Sonoma and Tahoe.
+> covering Ventura (13), Sonoma (14), and Tahoe (26).
 
 <!-- "You're on Sonoma? Fine. But don't let your guard down just because it's not Tahoe yet!" -->
 
@@ -29,7 +29,7 @@ Sonoma isn't as aggressive as Tahoe in sandboxing local network requests.
 You don't have the fancy standalone **Passwords App** yet.
 
 * **Location:** Access your vault via **System Settings > Passwords**.
-* **Hardening:** Ensure "AutoFill Passwords and Passkeys" is restricted ONLY to browsers you trust. If you use Bitwarden or 1Password, disable iCloud Keychain AutoFill to reduce your attack surface.
+* **Hardening:** Ensure "AutoFill Passwords and Passkeys" is restricted ONLY to browsers you trust (e.g., Safari, Chromium with managed policies per §2.11 of the main hardening guide). If you use Bitwarden or 1Password, disable iCloud Keychain AutoFill to reduce your attack surface.
 
 ## 4. Firewall "Stealth Mode" (Crucial for Sonoma)
 
@@ -43,7 +43,7 @@ Because Sonoma is more permissive with network discovery, Stealth Mode is your b
 
 ## 5. Security Maintenance
 
-* **Rapid Security Response (RSR):** Sonoma was the first to use "mini" security patches.
+* **Rapid Security Response (RSR):** Introduced in Ventura 13.2 — these "mini" security patches apply without a full reboot.
 * **Action:** Ensure **System Settings > General > Software Update > (i)** has "Install Security Responses and system files" toggled **ON**.
 
 ---
