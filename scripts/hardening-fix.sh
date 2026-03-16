@@ -60,6 +60,20 @@ json_escape() {
     printf '%s' "$s"
 }
 
+# --- User Scope ---
+# When run with sudo, user-scoped defaults commands must target the
+# invoking user, not root. SUDO_USER is set automatically by sudo.
+ORIGINAL_USER="${SUDO_USER:-$(whoami)}"
+
+# Run a command as the invoking user (drops root for user-scoped operations)
+run_as_user() {
+    if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
+        sudo -u "$SUDO_USER" "$@"
+    else
+        "$@"
+    fi
+}
+
 # --- Paths ---
 AUDIT_LOG_DIR="/opt/n8n/logs/audit"
 AUDIT_SCRIPT=""
@@ -553,11 +567,11 @@ fix_screen_lock() {
     local id="CHK-SCREEN-LOCK"
     local ok=true
     if ! run_fix_cmd "Set askForPassword" \
-        defaults write com.apple.screensaver askForPassword -int 1; then
+        run_as_user defaults write com.apple.screensaver askForPassword -int 1; then
         ok=false
     fi
     if ! run_fix_cmd "Set askForPasswordDelay" \
-        defaults write com.apple.screensaver askForPasswordDelay -int 0; then
+        run_as_user defaults write com.apple.screensaver askForPasswordDelay -int 0; then
         ok=false
     fi
     if $ok; then
@@ -653,7 +667,7 @@ fix_sharing_screen() {
 fix_airdrop() {
     local id="CHK-AIRDROP"
     if run_fix_cmd "Disable AirDrop" \
-        defaults write com.apple.NetworkBrowser DisableAirDrop -bool true; then
+        run_as_user defaults write com.apple.NetworkBrowser DisableAirDrop -bool true; then
         if $DRY_RUN; then
             report_fix "$id" "Disabled AirDrop" "DRY-RUN"
         else
@@ -684,7 +698,7 @@ fix_core_dumps() {
 fix_privacy_siri() {
     local id="CHK-PRIVACY"
     if run_fix_cmd "Disable Siri" \
-        defaults write com.apple.assistant.support 'Assistant Enabled' -bool false; then
+        run_as_user defaults write com.apple.assistant.support 'Assistant Enabled' -bool false; then
         if $DRY_RUN; then
             report_fix "$id" "Disabled Siri" "DRY-RUN"
         else
