@@ -24,6 +24,29 @@
 
 ---
 
+## Automation Coverage
+
+This guide has **64 actionable subsections** (§2–§10). The table below shows how many are backed by automated audit checks and auto-fix scripts. Run the scripts via [GETTING-STARTED.md](../GETTING-STARTED.md) or directly from [`scripts/`](../scripts/).
+
+| Section | Subsections | Auto-Fix | Audit-Only | Manual | Coverage |
+|---------|-------------|----------|------------|--------|----------|
+| §2 OS Foundation | 11 | 8 | 2 | 1 | 91% |
+| §3 Network Security | 6 | 2 | 4 | 0 | 100% |
+| §4 Container Isolation | 5 | 2 | 0 | 3 | 40% |
+| §5 n8n Platform Security | 9 | 3 | 2 | 4 | 56% |
+| §6 Bare-Metal Path | 4 | 2 | 0 | 2 | 50% |
+| §7 Data Security | 11 | 1 | 2 | 8 | 27% |
+| §8 Detection and Monitoring | 7 | 0 | 6 | 1 | 86% |
+| §9 Response and Recovery | 5 | 0 | 2 | 3 | 40% |
+| §10 Operational Maintenance | 6 | 4 | 0 | 2 | 67% |
+| **Total** | **64** | **22** | **18** | **24** | **63%** |
+
+**Badge legend**: `[AUTO-FIX]` = audit check + automated fix | `[AUDIT-ONLY]` = audit check, manual fix | `[MANUAL]` = no automation
+
+**Lowest coverage**: §7 Data Security (27%), §9 Response and Recovery (40%), §4 Container Isolation (40%)
+
+---
+
 ## Preamble
 
 ### Purpose and Scope
@@ -74,6 +97,9 @@ Sections §2, §3, §7, §8, §9, §10, and §11 apply to **both** paths. Sectio
 | **Prevent** / **Detect** / **Respond** | Defensive layer labels per defense-in-depth |
 | `[Containerized]` / `[Bare-Metal]` | Deployment-path-specific instruction |
 | `[EDUCATIONAL]` | Non-automated guidance — manual process or awareness item |
+| `[AUTO-FIX]` | Automated audit check AND automated remediation via `hardening-fix.sh` |
+| `[AUDIT-ONLY]` | Automated audit check exists but remediation is manual |
+| `[MANUAL]` | No automated check or fix — operator performs this step by hand |
 
 ### Quick-Start Checklist
 
@@ -272,7 +298,7 @@ This guide does **not** cover:
 
 ## 2. OS Foundation (Prevent)
 
-### 2.1 Disk Encryption (FileVault)
+### 2.1 Disk Encryption (FileVault) [AUTO-FIX]
 
 **Threat**: Physical attacker or insider extracts credentials and PII from disk without authentication
 **Layer**: Prevent
@@ -339,7 +365,7 @@ sudo fdesetup haspersonalrecoverykey
 
 **Audit check**: `CHK-FILEVAULT` (FAIL) → §2.1
 
-### 2.2 Firewall
+### 2.2 Firewall [AUTO-FIX]
 
 **Threat**: Network attacker discovers and exploits services listening on open ports
 **Layer**: Prevent
@@ -401,7 +427,7 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
 
 **Audit checks**: `CHK-FIREWALL` (FAIL), `CHK-STEALTH` (WARN) → §2.2
 
-### 2.3 System Integrity Protection (SIP)
+### 2.3 System Integrity Protection (SIP) [AUDIT-ONLY]
 
 **Threat**: Malware or attacker with root access modifies protected system files, kernel extensions, or runtime protections
 **Layer**: Prevent
@@ -445,7 +471,7 @@ csrutil status
 
 **Audit check**: `CHK-SIP` (FAIL) → §2.3
 
-### 2.4 Gatekeeper and XProtect
+### 2.4 Gatekeeper and XProtect [AUTO-FIX]
 
 **Threat**: Supply-chain attacker distributes malicious or tampered applications that execute without verification
 **Layer**: Prevent
@@ -519,7 +545,7 @@ system_profiler SPInstallHistoryDataType 2>/dev/null | grep -A 5 "XProtect" | ta
 
 **Audit checks**: `CHK-GATEKEEPER` (FAIL), `CHK-XPROTECT-FRESH` (WARN) → §2.4
 
-### 2.5 Software Updates
+### 2.5 Software Updates [AUTO-FIX]
 
 **Threat**: Known vulnerabilities remain unpatched, allowing exploitation of publicly disclosed CVEs
 **Layer**: Prevent
@@ -598,7 +624,7 @@ sntp time.apple.com
 
 **Audit checks**: `CHK-AUTO-UPDATES` (WARN), `CHK-NTP` (WARN) → §2.5
 
-### 2.6 Screen Lock and Login Security
+### 2.6 Screen Lock and Login Security [AUTO-FIX]
 
 **Threat**: Unattended Mac Mini accessed physically or via Screen Sharing without authentication; automatic login bypasses all user-level security controls
 **Layer**: Prevent
@@ -770,7 +796,7 @@ pwpolicy getaccountpolicies
 
 **Audit check**: `CHK-PASSWORD-POLICY` (WARN) → §2.6
 
-### 2.7 Guest Account and Sharing Services
+### 2.7 Guest Account and Sharing Services [AUTO-FIX]
 
 **Threat**: Guest account provides unauthenticated local access; sharing services expose file systems, remote execution, and network services to LAN attackers
 **Layer**: Prevent
@@ -883,7 +909,7 @@ defaults read com.apple.NetworkBrowser DisableAirDrop 2>/dev/null
 
 **Audit checks**: `CHK-GUEST` (FAIL), `CHK-SHARING-FILE` (FAIL), `CHK-SHARING-REMOTE-EVENTS` (FAIL), `CHK-SHARING-INTERNET` (FAIL), `CHK-SHARING-SCREEN` (WARN), `CHK-AIRDROP` (WARN) → §2.7
 
-### 2.8 Lockdown Mode
+### 2.8 Lockdown Mode [MANUAL]
 
 **Threat**: Advanced attacker exploits broad attack surface including JIT JavaScript, message attachments, wired connections, and configuration profiles
 **Layer**: Prevent
@@ -934,7 +960,7 @@ Lockdown Mode is Apple's highest security setting, designed to protect against t
 - **Webhook ingress**: Lockdown Mode blocks incoming connections from unknown devices. If n8n receives webhooks from the internet, use a reverse proxy (§5.8) to avoid issues.
 - **Homebrew tools**: JIT restrictions may affect some tools. Verify critical CLI tools work after enabling.
 
-### 2.9 Recovery Mode Password
+### 2.9 Recovery Mode Password [AUDIT-ONLY]
 
 **Threat**: Physical attacker boots into Recovery Mode to reset passwords, disable FileVault, or modify the system volume
 **Layer**: Prevent
@@ -1004,7 +1030,7 @@ sudo firmwarepasswd -check 2>/dev/null || echo "Not applicable (Apple Silicon)"
 
 **Audit check**: `CHK-STARTUP-SECURITY` (WARN) → §2.9
 
-### 2.10 System Privacy and TCC
+### 2.10 System Privacy and TCC [AUTO-FIX]
 
 **Threat**: Consumer-oriented features leak data to Apple servers; excessive TCC permissions give n8n (or an attacker exploiting n8n) access to the camera, microphone, contacts, and full disk; configuration profiles silently modify security settings; Spotlight indexes expose PII to rapid search
 **Layer**: Prevent
@@ -1180,7 +1206,7 @@ mdutil -s /path/to/n8n/data 2>/dev/null
 
 **Audit checks**: `CHK-TCC` (WARN), `CHK-CORE-DUMPS` (WARN), `CHK-PRIVACY` (WARN), `CHK-PROFILES` (WARN), `CHK-SPOTLIGHT` (WARN) → §2.10
 
-### 2.11 Browser Security (Chromium)
+### 2.11 Browser Security (Chromium) [AUTO-FIX]
 
 **Threat**: AI agent (OpenClaw) controls a Chromium browser via Chrome DevTools Protocol (CDP), exposing session tokens, cookies, and page content to any localhost process; untrusted web content creates prompt injection attack surface; browser extensions introduce supply chain risk; Chromium stores credentials and browsing history in an unencrypted profile directory
 **Layer**: Prevent
@@ -1789,7 +1815,7 @@ ls -la "$HOME/Library/Application Support/Chromium/" 2>/dev/null
 
 ## 3. Network Security (Prevent)
 
-### 3.1 SSH Hardening
+### 3.1 SSH Hardening [AUTO-FIX]
 
 **Threat**: LAN attacker brute-forces SSH passwords or exploits weak SSH configuration to gain remote shell access
 **Layer**: Prevent
@@ -1898,7 +1924,7 @@ sudo lsof -iTCP:22 -sTCP:LISTEN -P -n 2>/dev/null
 
 **Audit checks**: `CHK-SSH-KEY-ONLY` (FAIL), `CHK-SSH-ROOT` (FAIL) → §3.1
 
-### 3.2 DNS Security
+### 3.2 DNS Security [AUDIT-ONLY]
 
 **Threat**: LAN attacker observes DNS queries to map services in use, or spoofs DNS responses to redirect traffic to attacker infrastructure; compromised n8n exfiltrates data via DNS tunneling
 **Layer**: Prevent
@@ -2026,7 +2052,7 @@ nslookup example.com
 
 **Audit checks**: `CHK-DNS-ENCRYPTED` (WARN) → §3.2
 
-### 3.3 Outbound Filtering
+### 3.3 Outbound Filtering [AUDIT-ONLY]
 
 **Threat**: Compromised n8n exfiltrates credentials or PII via outbound connections to attacker-controlled servers; compromised Mac Mini pivots to other LAN devices
 **Layer**: Prevent
@@ -2179,7 +2205,7 @@ colima ssh -- sudo iptables -L -n 2>/dev/null
 
 **Audit checks**: `CHK-OUTBOUND-FILTER` (WARN) → §3.3
 
-### 3.4 Bluetooth
+### 3.4 Bluetooth [AUTO-FIX]
 
 **Threat**: Nearby attacker exploits Bluetooth vulnerabilities or uses Bluetooth sharing to transfer malicious files
 **Layer**: Prevent
@@ -2232,7 +2258,7 @@ sudo defaults read /Library/Preferences/com.apple.Bluetooth DiscoverableState 2>
 
 **Audit check**: `CHK-BLUETOOTH` (WARN) → §3.4
 
-### 3.5 IPv6
+### 3.5 IPv6 [AUDIT-ONLY]
 
 **Threat**: Attacker bypasses IPv4-only firewall rules by communicating over IPv6; rogue router advertisements (RA) redirect traffic
 **Layer**: Prevent
@@ -2298,7 +2324,7 @@ sudo pfctl -sr 2>/dev/null | grep inet6
 
 **Audit check**: `CHK-IPV6` (WARN) → §3.5
 
-### 3.6 Service Binding and Port Exposure
+### 3.6 Service Binding and Port Exposure [AUDIT-ONLY]
 
 **Threat**: Unexpected services listen on network interfaces, exposing them to LAN attackers or the internet; services bound to 0.0.0.0 instead of 127.0.0.1 are accessible from any network
 **Layer**: Prevent
@@ -2402,7 +2428,7 @@ sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep '0.0.0.0\|*:' | grep -v ss
 
 ## 4. Container Isolation (Prevent) — Containerized Path
 
-### 4.1 Colima Setup
+### 4.1 Colima Setup [MANUAL]
 
 **Threat**: Docker Desktop licensing restrictions or GUI dependencies introduce unnecessary complexity and attack surface on a headless server
 **Layer**: Prevent
@@ -2463,7 +2489,7 @@ docker info --format '{{.ServerVersion}}'
 - **Docker Desktop conflict**: If Docker Desktop is installed, Colima and Docker Desktop may conflict over the Docker socket. Uninstall Docker Desktop or switch the socket path.
 - **`colima delete` destroys everything**: The VM, volumes, and configuration are deleted. Back up your `colima.yaml` and Docker volumes before running `colima delete`.
 
-### 4.2 Docker Security Principles
+### 4.2 Docker Security Principles [MANUAL]
 
 **Threat**: Container misconfiguration allows privilege escalation, host filesystem access, credential theft via `docker inspect`, or container escape via Docker socket
 **Layer**: Prevent
@@ -2500,7 +2526,7 @@ See §4.3 for the complete reference `docker-compose.yml` implementing all seven
 | `docker-compose.yml` | Plaintext credentials if using `environment:` | Use `secrets:` with `file:` source |
 | Docker build cache | Secrets in `RUN`, `ENV`, `COPY` layers | Use `--mount=type=secret` in builds |
 
-### 4.3 Reference docker-compose.yml
+### 4.3 Reference docker-compose.yml [AUTO-FIX]
 
 **Threat**: Misconfigured compose file exposes n8n to network, leaks credentials, or allows container escape
 **Layer**: Prevent
@@ -2680,7 +2706,7 @@ docker inspect $(docker compose ps -q n8n) --format '{{.Config.Env}}' | grep -i 
 
 **Audit checks**: `CHK-CONTAINER-ROOT` (FAIL), `CHK-CONTAINER-READONLY` (WARN), `CHK-CONTAINER-CAPS` (WARN), `CHK-CONTAINER-PRIVILEGED` (FAIL), `CHK-DOCKER-SOCKET` (FAIL), `CHK-SECRETS-ENV` (WARN), `CHK-COLIMA-MOUNTS` (WARN), `CHK-CONTAINER-NETWORK` (FAIL), `CHK-CONTAINER-RESOURCES` (WARN) → §4
 
-### 4.4 Advanced Container Hardening
+### 4.4 Advanced Container Hardening [MANUAL]
 
 **Threat**: Container escape via privilege escalation, excessive capabilities, or seccomp bypass; supply chain attack via tampered Docker images
 **Layer**: Prevent
@@ -2779,7 +2805,7 @@ docker history --no-trunc n8nio/n8n:latest | grep -iE 'key|secret|password|token
 - **Vulnerability scan noise**: Base images often have known CVEs in system libraries that don't affect n8n. Focus on HIGH and CRITICAL severity.
 - **Build cache secrets**: If you used `docker build` with secrets in `RUN` or `ENV` instructions, those secrets persist in layer history even in intermediate layers. Use `docker builder prune` to clean up.
 
-### 4.5 Container Networking
+### 4.5 Container Networking [AUTO-FIX]
 
 **Threat**: Container reaches internal LAN services via SSRF; Docker port binding exposes services to the network; container DNS bypasses encrypted DNS configuration
 **Layer**: Prevent
@@ -2853,7 +2879,7 @@ docker inspect $(docker compose ps -q n8n) --format '{{.HostConfig.NetworkMode}}
 
 ## 5. n8n Platform Security (Prevent)
 
-### 5.1 Binding and Authentication
+### 5.1 Binding and Authentication [AUTO-FIX]
 
 **Threat**: Unauthenticated n8n instance accessible from the network allows anyone to create workflows, extract credentials, and achieve remote code execution
 **Layer**: Prevent
@@ -2922,7 +2948,7 @@ curl -s http://localhost:5678/rest/login 2>/dev/null | head -1
 
 **Audit checks**: `CHK-N8N-BIND` (FAIL), `CHK-N8N-AUTH` (FAIL) → §5.1
 
-### 5.2 User Management
+### 5.2 User Management [MANUAL]
 
 **Threat**: Single admin account shared among operators creates accountability gaps; compromised account has full system access
 **Layer**: Prevent
@@ -2943,7 +2969,7 @@ The n8n owner account has full access to workflow creation, credential managemen
 
 - **No workflow-level isolation**: All users can see all workflows and credentials by default. n8n does not support per-workflow access control. If strict isolation is needed, run separate n8n instances.
 
-### 5.3 Security Environment Variables
+### 5.3 Security Environment Variables [AUTO-FIX]
 
 **Threat**: Default n8n configuration enables telemetry, allows Code nodes to read environment variables, and leaves the REST API accessible — each expanding attack surface
 **Layer**: Prevent
@@ -3010,7 +3036,7 @@ ps -p $(pgrep -f "n8n start") -o pid=,command= 2>/dev/null
 
 **Audit checks**: `CHK-N8N-ENV-BLOCK` (WARN), `CHK-N8N-ENV-DIAGNOSTICS` (WARN), `CHK-N8N-ENV-API` (WARN) → §5.3
 
-### 5.4 REST API Security
+### 5.4 REST API Security [AUDIT-ONLY]
 
 **Threat**: Attacker with API access creates malicious workflows for persistent code execution, extracts stored credentials, or modifies existing workflows
 **Layer**: Prevent
@@ -3049,7 +3075,7 @@ curl -s http://localhost:5678/api/v1/workflows -H "Accept: application/json" 2>/
 
 **Audit check**: `CHK-N8N-API` (WARN) → §5.4
 
-### 5.5 Webhook Security
+### 5.5 Webhook Security [AUDIT-ONLY]
 
 **Threat**: Unauthenticated webhook endpoints allow attackers to trigger workflows, inject malicious payloads, or abuse webhooks for denial of service
 **Layer**: Prevent
@@ -3115,7 +3141,7 @@ If webhooks are internet-facing, implement rate limiting via the reverse proxy (
 
 **Audit check**: `CHK-N8N-WEBHOOK` (WARN) → §5.5
 
-### 5.6 Execution Model and Node Isolation
+### 5.6 Execution Model and Node Isolation [AUTO-FIX]
 
 **Threat**: Scraped LinkedIn data containing shell metacharacters or prompt injection payloads reaches a Code or Execute Command node, achieving remote code execution inside n8n
 **Layer**: Prevent
@@ -3196,7 +3222,7 @@ docker compose exec n8n env 2>/dev/null | grep N8N_BLOCK_ENV_ACCESS_IN_NODE
 
 **Audit checks**: `CHK-N8N-NODES` (WARN), `CHK-N8N-ENV-BLOCK` (WARN) → §5.6
 
-### 5.7 Community Node Vetting
+### 5.7 Community Node Vetting [MANUAL]
 
 **Threat**: Malicious or compromised npm package executes arbitrary code within the n8n process, accessing all credentials, environment variables, and filesystem
 **Layer**: Prevent
@@ -3243,7 +3269,7 @@ npm install n8n-nodes-community-example
 - **Automatic updates**: Do not enable automatic npm updates for community nodes. Re-vet before each update.
 - **Credential access**: Community nodes can access n8n's credential storage. Only install nodes on instances handling sensitive credentials if they've been code-reviewed.
 
-### 5.8 Reverse Proxy
+### 5.8 Reverse Proxy [MANUAL]
 
 **Threat**: n8n exposed directly to the internet without TLS encryption, rate limiting, or access control
 **Layer**: Prevent
@@ -3329,7 +3355,7 @@ curl -I https://your-domain.com 2>/dev/null | head -5
 # Expected: HTTP/2 200 with valid TLS certificate
 ```
 
-### 5.9 Update and Migration Security
+### 5.9 Update and Migration Security [MANUAL]
 
 **Threat**: n8n version upgrade silently changes security defaults, resets environment variables, or introduces new code-execution-capable node types
 **Layer**: Prevent
@@ -3408,7 +3434,7 @@ npm install -g n8n@<previous-version>
 
 ## 6. Bare-Metal Path (Prevent) — Bare-Metal Only
 
-### 6.1 Dedicated Service Account
+### 6.1 Dedicated Service Account [AUTO-FIX]
 
 **Threat**: n8n running as the operator's admin account gives a compromised workflow full access to home directory, SSH keys, macOS Keychain, and the ability to install persistent backdoors
 **Layer**: Prevent
@@ -3511,7 +3537,7 @@ ps -eo user,pid,command | grep "[n]8n" 2>/dev/null
 
 **Audit check**: `CHK-SERVICE-ACCOUNT` (FAIL) → §6.1
 
-### 6.2 Keychain Integration
+### 6.2 Keychain Integration [MANUAL]
 
 **Threat**: n8n credentials stored in environment variables or plaintext files are visible via `ps aux`, `/proc`, or `docker inspect`; login Keychain auto-unlock exposes all credentials to any process running as the same user
 **Layer**: Prevent
@@ -3632,7 +3658,7 @@ sudo -u _n8n security show-keychain-info /opt/n8n/n8n.keychain-db 2>&1
 - **Credential reuse**: Use a unique password for each credential — not the macOS login, SSH key passphrase, or any other service password. Use Bitwarden CLI (free) for generating unique credentials.
 - **Keychain and Time Machine**: Time Machine backs up Keychain files. If Time Machine backups are accessible to other users or unencrypted, credentials are exposed. See §9.3 for backup encryption.
 
-### 6.3 launchd Execution
+### 6.3 launchd Execution [MANUAL]
 
 **Threat**: n8n running as a login item under the admin user inherits full admin privileges and stops when the user logs out; secrets passed as command-line arguments are visible in `ps aux` to all users
 **Layer**: Prevent
@@ -3787,7 +3813,7 @@ ps -p "$(pgrep -f 'n8n start')" -o args= 2>/dev/null
 - **`launchctl bootstrap` vs `load`**: On macOS 10.11+, Apple recommends `launchctl bootstrap system /path/to/plist`. Both work; `load` is more widely documented.
 - **Version differences**: Tahoe (macOS 26) enforces stricter background service restrictions — unsigned or ad-hoc signed launch daemons may trigger additional TCC prompts or Gatekeeper blocks on first load. Ensure the `start-n8n.sh` script is not quarantined (`xattr -d com.apple.quarantine /opt/n8n/start-n8n.sh`). Ventura (13) and Sonoma (14) are more permissive with LaunchDaemon loading but still require root ownership. On Tahoe, `launchctl bootstrap` is the preferred method over `launchctl load` (which Apple marks deprecated). All versions honor `KeepAlive` and `RunAtLoad` identically.
 
-### 6.4 Filesystem Permissions
+### 6.4 Filesystem Permissions [AUTO-FIX]
 
 **Threat**: Overly permissive file permissions allow other users or compromised processes to read n8n credentials, modify workflows, or tamper with the n8n binary
 **Layer**: Prevent
@@ -3902,7 +3928,7 @@ sudo mdutil -i off /opt/n8n
 
 ## 7. Data Security (Prevent)
 
-### 7.1 Credential Management
+### 7.1 Credential Management [AUDIT-ONLY]
 
 **Threat**: Credentials stored in plaintext files, environment variables, or command-line arguments are visible to any process with sufficient access — enabling credential theft without exploitation
 **Layer**: Prevent
@@ -3966,7 +3992,7 @@ ps -p "$(pgrep -f 'n8n start' 2>/dev/null)" -o args= 2>/dev/null
 
 **Audit checks**: `CHK-CRED-ENV-VISIBLE` (WARN) → §7.1
 
-### 7.2 Credential Lifecycle
+### 7.2 Credential Lifecycle [MANUAL]
 
 **Threat**: Stale credentials that are never rotated give attackers an unlimited window to exploit stolen credentials; missing revocation procedures delay incident response
 **Layer**: Prevent
@@ -4004,7 +4030,7 @@ Credentials that are never rotated give attackers an unlimited exploitation wind
 - **`N8N_ENCRYPTION_KEY` rotation**: This is the most critical rotation. You MUST re-encrypt the database before changing the key, or all stored credentials become permanently inaccessible. See §9.2 for the procedure.
 - **Credential inventory maintenance**: Keep the inventory (§7.1) updated whenever credentials are added, rotated, or removed. This is essential for incident response.
 
-### 7.3 Scraped Data Input Security
+### 7.3 Scraped Data Input Security [MANUAL]
 
 **Threat**: Scraped LinkedIn data containing shell metacharacters, prompt injection payloads, or malicious URLs reaches n8n code execution nodes, achieving remote code execution
 **Layer**: Prevent
@@ -4067,7 +4093,7 @@ ALL data entering n8n from Apify actors must be treated as adversarial. LinkedIn
 
 **Audit check**: `CHK-N8N-NODES` (WARN) → §5.6 (cross-reference — node exclusion check)
 
-### 7.4 PII Protection
+### 7.4 PII Protection [AUTO-FIX]
 
 **Threat**: Scraped LinkedIn data constitutes PII subject to GDPR, CCPA, and LinkedIn Terms of Service; uncontrolled retention, storage, and access expand breach impact and legal exposure
 **Layer**: Prevent
@@ -4147,7 +4173,7 @@ mdutil -s /opt/n8n 2>/dev/null  # Bare-metal
 
 **Audit check**: `CHK-SPOTLIGHT-EXCLUSIONS` (WARN) → §7.4
 
-### 7.5 SSRF Defense
+### 7.5 SSRF Defense [MANUAL]
 
 **Threat**: Attacker-controlled URLs in scraped data or webhook payloads direct n8n's HTTP Request node to internal services, enabling internal network reconnaissance and data exfiltration
 **Layer**: Prevent
@@ -4199,7 +4225,7 @@ docker compose exec n8n curl -s --connect-timeout 3 http://host.docker.internal:
 # Expected: connection refused or timeout
 ```
 
-### 7.6 Data Exfiltration Prevention
+### 7.6 Data Exfiltration Prevention [MANUAL]
 
 **Threat**: Attacker exfiltrates PII or credentials via "non-dangerous" n8n nodes that can send data externally — HTTP Request, Email, Slack, database nodes — without executing arbitrary code
 **Layer**: Prevent
@@ -4228,7 +4254,7 @@ An attacker who gains workflow modification access (via API, UI, or injection) c
 - **Workflow integrity monitoring** (§8.3): Detect unauthorized workflow modifications that add exfiltration nodes
 - **Scraped URL caution**: Never use scraped URLs in HTTP Request nodes without domain allowlisting — a crafted LinkedIn field like `http://attacker.com/collect?data=` leaks your IP and potentially other data
 
-### 7.7 Supply Chain Integrity
+### 7.7 Supply Chain Integrity [MANUAL]
 
 **Threat**: Compromised software packages — Docker images, Homebrew formulae, npm packages — execute malicious code during installation or at runtime
 **Layer**: Prevent
@@ -4292,7 +4318,7 @@ brew install aquasecurity/trivy/trivy
 trivy image n8nio/n8n
 ```
 
-### 7.8 Apify Actor Security
+### 7.8 Apify Actor Security [MANUAL]
 
 **Threat**: Malicious or compromised Apify actors modify scraped data to include injection payloads, or exfiltrate the operator's Apify API key
 **Layer**: Prevent
@@ -4335,7 +4361,7 @@ Apify does NOT support HMAC webhook signing. Instead:
 
 Scraped LinkedIn PII exists on Apify's servers as well as the Mac Mini. Configure Apify data retention to the minimum period and delete datasets after n8n retrieval.
 
-### 7.9 Secure Deletion
+### 7.9 Secure Deletion [MANUAL]
 
 **Threat**: Deleted PII persists on APFS/SSD storage due to copy-on-write semantics and TRIM behavior, remaining recoverable by an attacker with physical access
 **Layer**: Prevent
@@ -4391,7 +4417,7 @@ When PII is deleted from n8n's database, it may persist in Time Machine local sn
 - **Docker build cache**: `docker builder prune` clears build cache that may contain sensitive files from build context.
 - **Temp files**: n8n writes temp files to `/var/folders/` (bare-metal) or `/tmp` (containerized). These may contain PII from workflow executions. Containerized deployments use `tmpfs` mounts that are cleared on container restart.
 
-### 7.10 Clipboard Security
+### 7.10 Clipboard Security [AUDIT-ONLY]
 
 **Threat**: Credentials copied to the macOS clipboard are accessible to any process running as the same user, including compromised n8n Code nodes on bare-metal `[EDUCATIONAL]`
 **Layer**: Prevent
@@ -4420,7 +4446,7 @@ pbcopy < /dev/null
 
 **Audit check**: `CHK-CONFIG-PROFILES` (WARN) → §2.10 (cross-reference — configuration profile audit)
 
-### 7.11 Browser Data Security
+### 7.11 Browser Data Security [MANUAL]
 
 **Threat**: Chromium profile directory contains session cookies, browsing history, autofill data, and cached page content in unencrypted SQLite databases and files — accessible to any process running as the same user or to physical disk access without FileVault
 **Layer**: Prevent
@@ -4494,7 +4520,7 @@ tmutil addexclusion "${HOME}/Library/Caches/Chromium/"
 
 ## 8. Detection and Monitoring (Detect)
 
-### 8.1 IDS Tools
+### 8.1 IDS Tools [AUDIT-ONLY]
 
 **Threat**: Malware execution, unauthorized binary installation, and post-exploitation tooling go undetected without host-level intrusion detection
 **Layer**: Detect
@@ -4574,7 +4600,7 @@ freshclam --quiet 2>/dev/null; clamscan --version 2>/dev/null
 
 **Audit checks**: `CHK-SANTA` (WARN), `CHK-BLOCKBLOCK` (WARN), `CHK-LULU` (WARN), `CHK-CLAMAV` (WARN) → §8.1
 
-### 8.2 Launch Daemon and Persistence Auditing
+### 8.2 Launch Daemon and Persistence Auditing [AUDIT-ONLY]
 
 **Threat**: Attacker installs persistent backdoor via launch daemon/agent, cron job, login item, authorization plugin, shell profile modification, or configuration profile — surviving reboots and macOS updates
 **Layer**: Detect
@@ -4644,7 +4670,7 @@ KnockKnock (§8.1) provides a GUI-based persistence scan that complements the sc
 
 **Audit checks**: `CHK-PERSISTENCE-BASELINE` (WARN) → §8.2
 
-### 8.3 Workflow Integrity Monitoring
+### 8.3 Workflow Integrity Monitoring [AUDIT-ONLY]
 
 **Threat**: Attacker who gains n8n API or UI access creates a scheduled workflow with a Code node for persistent code execution — this persistence survives n8n restarts, container rebuilds, and backup/restore cycles
 **Layer**: Detect
@@ -4695,7 +4721,7 @@ Monitor for: new workflows created outside your working hours, workflows with Co
 
 **Audit check**: `CHK-WORKFLOW-BASELINE` (WARN) → §8.3
 
-### 8.4 macOS Logging
+### 8.4 macOS Logging [MANUAL]
 
 **Threat**: Security events (failed logins, firewall blocks, TCC changes, SSH attempts) go unnoticed between audit script runs, allowing attackers time to operate undetected
 **Layer**: Detect
@@ -4785,7 +4811,7 @@ sudo chmod 644 /opt/n8n/logs/security-events.log
 
 **Log review cadence**: Weekly for high-security deployments, monthly for standard.
 
-### 8.5 Credential Exposure Monitoring
+### 8.5 Credential Exposure Monitoring [AUDIT-ONLY]
 
 **Threat**: Credentials exposed in process listings, Docker inspect output, environment variables, or log files go undetected, extending the window of compromise
 **Layer**: Detect
@@ -4842,7 +4868,7 @@ Place a canary DNS hostname (from a canary token service) in a configuration fil
 
 **Audit check**: `CHK-CANARY` (WARN) → §8.5
 
-### 8.6 iCloud and Cloud Service Exposure
+### 8.6 iCloud and Cloud Service Exposure [AUDIT-ONLY]
 
 **Threat**: iCloud sync services silently upload Mac Mini data (Keychain, Desktop, Documents, photos) to Apple's servers and synced devices, expanding the attack surface beyond the physical Mac Mini
 **Layer**: Detect
@@ -4893,7 +4919,7 @@ brctl status 2>/dev/null
 
 **Audit checks**: `CHK-ICLOUD-KEYCHAIN` (WARN), `CHK-ICLOUD-DRIVE` (WARN) → §8.6
 
-### 8.7 Certificate Trust Monitoring
+### 8.7 Certificate Trust Monitoring [AUDIT-ONLY]
 
 **Threat**: Attacker installs a rogue root CA certificate in the System Keychain, enabling silent man-in-the-middle interception of ALL HTTPS traffic — Apify API calls, Docker registry pulls, Homebrew downloads, LinkedIn authentication
 **Layer**: Detect
@@ -4938,7 +4964,7 @@ security find-certificate -a -p /Library/Keychains/System.keychain 2>/dev/null |
 
 ## 9. Response and Recovery (Respond)
 
-### 9.1 Incident Response Runbook
+### 9.1 Incident Response Runbook [MANUAL]
 
 **Threat**: An active compromise or security breach goes undetected or is handled incorrectly, allowing the attacker to maintain access, exfiltrate data, or destroy evidence
 **Layer**: Respond
@@ -5155,7 +5181,7 @@ After recovery is complete and the system is back in production, conduct a revie
 
 > **Cross-reference**: Detection sources are documented in §8. The condensed, printable incident response checklist is in Appendix C.
 
-### 9.2 Credential Rotation Procedures
+### 9.2 Credential Rotation Procedures [MANUAL]
 
 **Threat**: During an active breach, delayed or incomplete credential rotation leaves the attacker with valid credentials to regain access even after the system is restored
 **Layer**: Respond
@@ -5365,7 +5391,7 @@ This leaves a 40-minute buffer within the 2-hour target for troubleshooting.
 
 > **Cross-reference**: Routine credential rotation schedules are covered in §7.2. The credential inventory template is in Appendix B.
 
-### 9.3 Backup and Recovery
+### 9.3 Backup and Recovery [AUDIT-ONLY]
 
 **Threat**: System failure, ransomware, or a compromised system requires rebuilding from scratch, but backups are missing, corrupted, unencrypted, or unrecoverable
 **Layer**: Respond
@@ -5579,7 +5605,7 @@ shasum -a 256 -c checksums.sha256
 **Audit check**: `CHK-BACKUP-CONFIGURED` (WARN) → §9.3
 **Audit check**: `CHK-BACKUP-ENCRYPTED` (WARN) → §9.3
 
-### 9.4 Restore Testing
+### 9.4 Restore Testing [MANUAL]
 
 **Threat**: Backups exist but cannot actually be restored — corrupted archives, missing encryption keys, incompatible formats, or untested procedures give false confidence
 **Layer**: Respond
@@ -5687,7 +5713,7 @@ If the backup encryption key (GPG passphrase or OpenSSL password) is stored only
 
 > **Target**: The complete restore procedure should take under 30 minutes (SC-016), excluding credential rotation time.
 
-### 9.5 Physical Security
+### 9.5 Physical Security [AUDIT-ONLY]
 
 **Threat**: Physical access to the Mac Mini bypasses most software security controls — an attacker with physical access can boot from external media, install hardware keyloggers, use DMA attacks via Thunderbolt, or simply steal the device
 **Layer**: Respond / Prevent
@@ -5823,7 +5849,7 @@ If the Mac Mini is stolen, execute these steps immediately:
 
 ## 10. Operational Maintenance
 
-### 10.1 Automated Audit Scheduling
+### 10.1 Automated Audit Scheduling [AUTO-FIX]
 
 **Threat**: Security controls degrade silently over time — macOS updates reset settings, configuration drift accumulates, and new vulnerabilities appear — but without scheduled auditing, the operator remains unaware until an incident occurs
 **Layer**: Maintain
@@ -5954,7 +5980,7 @@ After intentional script updates (e.g., pulling a new version from the repositor
 
 **Audit check**: `CHK-SCRIPT-INTEGRITY` (WARN) → §10.1
 
-### 10.2 Notification Setup
+### 10.2 Notification Setup [AUTO-FIX]
 
 **Threat**: Scheduled audits detect security regressions, but the operator never sees the results because there is no notification mechanism — failures go unaddressed until a breach occurs
 **Layer**: Maintain
@@ -6189,7 +6215,7 @@ done
 
 **Audit check**: `CHK-NOTIFICATION-CONFIG` (WARN) → §10.2
 
-### 10.3 Tool Maintenance
+### 10.3 Tool Maintenance [AUTO-FIX]
 
 **Threat**: Security tools with outdated signatures, stale rules, or unpatched vulnerabilities provide degraded or false protection — ClamAV with week-old signatures misses new malware, outdated Santa rules allow unauthorized binaries, and unpatched n8n versions contain known exploits
 **Layer**: Maintain
@@ -6341,7 +6367,7 @@ If any items show "RESET", remediate using the corresponding guide section and t
 | After security event | Full audit + review §8 detection baselines |
 | Monthly (manual) | Review audit log trends, check for new tool versions |
 
-### 10.4 Log Retention and Rotation
+### 10.4 Log Retention and Rotation [AUTO-FIX]
 
 **Threat**: Audit logs grow unbounded and consume disk space, or are deleted too quickly and unavailable for incident investigation
 **Layer**: Maintain
@@ -6397,7 +6423,7 @@ These checks appear in the audit output alongside security checks, ensuring the 
 
 **Audit check**: `CHK-LOG-DIR` (FAIL) → §10.4
 
-### 10.5 Troubleshooting Common Failures
+### 10.5 Troubleshooting Common Failures [MANUAL]
 
 **Purpose**: Resolve operational failures caused by hardening controls without disabling the security control itself (SC-030). Each entry provides symptom, cause, and resolution.
 
@@ -6544,7 +6570,7 @@ spctl --status
 # 3. If the control was actually reset, re-apply it per the guide section referenced in the FAIL message
 ```
 
-### 10.6 Hardening Validation Tests
+### 10.6 Hardening Validation Tests [MANUAL]
 
 **Purpose**: Safe, non-destructive test procedures that verify hardening controls actually prevent attacks — not just that settings are configured correctly (SC-036). The audit script checks configuration; these tests verify enforcement.
 **Source**: [NIST SP 800-115](https://csrc.nist.gov/publications/detail/sp/800-115/final) (Technical Guide to Information Security Testing and Assessment), [CIS Controls v8 Control 18](https://www.cisecurity.org/controls/penetration-testing) (Penetration Testing)

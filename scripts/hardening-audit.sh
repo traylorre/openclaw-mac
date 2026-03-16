@@ -1056,7 +1056,7 @@ check_ipv6() {
 }
 
 check_listeners_baseline() {
-    local id="CHK-LISTENERS-BASELINE"
+    local id="CHK-LISTENER-BASELINE"
     # Check if any service is listening on 0.0.0.0 that shouldn't be
     local bad_listeners
     bad_listeners=$(sudo lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null \

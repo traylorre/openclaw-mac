@@ -2,78 +2,88 @@
 
 Central registry of all `CHK-*` identifiers used in `scripts/hardening-audit.sh`.
 
-| ID | Severity | Deployment | Guide Section | Owning Task |
-|----|----------|------------|---------------|-------------|
-| CHK-SIP | FAIL | both | §2.3 | T003 |
-| CHK-FILEVAULT | FAIL | both | §2.1 | T003 |
-| CHK-FIREWALL | FAIL | both | §2.2 | T003 |
-| CHK-STEALTH | WARN | both | §2.2 | T003 |
-| CHK-GATEKEEPER | FAIL | both | §2.4 | T014 |
-| CHK-XPROTECT-FRESH | WARN | both | §2.4 | T014 |
-| CHK-AUTO-UPDATES | WARN | both | §2.5 | T014 |
-| CHK-NTP | WARN | both | §2.5 | T014 |
-| CHK-AUTO-LOGIN | FAIL | both | §2.6 | T014 |
-| CHK-SCREEN-LOCK | WARN | both | §2.6 | T014 |
-| CHK-GUEST | FAIL | both | §2.7 | T014 |
-| CHK-SHARING-FILE | FAIL | both | §2.7 | T014 |
-| CHK-SHARING-REMOTE-EVENTS | FAIL | both | §2.7 | T014 |
-| CHK-SHARING-INTERNET | FAIL | both | §2.7 | T014 |
-| CHK-SHARING-SCREEN | WARN | both | §2.7 | T014 |
-| CHK-AIRDROP | WARN | both | §2.7 | T014 |
-| CHK-STARTUP-SECURITY | WARN | both | §2.9 | T014 |
-| CHK-TCC | WARN | both | §2.10 | T014 |
-| CHK-CORE-DUMPS | WARN | both | §2.10 | T014 |
-| CHK-PRIVACY | WARN | both | §2.10 | T014 |
-| CHK-PROFILES | WARN | both | §2.10 | T014 |
-| CHK-SPOTLIGHT | WARN | both | §2.10 | T014 |
-| CHK-SSH-KEY-ONLY | FAIL | both | §3.1 | T019 |
-| CHK-SSH-ROOT | FAIL | both | §3.1 | T019 |
-| CHK-DNS-ENCRYPTED | WARN | both | §3.2 | T019 |
-| CHK-OUTBOUND-FILTER | WARN | both | §3.3 | T019 |
-| CHK-BLUETOOTH | WARN | both | §3.4 | T019 |
-| CHK-IPV6 | WARN | both | §3.5 | T019 |
-| CHK-LISTENERS-BASELINE | WARN | both | §3.6 | T019 |
-| CHK-CONTAINER-ROOT | FAIL | containerized | §4.3 | T024 |
-| CHK-CONTAINER-READONLY | WARN | containerized | §4.3 | T024 |
-| CHK-CONTAINER-CAPS | WARN | containerized | §4.3 | T024 |
-| CHK-CONTAINER-PRIVILEGED | FAIL | containerized | §4.3 | T024 |
-| CHK-DOCKER-SOCKET | FAIL | containerized | §4.3 | T024 |
-| CHK-SECRETS-ENV | WARN | containerized | §4.3 | T024 |
-| CHK-COLIMA-MOUNTS | WARN | containerized | §4.3 | T024 |
-| CHK-CONTAINER-NETWORK | FAIL | containerized | §4.5 | T073 |
-| CHK-CONTAINER-RESOURCES | WARN | containerized | §4.3 | T073 |
-| CHK-N8N-BIND | FAIL | both | §5.1 | T029 |
-| CHK-N8N-AUTH | FAIL | both | §5.1 | T029 |
-| CHK-N8N-API | WARN | both | §5.4 | T029 |
-| CHK-N8N-ENV-BLOCK | WARN | both | §5.3 | T029 |
-| CHK-N8N-ENV-DIAGNOSTICS | WARN | both | §5.3 | T029 |
-| CHK-N8N-ENV-API | WARN | both | §5.3 | T029 |
-| CHK-N8N-NODES | WARN | both | §5.6 | T029 |
-| CHK-N8N-WEBHOOK | WARN | both | §5.5 | T029 |
-| CHK-SERVICE-ACCOUNT | FAIL | bare-metal | §6.1 | T032 |
-| CHK-SERVICE-HOME-PERMS | FAIL | bare-metal | §6.4 | T032 |
-| CHK-SERVICE-DATA-PERMS | FAIL | bare-metal | §6.4 | T032 |
-| CHK-CRED-ENV-VISIBLE | WARN | both | §7.1 | T038 |
-| CHK-DOCKER-INSPECT-SECRETS | WARN | containerized | §7.1 | T038 |
-| CHK-SPOTLIGHT-EXCLUSIONS | WARN | both | §7.4 | T038 |
-| CHK-CONFIG-PROFILES | WARN | both | §7.10 | T038 |
-| CHK-SANTA | WARN | both | §8.1 | T045 |
-| CHK-BLOCKBLOCK | WARN | both | §8.1 | T045 |
-| CHK-LULU | WARN | both | §8.1 | T045 |
-| CHK-CLAMAV | WARN | both | §8.1 | T045 |
-| CHK-CLAMAV-SIGS | WARN | both | §8.1 | T045 |
-| CHK-PERSISTENCE-BASELINE | WARN | both | §8.2 | T045 |
-| CHK-WORKFLOW-BASELINE | WARN | both | §8.3 | T045 |
-| CHK-LISTENER-BASELINE | WARN | both | §8.2 | T045 |
-| CHK-CERT-BASELINE | WARN | both | §8.7 | T045 |
-| CHK-ICLOUD-KEYCHAIN | WARN | both | §8.6 | T045 |
-| CHK-ICLOUD-DRIVE | WARN | both | §8.6 | T045 |
-| CHK-CANARY | WARN | both | §8.5 | T045 |
-| CHK-BACKUP-CONFIGURED | WARN | both | §9.3 | T050 |
-| CHK-BACKUP-ENCRYPTED | WARN | both | §9.3 | T050 |
-| CHK-FIND-MY-MAC | WARN | both | §9.5 | T050 |
-| CHK-USB | WARN | both | §9.5 | T050 |
-| CHK-LAUNCHD-AUDIT-JOB | FAIL | both | §10.1 | T058 |
-| CHK-NOTIFICATION-CONFIG | WARN | both | §10.2 | T058 |
-| CHK-LOG-DIR | FAIL | both | §10.4 | T058 |
-| CHK-CLAMAV-FRESHNESS | WARN | both | §10.3 | T058 |
+| ID | Severity | Deployment | Guide Section | Auto-Fix | Owning Task |
+|----|----------|------------|---------------|----------|-------------|
+| CHK-SIP | FAIL | both | §2.3 | no | T003 |
+| CHK-FILEVAULT | FAIL | both | §2.1 | yes | T003 |
+| CHK-FIREWALL | FAIL | both | §2.2 | yes | T003 |
+| CHK-STEALTH | WARN | both | §2.2 | yes | T003 |
+| CHK-GATEKEEPER | FAIL | both | §2.4 | yes | T014 |
+| CHK-XPROTECT-FRESH | WARN | both | §2.4 | no | T014 |
+| CHK-AUTO-UPDATES | WARN | both | §2.5 | yes | T014 |
+| CHK-NTP | WARN | both | §2.5 | yes | T014 |
+| CHK-AUTO-LOGIN | FAIL | both | §2.6 | yes | T014 |
+| CHK-SCREEN-LOCK | WARN | both | §2.6 | yes | T014 |
+| CHK-PASSWORD-POLICY | WARN | both | §2.6 | no | T066 |
+| CHK-GUEST | FAIL | both | §2.7 | yes | T014 |
+| CHK-SHARING-FILE | FAIL | both | §2.7 | yes | T014 |
+| CHK-SHARING-REMOTE-EVENTS | FAIL | both | §2.7 | yes | T014 |
+| CHK-SHARING-INTERNET | FAIL | both | §2.7 | yes | T014 |
+| CHK-SHARING-SCREEN | WARN | both | §2.7 | yes | T014 |
+| CHK-AIRDROP | WARN | both | §2.7 | yes | T014 |
+| CHK-STARTUP-SECURITY | WARN | both | §2.9 | no | T014 |
+| CHK-TCC | WARN | both | §2.10 | no | T014 |
+| CHK-CORE-DUMPS | WARN | both | §2.10 | yes | T014 |
+| CHK-PRIVACY | WARN | both | §2.10 | yes | T014 |
+| CHK-PROFILES | WARN | both | §2.10 | no | T014 |
+| CHK-SPOTLIGHT | WARN | both | §2.10 | yes | T014 |
+| CHK-CHROMIUM-POLICY | WARN | both | §2.11 | yes | T066 |
+| CHK-CHROMIUM-AUTOFILL | WARN | both | §2.11 | yes | T066 |
+| CHK-CHROMIUM-EXTENSIONS | WARN | both | §2.11 | yes | T066 |
+| CHK-CHROMIUM-CDP | WARN | both | §2.11 | no | T066 |
+| CHK-CHROMIUM-TCC | WARN | both | §2.11 | yes | T066 |
+| CHK-CHROMIUM-VERSION | WARN | both | §2.11 | no | T066 |
+| CHK-CHROMIUM-DANGERFLAGS | WARN | both | §2.11 | no | T066 |
+| CHK-CHROMIUM-URLBLOCK | WARN | both | §2.11 | yes | T066 |
+| CHK-SSH-KEY-ONLY | FAIL | both | §3.1 | yes | T019 |
+| CHK-SSH-ROOT | FAIL | both | §3.1 | yes | T019 |
+| CHK-DNS-ENCRYPTED | WARN | both | §3.2 | no | T019 |
+| CHK-OUTBOUND-FILTER | WARN | both | §3.3 | no | T019 |
+| CHK-BLUETOOTH | WARN | both | §3.4 | yes | T019 |
+| CHK-IPV6 | WARN | both | §3.5 | no | T019 |
+| CHK-LISTENER-BASELINE | WARN | both | §3.6 | no | T019 |
+| CHK-CONTAINER-ROOT | FAIL | containerized | §4.3 | yes | T024 |
+| CHK-CONTAINER-READONLY | WARN | containerized | §4.3 | yes | T024 |
+| CHK-CONTAINER-CAPS | WARN | containerized | §4.3 | yes | T024 |
+| CHK-CONTAINER-PRIVILEGED | FAIL | containerized | §4.3 | yes | T024 |
+| CHK-DOCKER-SOCKET | FAIL | containerized | §4.3 | yes | T024 |
+| CHK-SECRETS-ENV | WARN | containerized | §4.3 | no | T024 |
+| CHK-COLIMA-MOUNTS | WARN | containerized | §4.3 | no | T024 |
+| CHK-CONTAINER-NETWORK | FAIL | containerized | §4.5 | yes | T073 |
+| CHK-CONTAINER-RESOURCES | WARN | containerized | §4.3 | no | T073 |
+| CHK-N8N-BIND | FAIL | both | §5.1 | yes | T029 |
+| CHK-N8N-AUTH | FAIL | both | §5.1 | yes | T029 |
+| CHK-N8N-API | WARN | both | §5.4 | no | T029 |
+| CHK-N8N-ENV-BLOCK | WARN | both | §5.3 | yes | T029 |
+| CHK-N8N-ENV-DIAGNOSTICS | WARN | both | §5.3 | yes | T029 |
+| CHK-N8N-ENV-API | WARN | both | §5.3 | yes | T029 |
+| CHK-N8N-NODES | WARN | both | §5.6 | yes | T029 |
+| CHK-N8N-WEBHOOK | WARN | both | §5.5 | no | T029 |
+| CHK-SERVICE-ACCOUNT | FAIL | bare-metal | §6.1 | yes | T032 |
+| CHK-SERVICE-HOME-PERMS | FAIL | bare-metal | §6.4 | yes | T032 |
+| CHK-SERVICE-DATA-PERMS | FAIL | bare-metal | §6.4 | yes | T032 |
+| CHK-CRED-ENV-VISIBLE | WARN | both | §7.1 | no | T038 |
+| CHK-DOCKER-INSPECT-SECRETS | WARN | containerized | §7.1 | no | T038 |
+| CHK-SPOTLIGHT-EXCLUSIONS | WARN | both | §7.4 | yes | T038 |
+| CHK-CONFIG-PROFILES | WARN | both | §7.10 | no | T038 |
+| CHK-SANTA | WARN | both | §8.1 | no | T045 |
+| CHK-BLOCKBLOCK | WARN | both | §8.1 | no | T045 |
+| CHK-LULU | WARN | both | §8.1 | no | T045 |
+| CHK-CLAMAV | WARN | both | §8.1 | no | T045 |
+| CHK-CLAMAV-SIGS | WARN | both | §8.1 | no | T045 |
+| CHK-PERSISTENCE-BASELINE | WARN | both | §8.2 | no | T045 |
+| CHK-WORKFLOW-BASELINE | WARN | both | §8.3 | no | T045 |
+| CHK-LISTENER-BASELINE | WARN | both | §8.2 | no | T045 |
+| CHK-CERT-BASELINE | WARN | both | §8.7 | no | T045 |
+| CHK-ICLOUD-KEYCHAIN | WARN | both | §8.6 | no | T045 |
+| CHK-ICLOUD-DRIVE | WARN | both | §8.6 | no | T045 |
+| CHK-CANARY | WARN | both | §8.5 | no | T045 |
+| CHK-BACKUP-CONFIGURED | WARN | both | §9.3 | no | T050 |
+| CHK-BACKUP-ENCRYPTED | WARN | both | §9.3 | no | T050 |
+| CHK-FIND-MY-MAC | WARN | both | §9.5 | no | T050 |
+| CHK-USB | WARN | both | §9.5 | no | T050 |
+| CHK-LAUNCHD-AUDIT-JOB | FAIL | both | §10.1 | yes | T058 |
+| CHK-NOTIFICATION-CONFIG | WARN | both | §10.2 | yes | T058 |
+| CHK-LOG-DIR | FAIL | both | §10.4 | yes | T058 |
+| CHK-CLAMAV-FRESHNESS | WARN | both | §10.3 | yes | T058 |
+| CHK-SCRIPT-INTEGRITY | WARN | both | §10.1 | no | T066 |
