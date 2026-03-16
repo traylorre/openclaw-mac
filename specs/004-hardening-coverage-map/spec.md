@@ -28,9 +28,9 @@ summary match the actual annotations.
 **Acceptance Scenarios**:
 
 1. **Given** HARDENING.md is opened, **When** the reader scrolls past
-   the preamble, **Then** they see a coverage summary block showing
-   total sections, automated count, auto-fix count, manual count, and
-   a percentage.
+   the Table of Contents, **Then** they see a coverage summary block
+   immediately — before the preamble — showing total sections,
+   automated count, auto-fix count, manual count, and a percentage.
 2. **Given** any subsection from §2.1 through §10.6, **When** the
    reader views the heading, **Then** it includes one of these inline
    badges: `[AUTO-FIX]`, `[AUDIT-ONLY]`, or `[MANUAL]`.
@@ -155,9 +155,10 @@ and `hardening-fix.sh`.
 ### Functional Requirements
 
 - **FR-001**: HARDENING.md MUST include a coverage summary block
-  after the preamble showing: total actionable sections, sections
-  with automated checks, sections with auto-fix, manual-only
-  sections, and an overall automation percentage.
+  immediately after the Table of Contents (before the Preamble)
+  showing: total actionable sections, sections with automated
+  checks, sections with auto-fix, manual-only sections, and an
+  overall automation percentage.
 - **FR-002**: The coverage summary MUST include per-section
   breakdowns for each major guide section (§2 through §10).
 - **FR-003**: Every actionable subsection heading from §2.1 through
@@ -251,6 +252,12 @@ feature. Each warrants its own feature branch if pursued.
   CHK-CHROMIUM-EXTENSIONS, CHK-CHROMIUM-CDP, CHK-CHROMIUM-TCC,
   CHK-CHROMIUM-VERSION, CHK-CHROMIUM-DANGERFLAGS,
   CHK-CHROMIUM-URLBLOCK, CHK-PASSWORD-POLICY, CHK-SCRIPT-INTEGRITY.
+
+## Clarifications
+
+### Session 2026-03-16
+
+- Q: Where should the coverage summary be placed in HARDENING.md? → A: Immediately after the Table of Contents, before the Preamble (maximum visibility for stakeholders reviewing coverage).
 
 ## Out of Scope
 
