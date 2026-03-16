@@ -25,10 +25,10 @@
 
 **Purpose**: Fix naming inconsistency and sync the registry before any badges can be assigned. These tasks MUST complete before badge work begins because badge assignment depends on accurate CHK-* data.
 
-- [ ] T001 Rename `CHK-LISTENERS-BASELINE` to `CHK-LISTENER-BASELINE` in `scripts/hardening-audit.sh` (FR-013)
-- [ ] T002 [P] Add `CHK-PASSWORD-POLICY` entry to `scripts/CHK-REGISTRY.md` with severity WARN, deployment both, guide section §2.6, auto-fix no (FR-014)
-- [ ] T003 [P] Add `CHK-SCRIPT-INTEGRITY` entry to `scripts/CHK-REGISTRY.md` with severity WARN, deployment both, guide section §10.1, auto-fix no (FR-014)
-- [ ] T004 Add `Auto-Fix` column to all existing entries in `scripts/CHK-REGISTRY.md` by cross-referencing `FIX_REGISTRY` in `scripts/hardening-fix.sh` (FR-015)
+- [x] T001 Rename `CHK-LISTENERS-BASELINE` to `CHK-LISTENER-BASELINE` in `scripts/hardening-audit.sh` (FR-013)
+- [x] T002 [P] Add `CHK-PASSWORD-POLICY` entry to `scripts/CHK-REGISTRY.md` with severity WARN, deployment both, guide section §2.6, auto-fix no (FR-014)
+- [x] T003 [P] Add `CHK-SCRIPT-INTEGRITY` entry to `scripts/CHK-REGISTRY.md` with severity WARN, deployment both, guide section §10.1, auto-fix no (FR-014)
+- [x] T004 Add `Auto-Fix` column to all existing entries in `scripts/CHK-REGISTRY.md` by cross-referencing `FIX_REGISTRY` in `scripts/hardening-fix.sh` (FR-015)
 
 **Checkpoint**: Registry is complete (zero omissions), naming is consistent, Auto-Fix column present. Validates SC-003.
 
@@ -42,18 +42,18 @@
 
 ### Implementation for User Story 1
 
-- [ ] T005 [US1] Add coverage summary table immediately after Table of Contents in `docs/HARDENING.md` with per-section breakdowns for §2–§10, aggregate totals, and links to `scripts/` and `GETTING-STARTED.md` (FR-001, FR-002, FR-008, FR-010)
-- [ ] T006 [US1] Add inline badges to all §2 OS Foundation subsection headings (§2.1–§2.11) in `docs/HARDENING.md` using badge resolution rules from data-model.md (FR-003, FR-009, FR-012)
-- [ ] T007 [P] [US1] Add inline badges to all §3 Network Security subsection headings (§3.1–§3.6) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T008 [P] [US1] Add inline badges to all §4 Container Isolation subsection headings (§4.1–§4.5) in `docs/HARDENING.md` (FR-003, FR-009, FR-012)
-- [ ] T009 [P] [US1] Add inline badges to all §5 n8n Platform Security subsection headings (§5.1–§5.9) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T010 [P] [US1] Add inline badges to all §6 Bare-Metal Path subsection headings (§6.1–§6.4) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T011 [P] [US1] Add inline badges to all §7 Data Security subsection headings (§7.1–§7.11) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T012 [P] [US1] Add inline badges to all §8 Detection and Monitoring subsection headings (§8.1–§8.7) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T013 [P] [US1] Add inline badges to all §9 Response and Recovery subsection headings (§9.1–§9.5) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T014 [P] [US1] Add inline badges to all §10 Operational Maintenance subsection headings (§10.1–§10.6) in `docs/HARDENING.md` (FR-003, FR-009)
-- [ ] T015 [US1] Verify §1 Threat Model, §11 Audit Script Reference, and Appendices A–E have NO badges in `docs/HARDENING.md` (FR-011)
-- [ ] T016 [US1] Verify coverage summary counts match actual badge counts by grepping `docs/HARDENING.md` for each badge type and comparing to summary table (SC-002)
+- [x] T005 [US1] Add coverage summary table immediately after Table of Contents in `docs/HARDENING.md` with per-section breakdowns for §2–§10, aggregate totals, and links to `scripts/` and `GETTING-STARTED.md` (FR-001, FR-002, FR-008, FR-010)
+- [x] T006 [US1] Add inline badges to all §2 OS Foundation subsection headings (§2.1–§2.11) in `docs/HARDENING.md` using badge resolution rules from data-model.md (FR-003, FR-009, FR-012)
+- [x] T007 [P] [US1] Add inline badges to all §3 Network Security subsection headings (§3.1–§3.6) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T008 [P] [US1] Add inline badges to all §4 Container Isolation subsection headings (§4.1–§4.5) in `docs/HARDENING.md` (FR-003, FR-009, FR-012)
+- [x] T009 [P] [US1] Add inline badges to all §5 n8n Platform Security subsection headings (§5.1–§5.9) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T010 [P] [US1] Add inline badges to all §6 Bare-Metal Path subsection headings (§6.1–§6.4) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T011 [P] [US1] Add inline badges to all §7 Data Security subsection headings (§7.1–§7.11) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T012 [P] [US1] Add inline badges to all §8 Detection and Monitoring subsection headings (§8.1–§8.7) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T013 [P] [US1] Add inline badges to all §9 Response and Recovery subsection headings (§9.1–§9.5) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T014 [P] [US1] Add inline badges to all §10 Operational Maintenance subsection headings (§10.1–§10.6) in `docs/HARDENING.md` (FR-003, FR-009)
+- [x] T015 [US1] Verify §1 Threat Model, §11 Audit Script Reference, and Appendices A–E have NO badges in `docs/HARDENING.md` (FR-011)
+- [x] T016 [US1] Verify coverage summary counts match actual badge counts by grepping `docs/HARDENING.md` for each badge type and comparing to summary table (SC-002)
 
 **Checkpoint**: HARDENING.md has a coverage summary and all 58 subsections are badged. Validates SC-001, SC-002, SC-004, SC-005, SC-006.
 
@@ -67,7 +67,7 @@
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Verify registry completeness: extract all `local id="CHK-` from `scripts/hardening-audit.sh`, compare against `scripts/CHK-REGISTRY.md`, and confirm zero omissions (SC-003)
+- [x] T017 [US2] Verify registry completeness: extract all `local id="CHK-` from `scripts/hardening-audit.sh`, compare against `scripts/CHK-REGISTRY.md`, and confirm zero omissions (SC-003)
 
 **Checkpoint**: Registry is 100% synced with audit script. This was substantially completed in Phase 2 (T002–T004); T017 is the verification step.
 
@@ -81,7 +81,7 @@
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] Add three badge definitions (`[AUTO-FIX]`, `[AUDIT-ONLY]`, `[MANUAL]`) to the Notation Conventions table in `docs/HARDENING.md` (FR-004)
+- [x] T018 [US3] Add three badge definitions (`[AUTO-FIX]`, `[AUDIT-ONLY]`, `[MANUAL]`) to the Notation Conventions table in `docs/HARDENING.md` (FR-004)
 
 **Checkpoint**: Any reader encountering a badge can look up its meaning in the Notation Conventions table.
 
@@ -122,7 +122,7 @@
 
 - [ ] T021 Run markdownlint on `docs/HARDENING.md` and fix any violations introduced by badges or coverage summary
 - [ ] T022 [P] Run markdownlint on `scripts/CHK-REGISTRY.md` and fix any violations
-- [ ] T023 Verify `scripts/hardening-audit.sh` passes `bash -n` syntax check after the identifier rename (T001)
+- [x] T023 Verify `scripts/hardening-audit.sh` passes `bash -n` syntax check after the identifier rename (T001)
 - [ ] T024 Commit all changes and create PR with summary of coverage statistics
 
 ---
