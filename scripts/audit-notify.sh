@@ -92,11 +92,13 @@ load_config() {
         return
     fi
 
-    # Validate permissions (should be 600)
+    # Validate permissions (must be 600 — config is sourced as shell code)
     local perms
     perms=$(stat -f '%Lp' "$CONF_FILE" 2>/dev/null || stat -c '%a' "$CONF_FILE" 2>/dev/null || echo "")
     if [[ -n "$perms" && "$perms" != "600" ]]; then
-        echo "Warning: ${CONF_FILE} has permissions ${perms} (expected 600)." >&2
+        echo "Error: ${CONF_FILE} has permissions ${perms} (must be 600). Refusing to source." >&2
+        echo "Fix: sudo chmod 600 ${CONF_FILE}" >&2
+        exit 2
     fi
 
     # Source config (key=value pairs)
@@ -206,8 +208,12 @@ send_email() {
 send_osascript() {
     local message="$1"
 
+    # Escape backslashes and double quotes for AppleScript string interpolation
+    local escaped_message="${message//\\/\\\\}"
+    escaped_message="${escaped_message//\"/\\\"}"
+
     local rc=0
-    osascript -e "display notification \"${message}\" with title \"OpenClaw Security Audit\" subtitle \"Action Required\"" 2>/dev/null || rc=$?
+    osascript -e "display notification \"${escaped_message}\" with title \"OpenClaw Security Audit\" subtitle \"Action Required\"" 2>/dev/null || rc=$?
 
     if [[ $rc -eq 0 ]]; then
         log_notify "OK: osascript notification sent"
