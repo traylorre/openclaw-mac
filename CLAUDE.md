@@ -3,6 +3,8 @@
 Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
+- Markdown (documentation), Bash 5.x (one identifier rename) + None (manual markdown edits) (004-hardening-coverage-map)
+- N/A (filesystem, git-tracked markdown files) (004-hardening-coverage-map)
 
 - Bash 5.x (audit script, launchd plists, helper scripts); Markdown (guide prose) + shellcheck (static analysis), jq (JSON audit output), macOS CLI tools (`defaults`, `csrutil`, `fdesetup`, `socketfilterfw`, `security`, `tmutil`, `launchctl`, `pfctl`), Docker CLI, Colima (001-hardening-guide-extension)
 - N/A (documentation + scripts, no application database) (001-hardening-guide-extension)
@@ -29,12 +31,12 @@ tests/
 Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
+- 004-hardening-coverage-map: Added Markdown (documentation), Bash 5.x (one identifier rename) + None (manual markdown edits)
 
 - 001-hardening-guide-extension: Added Bash 5.x (audit script, launchd plists, helper scripts); Markdown (guide prose) + shellcheck (static analysis), jq (JSON audit output), macOS CLI tools (`defaults`, `csrutil`, `fdesetup`, `socketfilterfw`, `security`, `tmutil`, `launchctl`, `pfctl`), Docker CLI, Colima
 
 - 002-context-auto-rotation: Added Bash 5.x (POSIX-compatible subset for portability) + jq (JSON parsing), git (branch detection), tmux (optional automation)
 
-- 003-compaction-recovery: Added Bash 5.x (POSIX-compatible subset for portability) + jq (JSON parsing), git (file reverts), tmux (optional automation)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
