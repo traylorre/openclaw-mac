@@ -172,11 +172,16 @@ run_pipeline() {
         printf "${CYAN}[2/3]${NC} Running auto-fix (SAFE checks only)...\n"
         if [[ -x "$FIX_SCRIPT" ]]; then
             local fix_json="${LOG_DIR}/fix-${timestamp}.json"
-            "$FIX_SCRIPT" --auto --json --audit-file "$json_file" > "$fix_json" 2>&1 || true
+            if ! "$FIX_SCRIPT" --auto --json --audit-file "$json_file" > "$fix_json" 2>&1; then
+                printf "  ${RED}WARN${NC}  Fix script exited with errors\n"
+                pipeline_errors=$((pipeline_errors + 1))
+            fi
 
             # Re-audit after fixes (single run)
             printf "  Re-auditing after fixes...\n"
-            "$AUDIT_SCRIPT" --json > "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>&1 || true
+            if ! "$AUDIT_SCRIPT" --json > "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>&1; then
+                printf "  ${RED}WARN${NC}  Post-fix re-audit exited with errors\n"
+            fi
             if [[ -f "${LOG_DIR}/audit-${timestamp}-post-fix.json" ]] && jq empty "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>/dev/null; then
                 {
                     echo "OpenClaw Hardening Audit (post-fix) — $(jq -r '.timestamp // "unknown"' "${LOG_DIR}/audit-${timestamp}-post-fix.json")"
@@ -197,15 +202,18 @@ run_pipeline() {
     # Step 3: Notify
     printf "${CYAN}[3/3]${NC} Sending notifications...\n"
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
-        "$NOTIFY_SCRIPT" --log-dir "$LOG_DIR" 2>&1 || true
+        if ! "$NOTIFY_SCRIPT" --log-dir "$LOG_DIR" 2>&1; then
+            printf "  ${RED}WARN${NC}  Notify script exited with errors\n"
+            pipeline_errors=$((pipeline_errors + 1))
+        fi
     else
         printf "  ${YELLOW}SKIP${NC}  Notify script not found: %s\n" "$NOTIFY_SCRIPT"
     fi
 
-    # Step 5: Rotate old logs
+    # Step 4: Rotate old logs
     rotate_logs
 
-    # Step 6: Write health check
+    # Step 5: Write health check
     local audit_exit=0
     if [[ -f "$json_file" ]]; then
         local fails

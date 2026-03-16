@@ -49,6 +49,17 @@ NO_COLOR=false
 # --- JSON accumulator ---
 JSON_RESULTS="[]"
 
+# --- JSON string escaper ---
+# Escapes characters that would break JSON string values
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
 # --- Paths ---
 AUDIT_LOG_DIR="/opt/n8n/logs/audit"
 AUDIT_SCRIPT=""
@@ -330,14 +341,11 @@ report_fix() {
     # JSON accumulation
     if $JSON_OUTPUT; then
         local json_entry
-        local escaped_desc
-        escaped_desc=$(printf '%s' "$description" | sed 's/"/\\"/g')
-        local escaped_detail
-        escaped_detail=$(printf '%s' "$detail" | sed 's/"/\\"/g')
         json_entry=$(printf '{"id":"%s","classification":"%s","status":"%s","description":"%s"' \
-            "$id" "$classification" "$status" "$escaped_desc")
+            "$(json_escape "$id")" "$(json_escape "$classification")" \
+            "$(json_escape "$status")" "$(json_escape "$description")")
         if [[ -n "$detail" ]]; then
-            json_entry="${json_entry},\"detail\":\"${escaped_detail}\"}"
+            json_entry="${json_entry},\"detail\":\"$(json_escape "$detail")\"}"
         else
             json_entry="${json_entry}}"
         fi
@@ -1498,8 +1506,9 @@ process_check() {
     # In interactive mode for SAFE checks, still apply without prompting
     # (CONFIRMATION checks prompt inside their fix function)
 
-    # Execute the fix function
-    ( "$fix_fn" ) || true
+    # Execute the fix function.
+    # Must NOT use a subshell — counters must propagate to the parent.
+    "$fix_fn" || true
 }
 
 # Post-fix verification
