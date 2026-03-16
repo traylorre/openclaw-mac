@@ -1595,7 +1595,7 @@ check_log_dir() {
     if [[ -d "$log_dir" && -w "$log_dir" ]]; then
         # Check if logs are being generated (most recent log not older than 2x weekly = 14 days)
         local latest
-        latest=$(find "$log_dir" -name "audit-*.log" -mtime -14 2>/dev/null | head -1)
+        latest=$(find "$log_dir" -name "audit-*.log" -mtime -14 2>/dev/null | head -1) || true
         if [[ -n "$latest" ]]; then
             report_result "$id" "Infrastructure" "Audit log directory exists with recent logs" "PASS" "10.4"
         else
