@@ -3,7 +3,14 @@
 macOS hardening guides and audit tooling for a Mac Mini running n8n
 orchestration with Apify integrations.
 
-## Setup
+## Getting Started
+
+Follow the step-by-step guide for your hardware:
+
+- **[Apple Silicon Mac Mini](GETTING-STARTED.md)** (M1, M2, M3, M4)
+- Intel Mac Mini (coming soon)
+
+## Development Setup
 
 ```bash
 git clone https://github.com/traylorre/openclaw-mac.git
