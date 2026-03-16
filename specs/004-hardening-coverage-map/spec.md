@@ -185,6 +185,21 @@ and `hardening-fix.sh`.
 - **FR-011**: §1 (Threat Model), §11 (Audit Script Reference), and
   Appendices MUST NOT receive badges — they are reference material,
   not actionable hardening steps.
+- **FR-012**: When a section has multiple CHK-* checks with mixed
+  auto-fix status, the badge MUST be the highest coverage level
+  present (i.e., if at least one check has auto-fix, the badge is
+  `[AUTO-FIX]`). All CHK-* identifiers MUST be listed in the
+  section body so the reader can see which are fix-capable and
+  which are audit-only.
+- **FR-013**: The naming inconsistency between `CHK-LISTENER-BASELINE`
+  (registry) and `CHK-LISTENERS-BASELINE` (audit script) MUST be
+  reconciled to a single canonical name.
+- **FR-014**: `CHK-SCRIPT-INTEGRITY` MUST be added to the registry
+  with a guide section reference (§10.1) and `CHK-PASSWORD-POLICY`
+  MUST be added with a guide section reference (§2.6).
+- **FR-015**: The registry MUST include an `Auto-Fix` column
+  (yes/no) for each entry, so readers can see fix availability
+  without cross-referencing the fix script.
 
 ### Key Entities
 
@@ -247,11 +262,16 @@ feature. Each warrants its own feature branch if pursued.
   (e.g., `### 2.1 Disk Encryption (FileVault) [AUTO-FIX]`).
 - The coverage summary is manually maintained. This is acceptable
   because section changes are infrequent.
-- The 10 missing CHK-* entries in the registry are:
-  CHK-CHROMIUM-POLICY, CHK-CHROMIUM-AUTOFILL,
-  CHK-CHROMIUM-EXTENSIONS, CHK-CHROMIUM-CDP, CHK-CHROMIUM-TCC,
-  CHK-CHROMIUM-VERSION, CHK-CHROMIUM-DANGERFLAGS,
-  CHK-CHROMIUM-URLBLOCK, CHK-PASSWORD-POLICY, CHK-SCRIPT-INTEGRITY.
+- After deep audit (2026-03-16), **2** CHK-* entries are confirmed
+  missing from the registry: CHK-PASSWORD-POLICY and
+  CHK-SCRIPT-INTEGRITY. The 8 Chromium checks were already added to
+  the registry in a prior PR. Original assumption of 10 missing was
+  stale.
+- A naming inconsistency exists: the registry lists
+  `CHK-LISTENER-BASELINE` but the audit script uses
+  `CHK-LISTENERS-BASELINE` (plural). This must be reconciled.
+- `CHK-SCRIPT-INTEGRITY` exists in the audit script but has no
+  guide section mapping. It should map to §10.1.
 
 ## Clarifications
 
