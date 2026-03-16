@@ -40,6 +40,7 @@ JSON_OUTPUT=false
 FILTER_SECTION=""
 QUIET=false
 DEBUG=false
+COMPARE_FILE=""
 # NO_COLOR is a conventional env flag; --no-color sets color vars directly
 # shellcheck disable=SC2034
 NO_COLOR=false
@@ -107,6 +108,8 @@ Options:
   --json         Output results in JSON format (FR-023)
   --section SEC  Run checks for a specific section only
   --quiet        Suppress PASS output, show only FAIL/WARN
+  --compare FILE Compare results against a previous audit JSON file
+                 and show regressions/improvements (drift report)
   --no-color     Disable colored output (for piping/logging)
   --debug        Enable bash trace output (set -x)
   --version      Show version and exit
@@ -155,24 +158,25 @@ report_result() {
         SKIP) SKIP_COUNT=$((SKIP_COUNT + 1)) ;;
     esac
 
-    # JSON accumulation
+    # JSON accumulation (always, for --compare support even in terminal mode)
+    local json_entry
+    json_entry=$(printf '{"id":"%s","section":"%s","description":"%s","status":"%s","guide_ref":"§%s"' \
+        "$(json_escape "$id")" "$(json_escape "$section")" \
+        "$(json_escape "$description")" "$(json_escape "$status")" \
+        "$(json_escape "$guide_ref")")
+    if [[ -n "$remediation" ]]; then
+        json_entry="${json_entry},\"remediation\":\"$(json_escape "$remediation")\"}"
+    else
+        json_entry="${json_entry}}"
+    fi
+    if [[ "$JSON_RESULTS" == "[]" ]]; then
+        JSON_RESULTS="[${json_entry}]"
+    else
+        JSON_RESULTS="${JSON_RESULTS%]},$json_entry]"
+    fi
+
+    # JSON-only mode: skip terminal output
     if $JSON_OUTPUT; then
-        local json_entry
-        json_entry=$(printf '{"id":"%s","section":"%s","description":"%s","status":"%s","guide_ref":"§%s"' \
-            "$(json_escape "$id")" "$(json_escape "$section")" \
-            "$(json_escape "$description")" "$(json_escape "$status")" \
-            "$(json_escape "$guide_ref")")
-        if [[ -n "$remediation" ]]; then
-            json_entry="${json_entry},\"remediation\":\"$(json_escape "$remediation")\"}"
-        else
-            json_entry="${json_entry}}"
-        fi
-        # Append to results array
-        if [[ "$JSON_RESULTS" == "[]" ]]; then
-            JSON_RESULTS="[${json_entry}]"
-        else
-            JSON_RESULTS="${JSON_RESULTS%]},$json_entry]"
-        fi
         return
     fi
 
@@ -2001,6 +2005,18 @@ main() {
                 QUIET=true
                 shift
                 ;;
+            --compare)
+                COMPARE_FILE="${2:-}"
+                if [[ -z "$COMPARE_FILE" ]]; then
+                    echo "Error: --compare requires a JSON file path" >&2
+                    exit 2
+                fi
+                if [[ ! -f "$COMPARE_FILE" ]]; then
+                    echo "Error: Compare file not found: ${COMPARE_FILE}" >&2
+                    exit 2
+                fi
+                shift 2
+                ;;
             --no-color)
                 # shellcheck disable=SC2034
                 NO_COLOR=true
@@ -2205,11 +2221,107 @@ main() {
         echo "================================================================"
     fi
 
+    # --- Drift Comparison ---
+    if [[ -n "$COMPARE_FILE" ]] && command -v jq &>/dev/null; then
+        local current_tmp
+        current_tmp=$(mktemp /tmp/openclaw-current.XXXXXX)
+        printf '{"results":%s}' "$JSON_RESULTS" > "$current_tmp"
+        _compare_results "$COMPARE_FILE" "$current_tmp"
+        rm -f "$current_tmp"
+    fi
+
     # Exit code: 1 if any FAIL, 0 otherwise
     if [[ $FAIL_COUNT -gt 0 ]]; then
         exit 1
     fi
     exit 0
+}
+
+# --- Drift Comparison ---
+# Compares the current audit results against a previous JSON file.
+# Reports regressions (PASS→FAIL/WARN), improvements (FAIL→PASS), and net change.
+_compare_results() {
+    local baseline="$1"
+    local current_file="$2"
+
+    if ! jq empty "$baseline" 2>/dev/null; then
+        echo ""
+        printf "  ${RED}Compare: Invalid JSON in baseline file${NC}\n"
+        return
+    fi
+
+    if ! jq empty "$current_file" 2>/dev/null; then
+        echo ""
+        printf "  ${YELLOW}Compare: Could not build current results for comparison${NC}\n"
+        return
+    fi
+
+    local regressions=0 improvements=0
+
+    # Use jq to compute the diff (file-based to avoid arg size limits)
+    local diff_output
+    diff_output=$(jq -s '
+        def status_map: [.[] | {(.id): .status}] | add // {};
+        (.[0] | status_map) as $old |
+        (.[1] | status_map) as $new |
+        {
+            regressions: [$new | to_entries[] |
+                select($old[.key] != null and
+                    (($old[.key] == "PASS" and (.value == "FAIL" or .value == "WARN")) or
+                     ($old[.key] == "WARN" and .value == "FAIL"))) |
+                {id: .key, was: $old[.key], now: .value}],
+            improvements: [$new | to_entries[] |
+                select($old[.key] != null and
+                    (($old[.key] == "FAIL" and (.value == "PASS" or .value == "WARN")) or
+                     ($old[.key] == "WARN" and .value == "PASS"))) |
+                {id: .key, was: $old[.key], now: .value}],
+            summary_old: {
+                pass: ([$old | to_entries[] | select(.value == "PASS")] | length),
+                fail: ([$old | to_entries[] | select(.value == "FAIL")] | length)
+            },
+            summary_new: {
+                pass: ([$new | to_entries[] | select(.value == "PASS")] | length),
+                fail: ([$new | to_entries[] | select(.value == "FAIL")] | length)
+            }
+        }
+        ' <(jq '.results' "$baseline") <(jq '.results' "$current_file") 2>/dev/null) || true
+
+    if [[ -z "$diff_output" || "$diff_output" == "null" ]]; then
+        echo ""
+        printf "  ${YELLOW}Compare: Could not compute diff (jq error)${NC}\n"
+        return
+    fi
+
+    regressions=$(echo "$diff_output" | jq '.regressions | length')
+    improvements=$(echo "$diff_output" | jq '.improvements | length')
+
+    echo ""
+    echo "================================================================"
+    echo "  Drift Report (compared to baseline)"
+    echo "================================================================"
+
+    if [[ "$regressions" -gt 0 ]]; then
+        printf "  ${RED}Regressions (%d):${NC}\n" "$regressions"
+        echo "$diff_output" | jq -r '.regressions[] | "    \(.id): \(.was) → \(.now)"'
+    fi
+
+    if [[ "$improvements" -gt 0 ]]; then
+        printf "  ${GREEN}Improvements (%d):${NC}\n" "$improvements"
+        echo "$diff_output" | jq -r '.improvements[] | "    \(.id): \(.was) → \(.now)"'
+    fi
+
+    if [[ "$regressions" -eq 0 && "$improvements" -eq 0 ]]; then
+        printf "  ${GREEN}No drift detected — security posture unchanged${NC}\n"
+    fi
+
+    # Net summary
+    local old_pass new_pass old_fail new_fail
+    old_pass=$(echo "$diff_output" | jq '.summary_old.pass')
+    new_pass=$(echo "$diff_output" | jq '.summary_new.pass')
+    old_fail=$(echo "$diff_output" | jq '.summary_old.fail')
+    new_fail=$(echo "$diff_output" | jq '.summary_new.fail')
+    printf "  Net: PASS %d→%d | FAIL %d→%d\n" "$old_pass" "$new_pass" "$old_fail" "$new_fail"
+    echo "================================================================"
 }
 
 main "$@"
