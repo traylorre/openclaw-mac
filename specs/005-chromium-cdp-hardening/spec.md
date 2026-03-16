@@ -181,9 +181,10 @@ section that covers Chromium installation and audit verification.
   Chromium profile directory.
 - **FR-005**: The cleanup function MUST refuse to run if Chromium
   is currently running and report a clear warning.
-- **FR-006**: The audit check `CHK-CHROMIUM-CDP` MUST detect CDP
-  port binding by inspecting the running process arguments, not by
-  assuming a fixed port number.
+- **FR-006**: The audit check `CHK-CHROMIUM-CDP` MUST scan known
+  CDP ports (9222, 18800) via network listener detection AND extract
+  any `--remote-debugging-port=N` from running Chromium process
+  arguments to catch non-standard ports.
 - **FR-007**: GETTING-STARTED.md MUST include Chromium installation
   and verification steps in the "Next Steps" section.
 - **FR-008**: The pre-fix snapshot mechanism MUST record restore
@@ -272,6 +273,7 @@ section that covers Chromium installation and audit verification.
 ### Session 2026-03-16
 
 - Q: Should browser data cleanup be a standalone script or a function within hardening-fix.sh? → A: Both — standalone script `scripts/browser-cleanup.sh` that the fix script sources when needed (single implementation, two entry points).
+- Q: How should CDP port detection handle non-standard ports? → A: Scan known ports (9222, 18800) via lsof AND extract `--remote-debugging-port=N` from process arguments to catch non-standard ports.
 
 ## Out of Scope
 
