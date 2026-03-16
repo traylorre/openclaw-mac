@@ -50,6 +50,17 @@ JSON_RESULTS="[]"
 # --- Current section for grouped output ---
 CURRENT_SECTION=""
 
+# --- User Scope ---
+# When run with sudo, user-scoped defaults reads must target the
+# invoking user, not root. SUDO_USER is set automatically by sudo.
+run_as_user() {
+    if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
+        sudo -u "$SUDO_USER" "$@"
+    else
+        "$@"
+    fi
+}
+
 # --- JSON string escaper ---
 # Escapes characters that would break JSON string values
 json_escape() {
@@ -332,9 +343,9 @@ check_auto_login() {
 check_screen_lock() {
     local id="CHK-SCREEN-LOCK"
     local ask_pw
-    ask_pw=$(defaults read com.apple.screensaver askForPassword 2>/dev/null) || true
+    ask_pw=$(run_as_user defaults read com.apple.screensaver askForPassword 2>/dev/null) || true
     local delay
-    delay=$(defaults read com.apple.screensaver askForPasswordDelay 2>/dev/null) || true
+    delay=$(run_as_user defaults read com.apple.screensaver askForPasswordDelay 2>/dev/null) || true
     if [[ "$ask_pw" == "1" && "$delay" == "0" ]]; then
         report_result "$id" "Login Security" "Screen lock requires password immediately" "PASS" "2.6"
     else
@@ -451,7 +462,7 @@ check_sharing_screen() {
 check_airdrop() {
     local id="CHK-AIRDROP"
     local output
-    output=$(defaults read com.apple.NetworkBrowser DisableAirDrop 2>/dev/null) || true
+    output=$(run_as_user defaults read com.apple.NetworkBrowser DisableAirDrop 2>/dev/null) || true
     if [[ "$output" == "1" ]]; then
         report_result "$id" "Sharing Services" "AirDrop is disabled" "PASS" "2.7"
     else
@@ -519,7 +530,7 @@ check_core_dumps() {
 check_privacy() {
     local id="CHK-PRIVACY"
     local siri
-    siri=$(defaults read com.apple.assistant.support "Assistant Enabled" 2>/dev/null) || true
+    siri=$(run_as_user defaults read com.apple.assistant.support "Assistant Enabled" 2>/dev/null) || true
     if [[ "$siri" == "0" ]]; then
         report_result "$id" "System Privacy" "Siri is disabled" "PASS" "2.10"
     else
@@ -1415,7 +1426,7 @@ check_cert_baseline() {
 check_icloud_keychain() {
     local id="CHK-ICLOUD-KEYCHAIN"
     # iCloud Keychain detection is limited from CLI; check for iCloud-related config
-    if defaults read MobileMeAccounts 2>/dev/null | grep -q "KEYCHAIN_SYNC"; then
+    if run_as_user defaults read MobileMeAccounts 2>/dev/null | grep -q "KEYCHAIN_SYNC"; then
         report_result "$id" "Cloud Services" "iCloud Keychain sync may be enabled" "WARN" "8.6" \
             "Disable: System Settings > Apple ID > iCloud > Keychain > OFF"
     else
@@ -1513,7 +1524,7 @@ check_backup_encrypted() {
 check_find_my_mac() {
     local id="CHK-FIND-MY-MAC"
     local fmm_enabled
-    fmm_enabled=$(defaults read com.apple.icloud.findmymac FMMEnabled 2>/dev/null || echo "")
+    fmm_enabled=$(run_as_user defaults read com.apple.icloud.findmymac FMMEnabled 2>/dev/null || echo "")
 
     if [[ "$fmm_enabled" == "1" ]]; then
         report_result "$id" "Physical" "Find My Mac is enabled" "PASS" "9.5"
