@@ -461,6 +461,18 @@ FIX_REGISTRY[CHK-CHROMIUM-TCC]=CONFIRMATION
 FIX_FUNCTIONS[CHK-CHROMIUM-TCC]=fix_chromium_tcc
 FIX_DESCRIPTIONS[CHK-CHROMIUM-TCC]="Reset Chromium camera/microphone TCC permissions"
 
+FIX_REGISTRY[CHK-CHROMIUM-CDP]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CHROMIUM-CDP]=fix_chromium_cdp
+FIX_DESCRIPTIONS[CHK-CHROMIUM-CDP]="Show correct CDP port binding launch flags"
+
+FIX_REGISTRY[CHK-CHROMIUM-DANGERFLAGS]=CONFIRMATION
+FIX_FUNCTIONS[CHK-CHROMIUM-DANGERFLAGS]=fix_chromium_dangerflags
+FIX_DESCRIPTIONS[CHK-CHROMIUM-DANGERFLAGS]="Show which dangerous launch flags to remove"
+
+FIX_REGISTRY[CHK-CHROMIUM-VERSION]=SAFE
+FIX_FUNCTIONS[CHK-CHROMIUM-VERSION]=fix_chromium_version
+FIX_DESCRIPTIONS[CHK-CHROMIUM-VERSION]="Update Chromium via Homebrew"
+
 # --- Result Reporting ---
 # Usage: report_fix ID DESCRIPTION STATUS [DETAIL]
 # STATUS: FIXED | SKIPPED | FAILED | DRY-RUN | INSTRUCTED
@@ -1612,6 +1624,114 @@ fix_chromium_tcc() {
         return 1
     fi
     return 0
+}
+
+# =============================================================================
+# Fix Functions — CDP / Chromium Hardening (005)
+# =============================================================================
+
+fix_chromium_cdp() {
+    local id="CHK-CHROMIUM-CDP"
+    if ! prompt_confirm "$id" "Show correct CDP port binding flags (unauthenticated RCE risk)"; then
+        report_fix "$id" "Show CDP port binding fix" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "The Chrome DevTools Protocol has NO authentication." \
+        "Any process that can reach the CDP port has full browser control:" \
+        "cookie extraction, JavaScript execution, screenshot capture." \
+        "" \
+        "Always launch Chromium with BOTH flags:" \
+        "" \
+        "  --remote-debugging-address=127.0.0.1" \
+        "  --remote-debugging-port=9222" \
+        "" \
+        "If using OpenClaw, set in ~/.openclaw/openclaw.json:" \
+        "" \
+        "  {" \
+        "    \"browser\": {" \
+        "      \"launchArgs\": [" \
+        "        \"--remote-debugging-address=127.0.0.1\"," \
+        "        \"--remote-debugging-port=9222\"" \
+        "      ]" \
+        "    }" \
+        "  }" \
+        "" \
+        "See docs/HARDENING.md §2.11.3 for full details."
+    if $DRY_RUN; then
+        report_fix "$id" "Show CDP port binding fix" "DRY-RUN"
+    else
+        report_fix "$id" "Show CDP port binding fix" "INSTRUCTED" \
+            "Set --remote-debugging-address=127.0.0.1 in launch config"
+    fi
+    return 0
+}
+
+fix_chromium_dangerflags() {
+    local id="CHK-CHROMIUM-DANGERFLAGS"
+    if ! prompt_confirm "$id" "Show dangerous Chromium launch flags to remove"; then
+        report_fix "$id" "Show dangerous flags to remove" "SKIPPED" "User declined"
+        return 0
+    fi
+    print_instruction \
+        "The following Chromium launch flags weaken security and should" \
+        "be removed from your launch configuration:" \
+        "" \
+        "  --disable-web-security         Disables same-origin policy" \
+        "  --no-sandbox                   Disables Chromium sandbox" \
+        "  --disable-site-isolation-trials Disables process-per-site isolation" \
+        "  --disable-features=IsolateOrigins  Disables origin isolation" \
+        "  --allow-running-insecure-content   Allows HTTP on HTTPS pages" \
+        "  --remote-debugging-address=0.0.0.0 Exposes CDP to network" \
+        "" \
+        "If using OpenClaw, check ~/.openclaw/openclaw.json:" \
+        "  Remove any of the above from browser.launchArgs" \
+        "" \
+        "If using a custom launch script, remove these flags from it." \
+        "" \
+        "See docs/HARDENING.md §2.11.9 for full details."
+    if $DRY_RUN; then
+        report_fix "$id" "Show dangerous flags to remove" "DRY-RUN"
+    else
+        report_fix "$id" "Show dangerous flags to remove" "INSTRUCTED" \
+            "Remove dangerous flags from Chromium launch configuration"
+    fi
+    return 0
+}
+
+fix_chromium_version() {
+    local id="CHK-CHROMIUM-VERSION"
+    # Detect installation method
+    local update_cmd="" browser_name=""
+    if run_as_user brew list --cask chromium &>/dev/null 2>&1; then
+        update_cmd="brew upgrade --cask chromium"
+        browser_name="Chromium (Homebrew)"
+    elif run_as_user brew list --cask google-chrome &>/dev/null 2>&1; then
+        update_cmd="brew upgrade --cask google-chrome"
+        browser_name="Google Chrome (Homebrew)"
+    fi
+
+    if [[ -z "$update_cmd" ]]; then
+        report_fix "$id" "Chromium not installed via Homebrew" "SKIPPED" \
+            "Update manually from the vendor website"
+        return 0
+    fi
+
+    snapshot_setting "$id" "Chromium version (informational — downgrade not automated)" \
+        "echo 'Homebrew does not support cask version pinning — reinstall previous version manually if needed'"
+
+    if run_fix_cmd "Update $browser_name" run_as_user $update_cmd; then
+        if $DRY_RUN; then
+            report_fix "$id" "Updated $browser_name" "DRY-RUN"
+        else
+            report_fix "$id" "Updated $browser_name" "FIXED"
+        fi
+        return 0
+    else
+        report_fix "$id" "Failed to update $browser_name" "FAILED" \
+            "Run manually: $update_cmd"
+        return 1
+    fi
 }
 
 # =============================================================================
