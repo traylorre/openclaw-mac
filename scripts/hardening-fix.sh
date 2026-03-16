@@ -532,18 +532,26 @@ report_fix() {
 # --- Helper: execute or dry-run a command ---
 # Usage: run_fix_cmd DESCRIPTION CMD [ARGS...]
 # Returns the exit code of the command (or 0 for dry-run)
+# Sets LAST_FIX_ERROR with stderr on failure for inclusion in reports.
+LAST_FIX_ERROR=""
 run_fix_cmd() {
     local desc="$1"
     shift
+    LAST_FIX_ERROR=""
     if $DRY_RUN; then
         if ! $JSON_OUTPUT; then
             printf "    %s[DRY-RUN]%s Would execute: %s\n" "$CYAN" "$NC" "$*"
         fi
         return 0
     fi
-    if "$@"; then
+    local err_file
+    err_file=$(mktemp /tmp/openclaw-fix-err.XXXXXX)
+    if "$@" 2>"$err_file"; then
+        rm -f "$err_file"
         return 0
     else
+        LAST_FIX_ERROR=$(head -3 "$err_file" | tr '\n' ' ')
+        rm -f "$err_file"
         return 1
     fi
 }
@@ -613,7 +621,7 @@ fix_firewall() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to enable application firewall" "FAILED"
+        report_fix "$id" "Failed to enable application firewall" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -631,7 +639,7 @@ fix_stealth() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to enable stealth mode" "FAILED"
+        report_fix "$id" "Failed to enable stealth mode" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -646,7 +654,7 @@ fix_gatekeeper() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to enable Gatekeeper" "FAILED"
+        report_fix "$id" "Failed to enable Gatekeeper" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -672,7 +680,7 @@ fix_auto_updates() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to enable automatic updates" "FAILED"
+        report_fix "$id" "Failed to enable automatic updates" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -689,7 +697,7 @@ fix_ntp() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to enable network time" "FAILED"
+        report_fix "$id" "Failed to enable network time" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -733,7 +741,7 @@ fix_screen_lock() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to configure screen lock" "FAILED"
+        report_fix "$id" "Failed to configure screen lock" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -751,7 +759,7 @@ fix_guest() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable guest account" "FAILED"
+        report_fix "$id" "Failed to disable guest account" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -768,7 +776,7 @@ fix_sharing_file() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable file sharing" "FAILED"
+        report_fix "$id" "Failed to disable file sharing" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -785,7 +793,7 @@ fix_sharing_remote() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable remote Apple events" "FAILED"
+        report_fix "$id" "Failed to disable remote Apple events" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -803,7 +811,7 @@ fix_sharing_internet() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable internet sharing" "FAILED"
+        report_fix "$id" "Failed to disable internet sharing" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -820,7 +828,7 @@ fix_sharing_screen() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable screen sharing" "FAILED"
+        report_fix "$id" "Failed to disable screen sharing" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -838,7 +846,7 @@ fix_airdrop() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable AirDrop" "FAILED"
+        report_fix "$id" "Failed to disable AirDrop" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -855,7 +863,7 @@ fix_core_dumps() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable core dumps" "FAILED"
+        report_fix "$id" "Failed to disable core dumps" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -873,7 +881,7 @@ fix_privacy_siri() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable Siri" "FAILED"
+        report_fix "$id" "Failed to disable Siri" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -914,7 +922,7 @@ fix_bluetooth() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to disable Bluetooth discoverability" "FAILED"
+        report_fix "$id" "Failed to disable Bluetooth discoverability" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -930,7 +938,7 @@ fix_spotlight_exclusions() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to exclude /opt/n8n from Spotlight" "FAILED"
+        report_fix "$id" "Failed to exclude /opt/n8n from Spotlight" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -946,7 +954,7 @@ fix_log_dir() {
     if sudo mkdir -p "$log_dir" && sudo chmod 755 "$log_dir"; then
         report_fix "$id" "Created audit log directory" "FIXED" "$log_dir"
     else
-        report_fix "$id" "Failed to create audit log directory" "FAILED"
+        report_fix "$id" "Failed to create audit log directory" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
     return 0
@@ -985,7 +993,7 @@ NOTIFY_EOF
         sudo chmod 644 "$conf"
         report_fix "$id" "Created default notification configuration" "FIXED" "$conf"
     else
-        report_fix "$id" "Failed to create notification configuration" "FAILED"
+        report_fix "$id" "Failed to create notification configuration" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
     return 0
@@ -1008,7 +1016,7 @@ fix_launchd_audit() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to bootstrap audit launchd job" "FAILED"
+        report_fix "$id" "Failed to bootstrap audit launchd job" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1028,7 +1036,7 @@ fix_clamav_freshness() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to update ClamAV signatures" "FAILED"
+        report_fix "$id" "Failed to update ClamAV signatures" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1131,7 +1139,7 @@ CHROMIUM_POLICY_EOF
         fi
         report_fix "$id" "Deployed Chromium managed security policies" "FIXED" "$plist_file"
     else
-        report_fix "$id" "Failed to deploy Chromium policy plist" "FAILED"
+        report_fix "$id" "Failed to deploy Chromium policy plist" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
     return 0
@@ -1156,7 +1164,7 @@ fix_filevault() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to enable FileVault" "FAILED"
+        report_fix "$id" "Failed to enable FileVault" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1184,7 +1192,7 @@ fix_ssh_key_only() {
         report_fix "$id" "Disabled SSH password authentication" "FIXED" "$conf_file"
         return 0
     else
-        report_fix "$id" "Failed to update SSH configuration" "FAILED"
+        report_fix "$id" "Failed to update SSH configuration" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1212,7 +1220,7 @@ fix_ssh_root() {
         report_fix "$id" "Disabled SSH root login" "FIXED" "$conf_file"
         return 0
     else
-        report_fix "$id" "Failed to update SSH configuration" "FAILED"
+        report_fix "$id" "Failed to update SSH configuration" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1516,7 +1524,7 @@ fix_service_account() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to create _n8n service account" "FAILED"
+        report_fix "$id" "Failed to create _n8n service account" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1538,7 +1546,7 @@ fix_service_home_perms() {
         fi
         return 0
     else
-        report_fix "$id" "Failed to restrict home directory permissions" "FAILED"
+        report_fix "$id" "Failed to restrict home directory permissions" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
 }
@@ -1569,7 +1577,7 @@ fix_service_data_perms() {
         report_fix "$id" "Fixed n8n data directory permissions" "FIXED" \
             "chown _n8n:_n8n, chmod 700 /opt/n8n/data"
     else
-        report_fix "$id" "Failed to fix data directory permissions" "FAILED"
+        report_fix "$id" "Failed to fix data directory permissions" "FAILED" "$LAST_FIX_ERROR"
         return 1
     fi
     return 0

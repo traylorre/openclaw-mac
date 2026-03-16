@@ -167,6 +167,73 @@ run_pipeline() {
         pipeline_errors=$((pipeline_errors + 1))
     fi
 
+    # Step 1b: Drift detection — compare against previous audit
+    if [[ -f "$json_file" ]] && jq empty "$json_file" 2>/dev/null; then
+        local previous_audit
+        previous_audit=$(ls -t "${LOG_DIR}"/audit-*.json 2>/dev/null | grep -v "$json_file" | head -1) || true
+        if [[ -n "$previous_audit" && -f "$previous_audit" ]]; then
+            printf "  Comparing against previous audit: %s\n" "$(basename "$previous_audit")"
+            local drift_file="${LOG_DIR}/drift-${timestamp}.txt"
+            "$AUDIT_SCRIPT" --json --compare "$previous_audit" < /dev/null > /dev/null 2>&1 || true
+            # Generate drift summary using jq
+            if command -v jq &>/dev/null; then
+                local drift_summary
+                drift_summary=$(jq -n \
+                    --argjson old "$(jq '.results' "$previous_audit")" \
+                    --argjson new "$(jq '.results' "$json_file")" \
+                    '
+                    def sm: [.[] | {(.id): .status}] | add // {};
+                    ($old | sm) as $o | ($new | sm) as $n |
+                    {
+                        regressions: [$n | to_entries[] |
+                            select($o[.key] != null and
+                                (($o[.key] == "PASS" and (.value == "FAIL" or .value == "WARN")) or
+                                 ($o[.key] == "WARN" and .value == "FAIL"))) |
+                            "\(.key): \($o[.key]) → \(.value)"],
+                        improvements: [$n | to_entries[] |
+                            select($o[.key] != null and
+                                (($o[.key] == "FAIL" and (.value == "PASS" or .value == "WARN")) or
+                                 ($o[.key] == "WARN" and .value == "PASS"))) |
+                            "\(.key): \($o[.key]) → \(.value)"]
+                    }
+                    ' 2>/dev/null) || true
+
+                if [[ -n "$drift_summary" ]]; then
+                    local reg_count imp_count
+                    reg_count=$(echo "$drift_summary" | jq '.regressions | length') || reg_count=0
+                    imp_count=$(echo "$drift_summary" | jq '.improvements | length') || imp_count=0
+
+                    {
+                        echo "Drift Report — $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                        echo "Compared: $(basename "$previous_audit") → $(basename "$json_file")"
+                        echo ""
+                        if [[ "$reg_count" -gt 0 ]]; then
+                            echo "REGRESSIONS ($reg_count):"
+                            echo "$drift_summary" | jq -r '.regressions[]' | sed 's/^/  /'
+                        fi
+                        if [[ "$imp_count" -gt 0 ]]; then
+                            echo "IMPROVEMENTS ($imp_count):"
+                            echo "$drift_summary" | jq -r '.improvements[]' | sed 's/^/  /'
+                        fi
+                        if [[ "$reg_count" -eq 0 && "$imp_count" -eq 0 ]]; then
+                            echo "No drift detected."
+                        fi
+                    } > "$drift_file"
+
+                    if [[ "$reg_count" -gt 0 ]]; then
+                        printf "  ${RED}DRIFT${NC}  %d regression(s) detected — see %s\n" "$reg_count" "$drift_file"
+                    elif [[ "$imp_count" -gt 0 ]]; then
+                        printf "  ${GREEN}DRIFT${NC}  %d improvement(s), 0 regressions\n" "$imp_count"
+                    else
+                        printf "  No drift since previous audit\n"
+                    fi
+                fi
+            fi
+        else
+            printf "  No previous audit to compare (first run)\n"
+        fi
+    fi
+
     # Step 2: Optional auto-fix
     if [[ "$MODE" == "auto-fix" ]]; then
         printf "${CYAN}[2/3]${NC} Running auto-fix (SAFE checks only)...\n"
