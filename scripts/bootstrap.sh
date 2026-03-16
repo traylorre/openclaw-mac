@@ -87,7 +87,8 @@ check_homebrew() {
     printf "\n${BOLD}[2/8] Homebrew${NC}\n"
     if command -v brew &>/dev/null; then
         local brew_ver
-        brew_ver=$(brew --version | head -1)
+        brew_ver=$(brew --version 2>/dev/null) || true
+        brew_ver="${brew_ver%%$'\n'*}"
         report OK "Homebrew installed: ${brew_ver}"
     elif [[ "$CHECK_ONLY" == true ]]; then
         report FAIL "Homebrew not installed"
@@ -136,7 +137,9 @@ check_tools() {
 
     # SC linter (optional, for development)
     if command -v shellcheck &>/dev/null; then
-        report OK "shellcheck: $(shellcheck --version 2>/dev/null | grep version | head -1)"
+        local sc_ver
+        sc_ver=$(shellcheck --version 2>/dev/null | grep version) || true
+        report OK "shellcheck: ${sc_ver:-unknown}"
     else
         report SKIP "shellcheck not installed (optional — brew install shellcheck)"
     fi
