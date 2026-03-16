@@ -50,6 +50,17 @@ JSON_RESULTS="[]"
 # --- Current section for grouped output ---
 CURRENT_SECTION=""
 
+# --- JSON string escaper ---
+# Escapes characters that would break JSON string values
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
 # --- Platform Check ---
 check_platform() {
     if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -137,9 +148,11 @@ report_result() {
     if $JSON_OUTPUT; then
         local json_entry
         json_entry=$(printf '{"id":"%s","section":"%s","description":"%s","status":"%s","guide_ref":"§%s"' \
-            "$id" "$section" "$description" "$status" "$guide_ref")
+            "$(json_escape "$id")" "$(json_escape "$section")" \
+            "$(json_escape "$description")" "$(json_escape "$status")" \
+            "$(json_escape "$guide_ref")")
         if [[ -n "$remediation" ]]; then
-            json_entry="${json_entry},\"remediation\":\"${remediation}\"}"
+            json_entry="${json_entry},\"remediation\":\"$(json_escape "$remediation")\"}"
         else
             json_entry="${json_entry}}"
         fi
@@ -173,11 +186,12 @@ report_result() {
 }
 
 # --- Check Runner ---
-# Runs a check function in a subshell with || true to avoid set -e termination
+# Runs a check function with || true to prevent set -e from aborting on failure.
+# Must NOT use a subshell — counters and CURRENT_SECTION must propagate.
 # Usage: run_check CHECK_FUNCTION_NAME
 run_check() {
     local check_fn="$1"
-    ( "$check_fn" ) || true
+    "$check_fn" || true
 }
 
 # --- Check Functions ---
@@ -257,9 +271,8 @@ check_xprotect_fresh() {
         return
     fi
     local update_epoch current_epoch age_days
-    # Try multiple date formats: zero-padded, single-digit, and ISO
+    # Try multiple date formats: zero-padded and ISO
     update_epoch=$(date -j -f "%m/%d/%y, %I:%M %p" "$last_update" "+%s" 2>/dev/null) || \
-    update_epoch=$(date -j -f "%-m/%-d/%y, %-I:%M %p" "$last_update" "+%s" 2>/dev/null) || \
     update_epoch=$(date -j -f "%Y-%m-%d" "$last_update" "+%s" 2>/dev/null) || true
     if [[ -z "$update_epoch" ]]; then
         report_result "$id" "XProtect" "XProtect update date: ${last_update}" "WARN" "2.4" \
@@ -1315,9 +1328,21 @@ check_clamav_sigs() {
     if [[ ! -d "$db_dir" ]]; then
         db_dir="/usr/local/share/clamav"
     fi
-    if [[ -f "$db_dir/main.cvd" ]] || [[ -f "$db_dir/main.cld" ]]; then
-        local age_days
-        age_days=$(( ( $(date +%s) - $(stat -f %m "$db_dir/main.c"*d 2>/dev/null | head -1) ) / 86400 )) 2>/dev/null || age_days=999
+    local sig_file=""
+    if [[ -f "$db_dir/main.cvd" ]]; then
+        sig_file="$db_dir/main.cvd"
+    elif [[ -f "$db_dir/main.cld" ]]; then
+        sig_file="$db_dir/main.cld"
+    fi
+    if [[ -n "$sig_file" ]]; then
+        local mod_epoch
+        mod_epoch=$(stat -f %m "$sig_file" 2>/dev/null) || true
+        if [[ -z "$mod_epoch" ]]; then
+            report_result "$id" "IDS Tools" "Cannot determine ClamAV signature age" "WARN" "8.1" \
+                "Check file permissions: stat $sig_file"
+            return
+        fi
+        local age_days=$(( ($(date +%s) - mod_epoch) / 86400 ))
         if [[ $age_days -lt 7 ]]; then
             report_result "$id" "IDS Tools" "ClamAV signatures current (${age_days}d old)" "PASS" "8.1"
         else
