@@ -149,9 +149,10 @@ is mentioned with its install command.
   browsers (e.g., deploy managed policies for both Chromium and
   Edge if both are installed).
 - **FR-006**: The `CHK-CHROMIUM-*` check IDs MUST be renamed to
-  browser-neutral names (e.g., `CHK-BROWSER-POLICY`,
-  `CHK-BROWSER-CDP`) or kept as-is with the understanding that
-  "CHROMIUM" means "Chromium-based browser."
+  browser-neutral names: `CHK-BROWSER-POLICY`, `CHK-BROWSER-CDP`,
+  `CHK-BROWSER-TCC`, `CHK-BROWSER-VERSION`, `CHK-BROWSER-DANGERFLAGS`,
+  `CHK-BROWSER-AUTOFILL`, `CHK-BROWSER-EXTENSIONS`,
+  `CHK-BROWSER-URLBLOCK`.
 - **FR-007**: `browser-cleanup.sh` MUST detect all installed
   browsers and clean session data for each. A new `--all` flag
   MUST clean all detected profiles. Without `--all`, it MUST clean
@@ -184,10 +185,10 @@ is mentioned with its install command.
   browsers exist. The registry pattern makes adding them trivial
   (one entry each) but testing and documenting each is effort.
   *Defer unless requested.*
-- **RH-002: Per-browser CHK IDs** — If check IDs become
-  `CHK-BROWSER-POLICY`, the registry and coverage map must be
-  updated. If kept as `CHK-CHROMIUM-*`, the naming is misleading
-  when checking Edge. *Decision needed in clarify phase.*
+- **RH-002: Per-browser CHK IDs** — Resolved: rename to
+  `CHK-BROWSER-*`. Requires updating CHK-REGISTRY.md, coverage
+  map badges, hardening-audit.sh, hardening-fix.sh, and any
+  audit JSON consumers that reference the old IDs.
 - **RH-003: Multi-profile support** — Each browser can have
   multiple profiles (Default, Profile 1, etc.). Currently only
   Default is checked and cleaned. *Defer unless required.*
@@ -219,6 +220,12 @@ is mentioned with its install command.
   `~/Library/Application Support/Microsoft Edge/Default/`.
 - CDP on Edge uses the same `--remote-debugging-port` and
   `--remote-debugging-address` flags as Chromium.
+
+## Clarifications
+
+### Session 2026-03-16
+
+- Q: Should check IDs be renamed from CHK-CHROMIUM-* to CHK-BROWSER-*? → A: Yes, rename to CHK-BROWSER-* for accuracy when checking Edge or other Chromium-based browsers.
 
 ## Out of Scope
 
