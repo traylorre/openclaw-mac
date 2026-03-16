@@ -367,6 +367,30 @@ After hardening, consider these optional improvements:
   sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist
   ```
 
+- **Set up Chromium** if you will use browser automation (e.g.,
+  OpenClaw with Chrome DevTools Protocol):
+
+  ```bash
+  brew install --cask chromium
+  ```
+
+  Then verify the browser security checks pass:
+
+  ```bash
+  sudo bash scripts/hardening-audit.sh --section "Browser Security"
+  ```
+
+  See [docs/HARDENING.md §2.11](docs/HARDENING.md#211-browser-security-chromium-auto-fix)
+  for full Chromium hardening details including CDP port binding,
+  managed security policies, and browser data cleanup.
+
+- **Clean browser session data** after automation runs to remove
+  cookies, cache, and history:
+
+  ```bash
+  bash scripts/browser-cleanup.sh
+  ```
+
 - **Configure encrypted DNS** to address the DNS WARN
 - **Set up Time Machine** or another backup solution
 

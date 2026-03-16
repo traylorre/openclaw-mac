@@ -25,8 +25,8 @@
 
 **Purpose**: Create the standalone browser cleanup script that US4 needs and US1-US3 fix functions reference.
 
-- [ ] T001 Create `scripts/browser-cleanup.sh` with the following: set -euo pipefail, color setup, detect browser type (Chromium vs Chrome), detect profile directory, refuse if browser is running (pgrep check per R-005), accept optional --profile argument, remove session data files listed in data-model.md (Cookies, Local Storage, Session Storage, History, Cache, Code Cache, Service Worker, GPUCache), preserve Bookmarks/Extensions/Preferences, report what was cleaned
-- [ ] T002 Verify `scripts/browser-cleanup.sh` passes `bash -n` syntax check and is executable (chmod 755)
+- [x] T001 Create `scripts/browser-cleanup.sh` with the following: set -euo pipefail, color setup, detect browser type (Chromium vs Chrome), detect profile directory, refuse if browser is running (pgrep check per R-005), accept optional --profile argument, remove session data files listed in data-model.md (Cookies, Local Storage, Session Storage, History, Cache, Code Cache, Service Worker, GPUCache), preserve Bookmarks/Extensions/Preferences, report what was cleaned
+- [x] T002 Verify `scripts/browser-cleanup.sh` passes `bash -n` syntax check and is executable (chmod 755)
 
 **Checkpoint**: `browser-cleanup.sh` is a working standalone script that can be called independently.
 
@@ -40,8 +40,8 @@
 
 ### Implementation for User Story 1
 
-- [ ] T003 [US1] Add `fix_chromium_cdp()` function to `scripts/hardening-fix.sh` as CONFIRMATION classification that uses `print_instruction` to show: (1) the correct launch flags `--remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`, (2) where to set them (OpenClaw config or launch script), (3) why CDP on 0.0.0.0 is unauthenticated RCE. Must use `prompt_confirm` for interactive mode. Reports INSTRUCTED on success. (FR-001)
-- [ ] T004 [US1] Register `CHK-CHROMIUM-CDP` in `FIX_REGISTRY`, `FIX_FUNCTIONS`, and `FIX_DESCRIPTIONS` arrays in `scripts/hardening-fix.sh` with classification CONFIRMATION (FR-001)
+- [x] T003 [US1] Add `fix_chromium_cdp()` function to `scripts/hardening-fix.sh` as CONFIRMATION classification that uses `print_instruction` to show: (1) the correct launch flags `--remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`, (2) where to set them (OpenClaw config or launch script), (3) why CDP on 0.0.0.0 is unauthenticated RCE. Must use `prompt_confirm` for interactive mode. Reports INSTRUCTED on success. (FR-001)
+- [x] T004 [US1] Register `CHK-CHROMIUM-CDP` in `FIX_REGISTRY`, `FIX_FUNCTIONS`, and `FIX_DESCRIPTIONS` arrays in `scripts/hardening-fix.sh` with classification CONFIRMATION (FR-001)
 
 **Checkpoint**: Fix script recognizes CHK-CHROMIUM-CDP and provides actionable remediation.
 
@@ -55,8 +55,8 @@
 
 ### Implementation for User Story 2
 
-- [ ] T005 [P] [US2] Add `fix_chromium_dangerflags()` function to `scripts/hardening-fix.sh` as CONFIRMATION classification that uses `print_instruction` to show: (1) each dangerous flag from the known list in data-model.md, (2) what each flag disables, (3) where to remove them (OpenClaw config `~/.openclaw/openclaw.json` browser.launchArgs or launch script). Must use `prompt_confirm`. Reports INSTRUCTED on success. (FR-002, FR-010)
-- [ ] T006 [P] [US2] Register `CHK-CHROMIUM-DANGERFLAGS` in `FIX_REGISTRY`, `FIX_FUNCTIONS`, and `FIX_DESCRIPTIONS` arrays in `scripts/hardening-fix.sh` with classification CONFIRMATION (FR-002)
+- [x] T005 [P] [US2] Add `fix_chromium_dangerflags()` function to `scripts/hardening-fix.sh` as CONFIRMATION classification that uses `print_instruction` to show: (1) each dangerous flag from the known list in data-model.md, (2) what each flag disables, (3) where to remove them (OpenClaw config `~/.openclaw/openclaw.json` browser.launchArgs or launch script). Must use `prompt_confirm`. Reports INSTRUCTED on success. (FR-002, FR-010)
+- [x] T006 [P] [US2] Register `CHK-CHROMIUM-DANGERFLAGS` in `FIX_REGISTRY`, `FIX_FUNCTIONS`, and `FIX_DESCRIPTIONS` arrays in `scripts/hardening-fix.sh` with classification CONFIRMATION (FR-002)
 
 **Checkpoint**: Fix script recognizes CHK-CHROMIUM-DANGERFLAGS and provides per-flag remediation.
 
@@ -70,8 +70,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T007 [US3] Add `fix_chromium_version()` function to `scripts/hardening-fix.sh` as SAFE classification that: (1) detects installation method (Homebrew Chromium, Homebrew Chrome, or manual per data-model.md), (2) for Homebrew: runs `run_as_user brew upgrade --cask chromium` (or google-chrome), (3) for manual install: reports SKIPPED with manual instructions, (4) adds snapshot_setting entry before update (FR-008). Must use run_as_user for brew commands (FR-009). (FR-003)
-- [ ] T008 [US3] Register `CHK-CHROMIUM-VERSION` in `FIX_REGISTRY`, `FIX_FUNCTIONS`, and `FIX_DESCRIPTIONS` arrays in `scripts/hardening-fix.sh` with classification SAFE (FR-003)
+- [x] T007 [US3] Add `fix_chromium_version()` function to `scripts/hardening-fix.sh` as SAFE classification that: (1) detects installation method (Homebrew Chromium, Homebrew Chrome, or manual per data-model.md), (2) for Homebrew: runs `run_as_user brew upgrade --cask chromium` (or google-chrome), (3) for manual install: reports SKIPPED with manual instructions, (4) adds snapshot_setting entry before update (FR-008). Must use run_as_user for brew commands (FR-009). (FR-003)
+- [x] T008 [US3] Register `CHK-CHROMIUM-VERSION` in `FIX_REGISTRY`, `FIX_FUNCTIONS`, and `FIX_DESCRIPTIONS` arrays in `scripts/hardening-fix.sh` with classification SAFE (FR-003)
 
 **Checkpoint**: Fix script can auto-update Chromium via Homebrew when stale.
 
@@ -100,7 +100,7 @@
 
 ### Implementation for User Story 5
 
-- [ ] T011 [US5] Add a "Set Up Chromium (Optional)" subsection to the Next Steps section of `GETTING-STARTED.md` with: (1) install command `brew install --cask chromium`, (2) run audit to verify `bash scripts/hardening-audit.sh --section "Browser Security"`, (3) expected output showing Chromium checks, (4) link to §2.11 of HARDENING.md for full details (FR-007)
+- [x] T011 [US5] Add a "Set Up Chromium (Optional)" subsection to the Next Steps section of `GETTING-STARTED.md` with: (1) install command `brew install --cask chromium`, (2) run audit to verify `bash scripts/hardening-audit.sh --section "Browser Security"`, (3) expected output showing Chromium checks, (4) link to §2.11 of HARDENING.md for full details (FR-007)
 
 **Checkpoint**: A new operator can set up and verify Chromium hardening from the getting-started guide.
 
@@ -110,9 +110,9 @@
 
 **Purpose**: Update registry, verify syntax, run lint, create PR.
 
-- [ ] T012 Update `Auto-Fix` column in `scripts/CHK-REGISTRY.md` for CHK-CHROMIUM-CDP (yes), CHK-CHROMIUM-DANGERFLAGS (yes), and CHK-CHROMIUM-VERSION (yes)
-- [ ] T013 [P] Verify `scripts/hardening-fix.sh` passes `bash -n` syntax check after all additions
-- [ ] T014 [P] Verify `scripts/browser-cleanup.sh` passes `bash -n` syntax check
+- [x] T012 Update `Auto-Fix` column in `scripts/CHK-REGISTRY.md` for CHK-CHROMIUM-CDP (yes), CHK-CHROMIUM-DANGERFLAGS (yes), and CHK-CHROMIUM-VERSION (yes)
+- [x] T013 [P] Verify `scripts/hardening-fix.sh` passes `bash -n` syntax check after all additions
+- [x] T014 [P] Verify `scripts/browser-cleanup.sh` passes `bash -n` syntax check
 - [ ] T015 Run markdownlint on `GETTING-STARTED.md` and fix any violations
 - [ ] T016 Commit all changes and create PR with summary
 
