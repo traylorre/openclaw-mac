@@ -38,7 +38,7 @@ NOTIFY_SCRIPT="/opt/n8n/scripts/audit-notify.sh"
 FIX_SCRIPT="/opt/n8n/scripts/hardening-fix.sh"
 LOCK_DIR="${LOG_DIR}/.audit-cron.lock"
 HEALTH_FILE="${LOG_DIR}/.last-run"
-RETENTION_COUNT=30
+RETENTION_COUNT=365
 MODE="audit-only"  # audit-only | auto-fix
 
 # --- Usage ---
@@ -51,7 +51,7 @@ Unified audit pipeline: run audit, send notifications, optional auto-fix.
 Options:
   --audit-only    Run audit + notify only (default)
   --auto-fix      Run audit + auto-fix SAFE checks + re-audit + notify
-  --retention N   Keep last N audit log pairs (default: 30)
+  --retention N   Keep last N audit log pairs (default: 365)
   --log-dir DIR   Log directory (default: /opt/n8n/logs/audit)
   --no-color      Disable colored output
   --debug         Enable bash trace output (set -x)
