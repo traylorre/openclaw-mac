@@ -16,6 +16,7 @@ node_modules/
 
 # Local audit working files
 audit/
+openclaw-audit.json
 
 # Sensitive Local Data (Don't leak your own logs/backups)
 *.log
