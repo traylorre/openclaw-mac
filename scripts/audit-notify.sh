@@ -39,6 +39,7 @@ NOTIFY_EMAIL_FROM="openclaw-audit@localhost"
 NOTIFY_OSASCRIPT_ENABLED=true
 NOTIFY_WEBHOOK_ENABLED=false
 NOTIFY_WEBHOOK_URL=""
+NOTIFY_WARN_THRESHOLD=10
 
 # --- Usage ---
 usage() {
@@ -296,19 +297,34 @@ main() {
 
     log_notify "Checking audit results from ${json_file}"
 
-    # Exit silently if no FAILs
+    # Exit silently if no FAILs and WARN count is below threshold
     if [[ "$FAIL_COUNT" -eq 0 ]]; then
-        log_notify "No FAIL results — no notification needed"
-        exit 0
+        if [[ "$WARN_COUNT" -gt "$NOTIFY_WARN_THRESHOLD" ]]; then
+            log_notify "No FAILs but ${WARN_COUNT} WARN(s) exceeds threshold (${NOTIFY_WARN_THRESHOLD}) — dispatching notifications"
+        else
+            log_notify "No FAIL results — no notification needed"
+            exit 0
+        fi
+    else
+        log_notify "${FAIL_COUNT} FAIL(s) detected — dispatching notifications"
     fi
 
-    log_notify "${FAIL_COUNT} FAIL(s) detected — dispatching notifications"
-
-    local subject="[OpenClaw] Security Audit: ${FAIL_COUNT} FAIL(s)"
-    local body
-    body=$(build_notification_body)
-    local short_msg
-    short_msg=$(build_short_summary)
+    local subject body short_msg
+    if [[ "$FAIL_COUNT" -gt 0 ]]; then
+        subject="[OpenClaw] Security Audit: ${FAIL_COUNT} FAIL(s)"
+        body=$(build_notification_body)
+        short_msg=$(build_short_summary)
+    else
+        subject="[OpenClaw] Security Audit: ${WARN_COUNT} WARN(s) exceed threshold"
+        body="OpenClaw Security Audit — ${WARN_COUNT} WARN(s) exceed threshold (${NOTIFY_WARN_THRESHOLD})"
+        body+=$'\n'
+        body+="Timestamp: ${AUDIT_TIMESTAMP}"
+        body+=$'\n'
+        body+="Summary: ${PASS_COUNT} PASS | ${FAIL_COUNT} FAIL | ${WARN_COUNT} WARN (${TOTAL} total)"
+        body+=$'\n\n'
+        body+="Run 'hardening-audit.sh' for full results."
+        short_msg="${WARN_COUNT} WARN(s) exceed threshold (${NOTIFY_WARN_THRESHOLD}). Run audit for details."
+    fi
 
     local dispatch_errors=0
 
