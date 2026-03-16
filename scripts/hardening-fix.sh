@@ -988,6 +988,9 @@ LOG_FILE=/opt/n8n/logs/audit/notifications.log
 
 # Alert on these severity levels: FAIL | WARN | ALL
 ALERT_ON=FAIL
+
+# WARN threshold: send notification if WARN count exceeds this value (even with 0 FAILs)
+NOTIFY_WARN_THRESHOLD=10
 NOTIFY_EOF
     then
         sudo chmod 644 "$conf"
