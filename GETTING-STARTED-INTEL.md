@@ -243,13 +243,13 @@ Before making any changes, preview what the fix script would do.
 First, save the audit results to a file:
 
 ```bash
-sudo bash scripts/hardening-audit.sh --json > /tmp/openclaw-audit.json
+sudo bash scripts/hardening-audit.sh --json | tee openclaw-audit.json > /dev/null
 ```
 
 Then run the fix script in dry-run mode:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --dry-run --auto --audit-file /tmp/openclaw-audit.json
+sudo bash scripts/hardening-fix.sh --dry-run --auto --audit-file openclaw-audit.json
 ```
 
 This shows every command that would run without actually executing it.
@@ -264,7 +264,7 @@ When you are ready, apply the fixes. This uses the same audit file
 you generated in Step 6:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --auto --audit-file /tmp/openclaw-audit.json
+sudo bash scripts/hardening-fix.sh --auto --audit-file openclaw-audit.json
 ```
 
 Your Mac may ask for your password again if more than a few minutes
@@ -438,7 +438,7 @@ Some checks are classified as CONFIRMATION and require interactive
 approval. Run the fix script in interactive mode:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --interactive --audit-file /tmp/openclaw-audit.json
+sudo bash scripts/hardening-fix.sh --interactive --audit-file openclaw-audit.json
 ```
 
 ### Audit results differ when run with and without sudo

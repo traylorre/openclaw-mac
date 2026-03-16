@@ -540,7 +540,10 @@ run_fix_cmd() {
     LAST_FIX_ERROR=""
     if $DRY_RUN; then
         if ! $JSON_OUTPUT; then
-            printf "    %s[DRY-RUN]%s Would execute: %s\n" "$CYAN" "$NC" "$*"
+            # Strip internal wrapper names (run_as_user, run_fix_cmd) from display
+            local display_cmd="$*"
+            display_cmd="${display_cmd/#run_as_user /}"
+            printf "    ${CYAN}[DRY-RUN]${NC} Would execute: %s\n" "$display_cmd"
         fi
         return 0
     fi
