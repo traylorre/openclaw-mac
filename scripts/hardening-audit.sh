@@ -1567,11 +1567,11 @@ check_usb() {
 
 check_launchd_audit_job() {
     local id="CHK-LAUNCHD-AUDIT-JOB"
-    if launchctl list com.openclaw.audit &>/dev/null; then
+    if launchctl list com.openclaw.audit-cron &>/dev/null; then
         report_result "$id" "Infrastructure" "Audit launchd job is loaded" "PASS" "10.1"
-    elif [[ -f /Library/LaunchDaemons/com.openclaw.audit.plist ]]; then
+    elif [[ -f /Library/LaunchDaemons/com.openclaw.audit-cron.plist ]]; then
         report_result "$id" "Infrastructure" "Audit plist exists but job is not loaded" "FAIL" "10.1" \
-            "Load: sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit.plist"
+            "Load: sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist"
     else
         report_result "$id" "Infrastructure" "Audit launchd job not found" "FAIL" "10.1" \
             "Install audit plist — see §10.1"

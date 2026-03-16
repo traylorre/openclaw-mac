@@ -824,7 +824,7 @@ NOTIFY_EOF
 
 fix_launchd_audit() {
     local id="CHK-LAUNCHD-AUDIT-JOB"
-    local plist="/Library/LaunchDaemons/com.openclaw.audit.plist"
+    local plist="/Library/LaunchDaemons/com.openclaw.audit-cron.plist"
     if [[ ! -f "$plist" ]]; then
         report_fix "$id" "Audit plist not found" "SKIPPED" \
             "$plist does not exist — install it first"
