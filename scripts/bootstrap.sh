@@ -367,16 +367,31 @@ validate_commands() {
         fi
     done
 
-    # Docker/Colima (optional)
-    if command -v docker &>/dev/null; then
-        report OK "docker available (container checks enabled)"
+    # Docker/Colima (required for container workloads)
+    local hw_arch
+    hw_arch=$(uname -m)
+    if [[ "$hw_arch" == "arm64" ]]; then
+        report INFO "Hardware: Apple Silicon (${hw_arch})"
     else
-        report SKIP "docker not installed (container checks will SKIP)"
+        report INFO "Hardware: Intel (${hw_arch})"
     fi
+
     if command -v colima &>/dev/null; then
-        report OK "colima available"
+        report OK "colima: $(colima version 2>/dev/null | head -1)"
+    elif [[ "$CHECK_ONLY" == true ]]; then
+        report FAIL "colima not installed"
     else
-        report SKIP "colima not installed (install later per §4.1)"
+        report INFO "Installing colima via Homebrew..."
+        brew install colima 2>/dev/null && report FIXED "colima installed" || report FAIL "colima install failed"
+    fi
+
+    if command -v docker &>/dev/null; then
+        report OK "docker: $(docker --version 2>/dev/null)"
+    elif [[ "$CHECK_ONLY" == true ]]; then
+        report FAIL "docker not installed"
+    else
+        report INFO "Installing docker via Homebrew..."
+        brew install docker 2>/dev/null && report FIXED "docker installed" || report FAIL "docker install failed"
     fi
 
     # Chromium (optional, for OpenClaw browser control)

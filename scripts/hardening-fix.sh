@@ -426,6 +426,10 @@ FIX_REGISTRY[CHK-N8N-NODES]=CONFIRMATION
 FIX_FUNCTIONS[CHK-N8N-NODES]=fix_n8n_nodes
 FIX_DESCRIPTIONS[CHK-N8N-NODES]="Exclude dangerous node types"
 
+FIX_REGISTRY[CHK-COLIMA-RUNNING]=SAFE
+FIX_FUNCTIONS[CHK-COLIMA-RUNNING]=fix_colima_running
+FIX_DESCRIPTIONS[CHK-COLIMA-RUNNING]="Start Colima container runtime"
+
 FIX_REGISTRY[CHK-CONTAINER-ROOT]=CONFIRMATION
 FIX_FUNCTIONS[CHK-CONTAINER-ROOT]=fix_container_root
 FIX_DESCRIPTIONS[CHK-CONTAINER-ROOT]="Run container as non-root user"
@@ -1374,6 +1378,54 @@ fix_n8n_nodes() {
     else
         report_fix "$id" "Exclude dangerous node types" "INSTRUCTED" \
             "Set NODES_EXCLUDE with executeCommand and ssh"
+    fi
+    return 0
+}
+
+fix_colima_running() {
+    local id="CHK-COLIMA-RUNNING"
+
+    if ! command -v colima &>/dev/null; then
+        report_fix "$id" "Colima not installed" "FAILED" \
+            "Run bootstrap first: bash scripts/bootstrap.sh"
+        return 1
+    fi
+
+    # Check if already running
+    local colima_status
+    colima_status=$(colima status 2>&1) || true
+    if echo "$colima_status" | grep -qi "running" && docker info &>/dev/null; then
+        report_fix "$id" "Colima already running" "SKIPPED"
+        return 0
+    fi
+
+    if $DRY_RUN; then
+        run_fix_cmd "Start Colima container runtime" true
+        report_fix "$id" "Start Colima" "DRY-RUN"
+        return 0
+    fi
+
+    # Detect hardware and choose appropriate flags
+    local hw_arch
+    hw_arch=$(uname -m)
+    local colima_cmd="colima start --cpu 2 --memory 4 --disk 60 --no-kubernetes"
+    if [[ "$hw_arch" == "arm64" ]]; then
+        colima_cmd="colima start --cpu 2 --memory 4 --disk 60 --vm-type vz --vz-rosetta --no-kubernetes"
+    fi
+
+    if run_fix_cmd "Start Colima (${hw_arch})" $colima_cmd; then
+        # Verify Docker socket is reachable after start
+        if docker info &>/dev/null; then
+            report_fix "$id" "Colima started, Docker socket reachable" "FIXED"
+        else
+            report_fix "$id" "Colima started but Docker socket not reachable" "FAILED" \
+                "Try: colima stop && colima start"
+            return 1
+        fi
+    else
+        report_fix "$id" "Failed to start Colima" "FAILED" \
+            "Check: colima status; try: colima delete && colima start"
+        return 1
     fi
     return 0
 }

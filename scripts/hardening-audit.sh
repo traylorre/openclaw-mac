@@ -591,6 +591,39 @@ check_spotlight() {
     fi
 }
 
+# --- §4.1 Container Runtime (Colima) ---
+
+check_colima_running() {
+    local id="CHK-COLIMA-RUNNING"
+    if ! command -v colima &>/dev/null; then
+        report_result "$id" "Container Runtime" \
+            "Colima not installed" "SKIP" "4.1" \
+            "Install: brew install colima docker"
+        return
+    fi
+
+    local colima_status
+    colima_status=$(colima status 2>&1) || true
+    if ! echo "$colima_status" | grep -qi "running"; then
+        report_result "$id" "Container Runtime" \
+            "Colima is installed but not running" "WARN" "4.1" \
+            "Start Colima: colima start"
+        return
+    fi
+
+    # Verify Docker socket is actually reachable (catches stale socket after crash)
+    if docker info &>/dev/null; then
+        local colima_ver
+        colima_ver=$(colima version 2>/dev/null | head -1) || colima_ver="unknown"
+        report_result "$id" "Container Runtime" \
+            "Colima running (${colima_ver}), Docker socket reachable" "PASS" "4.1"
+    else
+        report_result "$id" "Container Runtime" \
+            "Colima reports running but Docker socket unreachable" "WARN" "4.1" \
+            "Try: colima stop && colima start"
+    fi
+}
+
 # --- §4 Container Isolation Checks (T024) ---
 
 check_container_root() {
@@ -2106,6 +2139,9 @@ main() {
     run_check check_bluetooth
     run_check check_ipv6
     run_check check_listeners_baseline
+
+    # §4.1 Container Runtime
+    run_check check_colima_running
 
     # §4 Container Isolation checks (T024) — containerized only
     if [[ "$deployment" == "containerized" ]]; then
