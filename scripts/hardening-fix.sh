@@ -13,6 +13,11 @@ fi
 
 set -euo pipefail
 
+# --- Browser Registry ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=browser-registry.sh
+source "${SCRIPT_DIR}/browser-registry.sh"
+
 readonly VERSION="0.1.0"
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
@@ -368,21 +373,21 @@ FIX_REGISTRY[CHK-CLAMAV-FRESHNESS]=SAFE
 FIX_FUNCTIONS[CHK-CLAMAV-FRESHNESS]=fix_clamav_freshness
 FIX_DESCRIPTIONS[CHK-CLAMAV-FRESHNESS]="Update ClamAV signatures"
 
-FIX_REGISTRY[CHK-CHROMIUM-POLICY]=SAFE
-FIX_FUNCTIONS[CHK-CHROMIUM-POLICY]=fix_chromium_policy
-FIX_DESCRIPTIONS[CHK-CHROMIUM-POLICY]="Deploy Chromium managed security policies"
+FIX_REGISTRY[CHK-BROWSER-POLICY]=SAFE
+FIX_FUNCTIONS[CHK-BROWSER-POLICY]=fix_browser_policy
+FIX_DESCRIPTIONS[CHK-BROWSER-POLICY]="Deploy browser managed security policies"
 
-FIX_REGISTRY[CHK-CHROMIUM-AUTOFILL]=SAFE
-FIX_FUNCTIONS[CHK-CHROMIUM-AUTOFILL]=fix_chromium_policy
-FIX_DESCRIPTIONS[CHK-CHROMIUM-AUTOFILL]="Deploy Chromium managed security policies (autofill)"
+FIX_REGISTRY[CHK-BROWSER-AUTOFILL]=SAFE
+FIX_FUNCTIONS[CHK-BROWSER-AUTOFILL]=fix_browser_policy
+FIX_DESCRIPTIONS[CHK-BROWSER-AUTOFILL]="Deploy browser managed security policies (autofill)"
 
-FIX_REGISTRY[CHK-CHROMIUM-EXTENSIONS]=SAFE
-FIX_FUNCTIONS[CHK-CHROMIUM-EXTENSIONS]=fix_chromium_policy
-FIX_DESCRIPTIONS[CHK-CHROMIUM-EXTENSIONS]="Deploy Chromium managed security policies (extensions)"
+FIX_REGISTRY[CHK-BROWSER-EXTENSIONS]=SAFE
+FIX_FUNCTIONS[CHK-BROWSER-EXTENSIONS]=fix_browser_policy
+FIX_DESCRIPTIONS[CHK-BROWSER-EXTENSIONS]="Deploy browser managed security policies (extensions)"
 
-FIX_REGISTRY[CHK-CHROMIUM-URLBLOCK]=SAFE
-FIX_FUNCTIONS[CHK-CHROMIUM-URLBLOCK]=fix_chromium_policy
-FIX_DESCRIPTIONS[CHK-CHROMIUM-URLBLOCK]="Deploy Chromium managed security policies (URL blocklist)"
+FIX_REGISTRY[CHK-BROWSER-URLBLOCK]=SAFE
+FIX_FUNCTIONS[CHK-BROWSER-URLBLOCK]=fix_browser_policy
+FIX_DESCRIPTIONS[CHK-BROWSER-URLBLOCK]="Deploy browser managed security policies (URL blocklist)"
 
 # CONFIRMATION checks (19)
 FIX_REGISTRY[CHK-FILEVAULT]=CONFIRMATION
@@ -457,21 +462,21 @@ FIX_REGISTRY[CHK-SERVICE-DATA-PERMS]=CONFIRMATION
 FIX_FUNCTIONS[CHK-SERVICE-DATA-PERMS]=fix_service_data_perms
 FIX_DESCRIPTIONS[CHK-SERVICE-DATA-PERMS]="Fix n8n data directory ownership and permissions"
 
-FIX_REGISTRY[CHK-CHROMIUM-TCC]=CONFIRMATION
-FIX_FUNCTIONS[CHK-CHROMIUM-TCC]=fix_chromium_tcc
-FIX_DESCRIPTIONS[CHK-CHROMIUM-TCC]="Reset Chromium camera/microphone TCC permissions"
+FIX_REGISTRY[CHK-BROWSER-TCC]=CONFIRMATION
+FIX_FUNCTIONS[CHK-BROWSER-TCC]=fix_browser_tcc
+FIX_DESCRIPTIONS[CHK-BROWSER-TCC]="Reset browser camera/microphone TCC permissions"
 
-FIX_REGISTRY[CHK-CHROMIUM-CDP]=CONFIRMATION
-FIX_FUNCTIONS[CHK-CHROMIUM-CDP]=fix_chromium_cdp
-FIX_DESCRIPTIONS[CHK-CHROMIUM-CDP]="Show correct CDP port binding launch flags"
+FIX_REGISTRY[CHK-BROWSER-CDP]=CONFIRMATION
+FIX_FUNCTIONS[CHK-BROWSER-CDP]=fix_browser_cdp
+FIX_DESCRIPTIONS[CHK-BROWSER-CDP]="Show correct CDP port binding launch flags"
 
-FIX_REGISTRY[CHK-CHROMIUM-DANGERFLAGS]=CONFIRMATION
-FIX_FUNCTIONS[CHK-CHROMIUM-DANGERFLAGS]=fix_chromium_dangerflags
-FIX_DESCRIPTIONS[CHK-CHROMIUM-DANGERFLAGS]="Show which dangerous launch flags to remove"
+FIX_REGISTRY[CHK-BROWSER-DANGERFLAGS]=CONFIRMATION
+FIX_FUNCTIONS[CHK-BROWSER-DANGERFLAGS]=fix_browser_dangerflags
+FIX_DESCRIPTIONS[CHK-BROWSER-DANGERFLAGS]="Show which dangerous launch flags to remove"
 
-FIX_REGISTRY[CHK-CHROMIUM-VERSION]=SAFE
-FIX_FUNCTIONS[CHK-CHROMIUM-VERSION]=fix_chromium_version
-FIX_DESCRIPTIONS[CHK-CHROMIUM-VERSION]="Update Chromium via Homebrew"
+FIX_REGISTRY[CHK-BROWSER-VERSION]=SAFE
+FIX_FUNCTIONS[CHK-BROWSER-VERSION]=fix_browser_version
+FIX_DESCRIPTIONS[CHK-BROWSER-VERSION]="Update browser via Homebrew"
 
 # --- Result Reporting ---
 # Usage: report_fix ID DESCRIPTION STATUS [DETAIL]
@@ -1047,30 +1052,37 @@ fix_clamav_freshness() {
     fi
 }
 
-fix_chromium_policy() {
-    local id="CHK-CHROMIUM-POLICY"
+fix_browser_policy() {
+    local id="CHK-BROWSER-POLICY"
     local plist_dir="/Library/Managed Preferences"
-    local plist_file="${plist_dir}/org.chromium.Chromium.plist"
+    local installed
+    installed=$(get_installed_browsers)
 
-    # Detect Chrome vs Chromium
-    if [[ -d "/Applications/Google Chrome.app" && ! -d "/Applications/Chromium.app" ]]; then
-        plist_file="${plist_dir}/com.google.Chrome.plist"
-    fi
-
-    if [[ -f "$plist_file" ]]; then
-        report_fix "$id" "Chromium managed policies already deployed" "SKIPPED"
+    if [[ -z "$installed" ]]; then
+        report_fix "$id" "No supported browser installed" "SKIPPED"
         return 0
     fi
 
-    if $DRY_RUN; then
-        run_fix_cmd "Deploy Chromium security policy plist" true
-        report_fix "$id" "Deploy Chromium managed security policies" "DRY-RUN"
-        return 0
-    fi
+    local browser
+    for browser in $installed; do
+        local name="${BROWSER_NAME[$browser]}"
+        local domain="${BROWSER_PLIST_DOMAIN[$browser]}"
+        local plist_file="${plist_dir}/${domain}.plist"
 
-    sudo mkdir -p "$plist_dir" 2>/dev/null
+        if [[ -f "$plist_file" ]]; then
+            report_fix "$id" "[${name}] Managed policies already deployed" "SKIPPED"
+            continue
+        fi
 
-    if sudo tee "$plist_file" > /dev/null <<'CHROMIUM_POLICY_EOF'
+        if $DRY_RUN; then
+            run_fix_cmd "Deploy ${name} security policy plist" true
+            report_fix "$id" "[${name}] Deploy managed security policies" "DRY-RUN"
+            continue
+        fi
+
+        sudo mkdir -p "$plist_dir" 2>/dev/null
+
+        if sudo tee "$plist_file" > /dev/null <<'BROWSER_POLICY_EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1120,7 +1132,7 @@ fix_chromium_policy() {
     <key>PromptForDownloadLocation</key>
     <true/>
     <key>DownloadDirectory</key>
-    <string>/tmp/chromium-downloads</string>
+    <string>/tmp/browser-downloads</string>
     <key>URLBlocklist</key>
     <array>
         <string>*</string>
@@ -1134,20 +1146,19 @@ fix_chromium_policy() {
     <integer>3</integer>
 </dict>
 </plist>
-CHROMIUM_POLICY_EOF
-    then
-        sudo chmod 644 "$plist_file"
-        # Validate plist syntax
-        if ! plutil -lint "$plist_file" &>/dev/null; then
-            report_fix "$id" "Policy plist deployed but failed syntax validation" "FAILED" \
-                "Run: plutil -lint $plist_file"
-            return 1
+BROWSER_POLICY_EOF
+        then
+            sudo chmod 644 "$plist_file"
+            if ! plutil -lint "$plist_file" &>/dev/null; then
+                report_fix "$id" "[${name}] Policy plist deployed but failed syntax validation" "FAILED" \
+                    "Run: plutil -lint $plist_file"
+                continue
+            fi
+            report_fix "$id" "[${name}] Deployed managed security policies" "FIXED" "$plist_file"
+        else
+            report_fix "$id" "[${name}] Failed to deploy policy plist" "FAILED" "$LAST_FIX_ERROR"
         fi
-        report_fix "$id" "Deployed Chromium managed security policies" "FIXED" "$plist_file"
-    else
-        report_fix "$id" "Failed to deploy Chromium policy plist" "FAILED" "$LAST_FIX_ERROR"
-        return 1
-    fi
+    done
     return 0
 }
 
@@ -1589,63 +1600,75 @@ fix_service_data_perms() {
     return 0
 }
 
-fix_chromium_tcc() {
-    local id="CHK-CHROMIUM-TCC"
-    if ! prompt_confirm "$id" "Reset Chromium camera/microphone TCC permissions (denies access)"; then
-        report_fix "$id" "Reset Chromium TCC permissions" "SKIPPED" "User declined"
+fix_browser_tcc() {
+    local id="CHK-BROWSER-TCC"
+    local installed
+    installed=$(get_installed_browsers)
+
+    if [[ -z "$installed" ]]; then
+        report_fix "$id" "No supported browser installed" "SKIPPED"
+        return 0
+    fi
+
+    if ! prompt_confirm "$id" "Reset browser camera/microphone TCC permissions (denies access)"; then
+        report_fix "$id" "Reset browser TCC permissions" "SKIPPED" "User declined"
         return 0
     fi
     if $DRY_RUN; then
-        run_fix_cmd "Reset Camera TCC for Chromium" true
-        run_fix_cmd "Reset Microphone TCC for Chromium" true
-        report_fix "$id" "Reset Chromium TCC permissions" "DRY-RUN"
+        local browser
+        for browser in $installed; do
+            local name="${BROWSER_NAME[$browser]}"
+            run_fix_cmd "Reset Camera TCC for ${name}" true
+            run_fix_cmd "Reset Microphone TCC for ${name}" true
+        done
+        report_fix "$id" "Reset browser TCC permissions" "DRY-RUN"
         return 0
     fi
 
-    local ok=true
-    # Reset for both Chromium and Chrome bundle IDs
-    # tccutil may require sudo for system-level TCC entries (macOS 11+)
-    for bundle_id in org.chromium.Chromium com.google.Chrome; do
-        if ! tccutil reset Camera "$bundle_id" 2>/dev/null; then
-            sudo tccutil reset Camera "$bundle_id" 2>/dev/null || true
+    local browser
+    for browser in $installed; do
+        local name="${BROWSER_NAME[$browser]}"
+        local tcc_bundle="${BROWSER_TCC_BUNDLE[$browser]}"
+        if ! tccutil reset Camera "$tcc_bundle" 2>/dev/null; then
+            sudo tccutil reset Camera "$tcc_bundle" 2>/dev/null || true
         fi
-        if ! tccutil reset Microphone "$bundle_id" 2>/dev/null; then
-            sudo tccutil reset Microphone "$bundle_id" 2>/dev/null || true
+        if ! tccutil reset Microphone "$tcc_bundle" 2>/dev/null; then
+            sudo tccutil reset Microphone "$tcc_bundle" 2>/dev/null || true
         fi
     done
 
-    # Verify at least one reset worked by checking if grants remain
+    # Verify resets by checking if grants remain for any registered browser
     local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
     if [[ -f "$tcc_db" ]]; then
+        local where_clause=""
+        for browser in $installed; do
+            local tcc_bundle="${BROWSER_TCC_BUNDLE[$browser]}"
+            where_clause+="${where_clause:+ OR }client='${tcc_bundle}'"
+        done
         local remaining
         remaining=$(sqlite3 "$tcc_db" \
-            "SELECT COUNT(*) FROM access WHERE (client LIKE '%chromium%' OR client LIKE '%Chrome%') AND auth_value=2 AND service IN ('kTCCServiceCamera','kTCCServiceMicrophone')" \
+            "SELECT COUNT(*) FROM access WHERE (${where_clause}) AND auth_value=2 AND service IN ('kTCCServiceCamera','kTCCServiceMicrophone')" \
             2>/dev/null) || remaining=""
         if [[ "$remaining" == "0" || -z "$remaining" ]]; then
-            report_fix "$id" "Reset camera/microphone TCC for Chromium and Chrome" "FIXED" \
-                "Camera and microphone access denied for both org.chromium.Chromium and com.google.Chrome"
+            report_fix "$id" "Reset camera/microphone TCC for all installed browsers" "FIXED"
         else
-            ok=false
+            report_fix "$id" "TCC reset may not have taken effect for all browsers" "FAILED" \
+                "Check TCC database manually"
+            return 1
         fi
     else
-        report_fix "$id" "Reset camera/microphone TCC for Chromium and Chrome" "FIXED" \
+        report_fix "$id" "Reset camera/microphone TCC for all installed browsers" "FIXED" \
             "TCC reset commands executed (could not verify — TCC database not readable)"
-    fi
-
-    if ! $ok; then
-        report_fix "$id" "TCC reset may not have taken effect" "FAILED" \
-            "Try manually: sudo tccutil reset Camera org.chromium.Chromium"
-        return 1
     fi
     return 0
 }
 
 # =============================================================================
-# Fix Functions — CDP / Chromium Hardening (005)
+# Fix Functions — CDP / Browser Hardening (005)
 # =============================================================================
 
-fix_chromium_cdp() {
-    local id="CHK-CHROMIUM-CDP"
+fix_browser_cdp() {
+    local id="CHK-BROWSER-CDP"
     if ! prompt_confirm "$id" "Show correct CDP port binding flags (unauthenticated RCE risk)"; then
         report_fix "$id" "Show CDP port binding fix" "SKIPPED" "User declined"
         return 0
@@ -1655,7 +1678,7 @@ fix_chromium_cdp() {
         "Any process that can reach the CDP port has full browser control:" \
         "cookie extraction, JavaScript execution, screenshot capture." \
         "" \
-        "Always launch Chromium with BOTH flags:" \
+        "Always launch your browser with BOTH flags:" \
         "" \
         "  --remote-debugging-address=127.0.0.1" \
         "  --remote-debugging-port=9222" \
@@ -1671,6 +1694,7 @@ fix_chromium_cdp() {
         "    }" \
         "  }" \
         "" \
+        "This applies to Chromium, Chrome, and Edge equally." \
         "See docs/HARDENING.md §2.11.3 for full details."
     if $DRY_RUN; then
         report_fix "$id" "Show CDP port binding fix" "DRY-RUN"
@@ -1681,18 +1705,18 @@ fix_chromium_cdp() {
     return 0
 }
 
-fix_chromium_dangerflags() {
-    local id="CHK-CHROMIUM-DANGERFLAGS"
-    if ! prompt_confirm "$id" "Show dangerous Chromium launch flags to remove"; then
+fix_browser_dangerflags() {
+    local id="CHK-BROWSER-DANGERFLAGS"
+    if ! prompt_confirm "$id" "Show dangerous browser launch flags to remove"; then
         report_fix "$id" "Show dangerous flags to remove" "SKIPPED" "User declined"
         return 0
     fi
     print_instruction \
-        "The following Chromium launch flags weaken security and should" \
-        "be removed from your launch configuration:" \
+        "The following launch flags weaken security and should" \
+        "be removed from your browser launch configuration:" \
         "" \
         "  --disable-web-security         Disables same-origin policy" \
-        "  --no-sandbox                   Disables Chromium sandbox" \
+        "  --no-sandbox                   Disables browser sandbox" \
         "  --disable-site-isolation-trials Disables process-per-site isolation" \
         "  --disable-features=IsolateOrigins  Disables origin isolation" \
         "  --allow-running-insecure-content   Allows HTTP on HTTPS pages" \
@@ -1702,50 +1726,54 @@ fix_chromium_dangerflags() {
         "  Remove any of the above from browser.launchArgs" \
         "" \
         "If using a custom launch script, remove these flags from it." \
+        "This applies to Chromium, Chrome, and Edge equally." \
         "" \
         "See docs/HARDENING.md §2.11.9 for full details."
     if $DRY_RUN; then
         report_fix "$id" "Show dangerous flags to remove" "DRY-RUN"
     else
         report_fix "$id" "Show dangerous flags to remove" "INSTRUCTED" \
-            "Remove dangerous flags from Chromium launch configuration"
+            "Remove dangerous flags from browser launch configuration"
     fi
     return 0
 }
 
-fix_chromium_version() {
-    local id="CHK-CHROMIUM-VERSION"
-    # Detect installation method
-    local update_cmd="" browser_name=""
-    if run_as_user brew list --cask chromium &>/dev/null 2>&1; then
-        update_cmd="brew upgrade --cask chromium"
-        browser_name="Chromium (Homebrew)"
-    elif run_as_user brew list --cask google-chrome &>/dev/null 2>&1; then
-        update_cmd="brew upgrade --cask google-chrome"
-        browser_name="Google Chrome (Homebrew)"
-    fi
+fix_browser_version() {
+    local id="CHK-BROWSER-VERSION"
+    local installed
+    installed=$(get_installed_browsers)
 
-    if [[ -z "$update_cmd" ]]; then
-        report_fix "$id" "Chromium not installed via Homebrew" "SKIPPED" \
-            "Update manually from the vendor website"
+    if [[ -z "$installed" ]]; then
+        report_fix "$id" "No supported browser installed" "SKIPPED"
         return 0
     fi
 
-    snapshot_setting "$id" "Chromium version (informational — downgrade not automated)" \
-        "echo 'Homebrew does not support cask version pinning — reinstall previous version manually if needed'"
+    local browser
+    for browser in $installed; do
+        local name="${BROWSER_NAME[$browser]}"
+        local cask="${BROWSER_CASK[$browser]}"
 
-    if run_fix_cmd "Update $browser_name" run_as_user $update_cmd; then
-        if $DRY_RUN; then
-            report_fix "$id" "Updated $browser_name" "DRY-RUN"
-        else
-            report_fix "$id" "Updated $browser_name" "FIXED"
+        if ! run_as_user brew list --cask "$cask" &>/dev/null 2>&1; then
+            report_fix "$id" "[${name}] Not installed via Homebrew" "SKIPPED" \
+                "Update manually from the vendor website"
+            continue
         fi
-        return 0
-    else
-        report_fix "$id" "Failed to update $browser_name" "FAILED" \
-            "Run manually: $update_cmd"
-        return 1
-    fi
+
+        snapshot_setting "$id" "${name} version (informational — downgrade not automated)" \
+            "echo 'Homebrew does not support cask version pinning — reinstall previous version manually if needed'"
+
+        if run_fix_cmd "Update ${name} (Homebrew)" run_as_user brew upgrade --cask "$cask"; then
+            if $DRY_RUN; then
+                report_fix "$id" "[${name}] Updated via Homebrew" "DRY-RUN"
+            else
+                report_fix "$id" "[${name}] Updated via Homebrew" "FIXED"
+            fi
+        else
+            report_fix "$id" "[${name}] Failed to update" "FAILED" \
+                "Run manually: brew upgrade --cask ${cask}"
+        fi
+    done
+    return 0
 }
 
 # =============================================================================
