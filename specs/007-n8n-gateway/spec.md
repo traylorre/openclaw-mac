@@ -170,8 +170,12 @@ n8n was deployed.
 - **FR-008**: A gateway workflow MUST accept a JSON body with an
   `intent` field and route to the correct sub-workflow based on
   the intent value.
-- **FR-009**: Unknown or missing `intent` values MUST return a 400
-  response with an error message listing valid intents.
+- **FR-009a**: A request with no `intent` field MUST return a 400
+  response with error "Missing required field: intent" and a list
+  of valid intents.
+- **FR-009b**: A request with an unrecognized `intent` value MUST
+  return a 400 response naming the unknown intent and listing valid
+  intents.
 - **FR-010**: The n8n deployment MUST NOT introduce any new FAIL
   results in the hardening audit.
 - **FR-011**: The n8n container MUST run as a non-root user, without
