@@ -1479,7 +1479,7 @@ chromium --jitless --remote-debugging-port=18800
 
 `[PARTIALLY AUTOMATED]` — Automated domain restriction + manual operational controls.
 
-> **IMPORTANT — Automation coverage**: Of the 5 defense layers below, only **Layer 1 (domain restriction)** is enforced by Chromium policy and verified by the audit script (`CHK-CHROMIUM-URLBLOCK`). Layers 2–5 require application-level implementation in your n8n workflows, OpenClaw configuration, and operational procedures. Deploying the plist alone does **not** provide complete prompt injection defense.
+> **IMPORTANT — Automation coverage**: Of the 5 defense layers below, only **Layer 1 (domain restriction)** is enforced by Chromium policy and verified by the audit script (`CHK-BROWSER-URLBLOCK`). Layers 2–5 require application-level implementation in your n8n workflows, OpenClaw configuration, and operational procedures. Deploying the plist alone does **not** provide complete prompt injection defense.
 
 When an AI agent controls a browser, **every open webpage becomes an attack surface**. Adversarial content embedded in web pages can attempt to hijack the agent's behavior. This is fundamentally different from a human browsing the web — the AI agent processes page content as potential instructions. Prompt injection is considered unlikely to ever be fully solved at the model level alone (OpenAI, 2024); defense-in-depth is mandatory.
 
@@ -1516,7 +1516,7 @@ defaults read "$(_chromium_policy_plist)" URLAllowlist 2>/dev/null
 
 This prevents the browser from navigating to attacker-controlled domains even if the agent is fully compromised. Adjust the allowlist to match your pipeline's target domains.
 
-**Audit check**: `CHK-CHROMIUM-URLBLOCK` verifies that `URLBlocklist` contains `"*"` (deny-all-by-default).
+**Audit check**: `CHK-BROWSER-URLBLOCK` verifies that `URLBlocklist` contains `"*"` (deny-all-by-default).
 
 ###### Defense Layer 2 — Content Sanitization Pipeline
 
@@ -1715,7 +1715,7 @@ OpenClaw stores its configuration in `~/.openclaw/openclaw.json`. Security-relev
 
 > **DANGER**: The flag `--disable-web-security` disables the Same-Origin Policy entirely, allowing any page to read any other page's data including cookies and DOM. Never use this flag outside of isolated test environments.
 
-**Audit check**: `CHK-CHROMIUM-DANGERFLAGS` detects dangerous flags in both running Chromium processes and the OpenClaw config file.
+**Audit check**: `CHK-BROWSER-DANGERFLAGS` detects dangerous flags in both running Chromium processes and the OpenClaw config file.
 
 **Security advisories:**
 
@@ -1809,7 +1809,7 @@ ls -la "$HOME/Library/Application Support/Chromium/" 2>/dev/null
 - **Profile corruption**: If OpenClaw crashes mid-operation, the Chromium profile may be left in an inconsistent state. Use `--user-data-dir` with a disposable directory and periodic cleanup (§7.11).
 - **Homebrew Chromium vs App Store**: Chromium is not available on the Mac App Store. The Homebrew cask is the recommended installation method. Verify the cask SHA256 hash matches the official Chromium build.
 
-**Audit checks**: `CHK-CHROMIUM-POLICY` (WARN), `CHK-CHROMIUM-AUTOFILL` (WARN), `CHK-CHROMIUM-EXTENSIONS` (WARN), `CHK-CHROMIUM-CDP` (WARN), `CHK-CHROMIUM-TCC` (WARN), `CHK-CHROMIUM-VERSION` (WARN), `CHK-CHROMIUM-DANGERFLAGS` (WARN), `CHK-CHROMIUM-URLBLOCK` (WARN) → §2.11
+**Audit checks**: `CHK-BROWSER-POLICY` (WARN), `CHK-BROWSER-AUTOFILL` (WARN), `CHK-BROWSER-EXTENSIONS` (WARN), `CHK-BROWSER-CDP` (WARN), `CHK-BROWSER-TCC` (WARN), `CHK-BROWSER-VERSION` (WARN), `CHK-BROWSER-DANGERFLAGS` (WARN), `CHK-BROWSER-URLBLOCK` (WARN) → §2.11
 
 ---
 
@@ -6846,18 +6846,18 @@ Complete reference of all `CHK-*` audit checks. Each check maps to a specific gu
 | CHK-PROFILES | WARN | both | Configuration profiles reviewed | §2.10 |
 | CHK-SPOTLIGHT | WARN | both | Spotlight indexing restricted | §2.10 |
 
-#### §2.11 — Browser Security (Chromium)
+#### §2.11 — Browser Security (Chromium / Chrome / Edge)
 
 | ID | Severity | Deployment | Description | Guide Section |
 |----|----------|------------|-------------|---------------|
-| CHK-CHROMIUM-POLICY | WARN | both | Chromium managed policies deployed | §2.11 |
-| CHK-CHROMIUM-AUTOFILL | WARN | both | Autofill and password manager disabled | §2.11 |
-| CHK-CHROMIUM-EXTENSIONS | WARN | both | Extensions blocked or allowlisted | §2.11 |
-| CHK-CHROMIUM-CDP | WARN | both | CDP port not exposed to network | §2.11 |
-| CHK-CHROMIUM-TCC | WARN | both | Camera/microphone TCC denied | §2.11 |
-| CHK-CHROMIUM-VERSION | WARN | both | Browser version not outdated | §2.11 |
-| CHK-CHROMIUM-DANGERFLAGS | WARN | both | No dangerous launch flags detected | §2.11 |
-| CHK-CHROMIUM-URLBLOCK | WARN | both | URLBlocklist deny-all-by-default configured | §2.11 |
+| CHK-BROWSER-POLICY | WARN | both | Browser managed policies deployed | §2.11 |
+| CHK-BROWSER-AUTOFILL | WARN | both | Autofill and password manager disabled | §2.11 |
+| CHK-BROWSER-EXTENSIONS | WARN | both | Extensions blocked or allowlisted | §2.11 |
+| CHK-BROWSER-CDP | WARN | both | CDP port not exposed to network | §2.11 |
+| CHK-BROWSER-TCC | WARN | both | Camera/microphone TCC denied | §2.11 |
+| CHK-BROWSER-VERSION | WARN | both | Browser version not outdated | §2.11 |
+| CHK-BROWSER-DANGERFLAGS | WARN | both | No dangerous launch flags detected | §2.11 |
+| CHK-BROWSER-URLBLOCK | WARN | both | URLBlocklist deny-all-by-default configured | §2.11 |
 
 #### §3 — Network Security
 

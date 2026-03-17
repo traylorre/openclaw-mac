@@ -367,11 +367,15 @@ After hardening, consider these optional improvements:
   sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist
   ```
 
-- **Set up Chromium** if you will use browser automation (e.g.,
-  OpenClaw with Chrome DevTools Protocol):
+- **Set up a browser** if you will use browser automation (e.g.,
+  OpenClaw with Chrome DevTools Protocol). Chromium is recommended,
+  but Google Chrome and Microsoft Edge are also fully supported —
+  all browser security checks apply equally:
 
   ```bash
   brew install --cask chromium
+  # Or: brew install --cask google-chrome
+  # Or: brew install --cask microsoft-edge
   ```
 
   Then verify the browser security checks pass:
@@ -381,7 +385,7 @@ After hardening, consider these optional improvements:
   ```
 
   See [docs/HARDENING.md §2.11](docs/HARDENING.md#211-browser-security-chromium-auto-fix)
-  for full Chromium hardening details including CDP port binding,
+  for full browser hardening details including CDP port binding,
   managed security policies, and browser data cleanup.
 
 - **Clean browser session data** after automation runs to remove

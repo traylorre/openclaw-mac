@@ -12,6 +12,11 @@ fi
 
 set -euo pipefail
 
+# --- Browser Registry ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=browser-registry.sh
+source "${SCRIPT_DIR}/browser-registry.sh"
+
 readonly VERSION="0.1.0"
 SCRIPT_NAME="$(basename "$0")"
 readonly SCRIPT_NAME
@@ -144,6 +149,7 @@ report_result() {
     local status="$4"
     local guide_ref="$5"
     local remediation="${6:-}"
+    local browser="${7:-}"  # optional: browser display name for CHK-BROWSER-* checks
 
     # Filter by section if requested
     if [[ -n "$FILTER_SECTION" && "$section" != "$FILTER_SECTION" ]]; then
@@ -164,6 +170,9 @@ report_result() {
         "$(json_escape "$id")" "$(json_escape "$section")" \
         "$(json_escape "$description")" "$(json_escape "$status")" \
         "$(json_escape "$guide_ref")")
+    if [[ -n "$browser" ]]; then
+        json_entry="${json_entry},\"browser\":\"$(json_escape "$browser")\""
+    fi
     if [[ -n "$remediation" ]]; then
         json_entry="${json_entry},\"remediation\":\"$(json_escape "$remediation")\"}"
     else
@@ -1658,60 +1667,36 @@ check_clamav_freshness() {
 }
 
 # ===========================================================================
-# §2.11 — Browser Security (Chromium)
+# §2.11 — Browser Security (Chromium / Chrome / Edge)
+# Uses browser registry from scripts/browser-registry.sh
 # ===========================================================================
 
-# Helper: detect if Chromium (or Chrome) is installed
-_chromium_installed() {
-    [[ -d "/Applications/Chromium.app" ]] || \
-    [[ -d "/Applications/Google Chrome.app" ]] || \
-    command -v chromium &>/dev/null || \
-    command -v google-chrome &>/dev/null
-}
+check_browser_policy() {
+    local browser="$1"
+    local id="CHK-BROWSER-POLICY"
+    local name="${BROWSER_NAME[$browser]}"
+    local plist="/Library/Managed Preferences/${BROWSER_PLIST_DOMAIN[$browser]}.plist"
 
-# Helper: determine policy plist domain and path
-_chromium_policy_plist() {
-    if [[ -d "/Applications/Chromium.app" ]]; then
-        echo "/Library/Managed Preferences/org.chromium.Chromium"
-    elif [[ -d "/Applications/Google Chrome.app" ]]; then
-        echo "/Library/Managed Preferences/com.google.Chrome"
-    else
-        echo "/Library/Managed Preferences/org.chromium.Chromium"
-    fi
-}
-
-check_chromium_policy() {
-    local id="CHK-CHROMIUM-POLICY"
-    if ! _chromium_installed; then
-        report_result "$id" "Browser Security" \
-            "Chromium not installed (browser checks skipped)" "SKIP" "2.11"
-        return
-    fi
-
-    local plist
-    plist="$(_chromium_policy_plist).plist"
     if [[ -f "$plist" ]]; then
         report_result "$id" "Browser Security" \
-            "Chromium managed security policies deployed" "PASS" "2.11"
+            "[${name}] Managed security policies deployed" "PASS" "2.11" "" "$name"
     else
         report_result "$id" "Browser Security" \
-            "No Chromium managed policy plist found" "WARN" "2.11" \
-            "Deploy policy: see §2.11.2 in hardening guide"
+            "[${name}] No managed policy plist found" "WARN" "2.11" \
+            "Deploy policy: see §2.11.2 in hardening guide" "$name"
     fi
 }
 
-check_chromium_autofill() {
-    local id="CHK-CHROMIUM-AUTOFILL"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
-    fi
+check_browser_autofill() {
+    local browser="$1"
+    local id="CHK-BROWSER-AUTOFILL"
+    local name="${BROWSER_NAME[$browser]}"
+    local plist="/Library/Managed Preferences/${BROWSER_PLIST_DOMAIN[$browser]}"
 
-    local plist
-    plist="$(_chromium_policy_plist)"
     if [[ ! -f "${plist}.plist" ]]; then
         report_result "$id" "Browser Security" \
-            "Cannot check autofill — no managed policy plist" "WARN" "2.11" \
-            "Deploy policy with autofill disabled: §2.11.2"
+            "[${name}] Cannot check autofill — no managed policy plist" "WARN" "2.11" \
+            "Deploy policy with autofill disabled: §2.11.2" "$name"
         return
     fi
 
@@ -1722,26 +1707,24 @@ check_chromium_autofill() {
 
     if [[ "$pw_mgr" == "0" && "$autofill_addr" == "0" && "$autofill_cc" == "0" ]]; then
         report_result "$id" "Browser Security" \
-            "Password manager and autofill disabled via policy" "PASS" "2.11"
+            "[${name}] Password manager and autofill disabled via policy" "PASS" "2.11" "" "$name"
     else
         report_result "$id" "Browser Security" \
-            "Password manager or autofill not fully disabled" "WARN" "2.11" \
-            "Set PasswordManagerEnabled, AutofillAddressEnabled, AutofillCreditCardEnabled to false"
+            "[${name}] Password manager or autofill not fully disabled" "WARN" "2.11" \
+            "Set PasswordManagerEnabled, AutofillAddressEnabled, AutofillCreditCardEnabled to false" "$name"
     fi
 }
 
-check_chromium_extensions() {
-    local id="CHK-CHROMIUM-EXTENSIONS"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
-    fi
+check_browser_extensions() {
+    local browser="$1"
+    local id="CHK-BROWSER-EXTENSIONS"
+    local name="${BROWSER_NAME[$browser]}"
+    local plist="/Library/Managed Preferences/${BROWSER_PLIST_DOMAIN[$browser]}"
 
-    local plist
-    plist="$(_chromium_policy_plist)"
     if [[ ! -f "${plist}.plist" ]]; then
         report_result "$id" "Browser Security" \
-            "Cannot check extension policy — no managed policy plist" "WARN" "2.11" \
-            "Deploy policy with ExtensionInstallBlocklist: §2.11.2"
+            "[${name}] Cannot check extension policy — no managed policy plist" "WARN" "2.11" \
+            "Deploy policy with ExtensionInstallBlocklist: §2.11.2" "$name"
         return
     fi
 
@@ -1749,25 +1732,53 @@ check_chromium_extensions() {
     blocklist=$(defaults read "$plist" ExtensionInstallBlocklist 2>/dev/null) || blocklist=""
     if echo "$blocklist" | grep -qF '"*"' || echo "$blocklist" | grep -qF "'*'"; then
         report_result "$id" "Browser Security" \
-            "All extensions blocked by policy (allowlist-only)" "PASS" "2.11"
+            "[${name}] All extensions blocked by policy (allowlist-only)" "PASS" "2.11" "" "$name"
     elif [[ -n "$blocklist" ]]; then
         report_result "$id" "Browser Security" \
-            "Extension blocklist set but not blocking all (*)" "WARN" "2.11" \
-            "Set ExtensionInstallBlocklist to [\"*\"] to block all, then allowlist specific IDs"
+            "[${name}] Extension blocklist set but not blocking all (*)" "WARN" "2.11" \
+            "Set ExtensionInstallBlocklist to [\"*\"] to block all, then allowlist specific IDs" "$name"
     else
         report_result "$id" "Browser Security" \
-            "No extension blocklist policy configured" "WARN" "2.11" \
-            "Set ExtensionInstallBlocklist to [\"*\"]: §2.11.8"
+            "[${name}] No extension blocklist policy configured" "WARN" "2.11" \
+            "Set ExtensionInstallBlocklist to [\"*\"]: §2.11.8" "$name"
     fi
 }
 
-check_chromium_cdp() {
-    local id="CHK-CHROMIUM-CDP"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
+check_browser_urlblock() {
+    local browser="$1"
+    local id="CHK-BROWSER-URLBLOCK"
+    local name="${BROWSER_NAME[$browser]}"
+    local plist="/Library/Managed Preferences/${BROWSER_PLIST_DOMAIN[$browser]}"
+
+    if [[ ! -f "${plist}.plist" ]]; then
+        report_result "$id" "Browser Security" \
+            "[${name}] Cannot check URL blocklist — no managed policy plist" "WARN" "2.11" \
+            "Deploy policy with URLBlocklist: §2.11.2" "$name"
+        return
     fi
 
-    # Check CDP ports: 9222 (Chromium default) and 18800 (OpenClaw default)
+    local blocklist
+    blocklist=$(defaults read "$plist" URLBlocklist 2>/dev/null) || blocklist=""
+    if echo "$blocklist" | grep -qF '"*"' || echo "$blocklist" | grep -qF "'*'"; then
+        report_result "$id" "Browser Security" \
+            "[${name}] URLBlocklist deny-all-by-default configured" "PASS" "2.11" "" "$name"
+    elif [[ -n "$blocklist" ]]; then
+        report_result "$id" "Browser Security" \
+            "[${name}] URLBlocklist is set but not deny-all-by-default" "WARN" "2.11" \
+            "Set URLBlocklist to [\"*\"] for deny-all, then use URLAllowlist for permitted domains" "$name"
+    else
+        report_result "$id" "Browser Security" \
+            "[${name}] No URLBlocklist configured — browser can navigate anywhere" "WARN" "2.11" \
+            "Deploy URLBlocklist policy: §2.11.7 Defense Layer 1" "$name"
+    fi
+}
+
+check_browser_cdp() {
+    local browser="$1"
+    local id="CHK-BROWSER-CDP"
+    local name="${BROWSER_NAME[$browser]}"
+
+    # Check CDP ports: 9222 (browser default) and 18800 (OpenClaw default)
     local cdp_listeners="" port exposed=false localhost_only=true active_ports=""
     for port in 9222 18800; do
         local listeners
@@ -1786,71 +1797,70 @@ check_chromium_cdp() {
 
     if [[ -z "$cdp_listeners" ]]; then
         report_result "$id" "Browser Security" \
-            "No process listening on CDP ports (9222, 18800)" "PASS" "2.11"
+            "[${name}] No process listening on CDP ports (9222, 18800)" "PASS" "2.11" "" "$name"
         return
     fi
 
     if $exposed; then
         report_result "$id" "Browser Security" \
-            "CDP port(s) $active_ports bound to all interfaces (network-exposed)" "WARN" "2.11" \
-            "Ensure --remote-debugging-address=127.0.0.1 and add pf rule: §2.11.3"
+            "[${name}] CDP port(s) $active_ports bound to all interfaces (network-exposed)" "WARN" "2.11" \
+            "Ensure --remote-debugging-address=127.0.0.1 and add pf rule: §2.11.3" "$name"
     elif $localhost_only; then
         report_result "$id" "Browser Security" \
-            "CDP port(s) $active_ports bound to localhost only" "PASS" "2.11"
+            "[${name}] CDP port(s) $active_ports bound to localhost only" "PASS" "2.11" "" "$name"
     else
         report_result "$id" "Browser Security" \
-            "CDP port(s) $active_ports active — verify binding address" "WARN" "2.11" \
-            "Run: lsof -i :9222 -i :18800 -sTCP:LISTEN to check binding"
+            "[${name}] CDP port(s) $active_ports active — verify binding address" "WARN" "2.11" \
+            "Run: lsof -i :9222 -i :18800 -sTCP:LISTEN to check binding" "$name"
     fi
 }
 
-check_chromium_tcc() {
-    local id="CHK-CHROMIUM-TCC"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
-    fi
+check_browser_tcc() {
+    local browser="$1"
+    local id="CHK-BROWSER-TCC"
+    local name="${BROWSER_NAME[$browser]}"
+    local tcc_bundle="${BROWSER_TCC_BUNDLE[$browser]}"
 
     local tcc_db="$HOME/Library/Application Support/com.apple.TCC/TCC.db"
     if [[ ! -f "$tcc_db" ]]; then
         report_result "$id" "Browser Security" \
-            "Cannot read TCC database" "SKIP" "2.11"
+            "[${name}] Cannot read TCC database" "SKIP" "2.11" "" "$name"
         return
     fi
 
     # Check for camera or microphone grants (auth_value=2 means allowed)
     local grants
     grants=$(sqlite3 "$tcc_db" \
-        "SELECT service FROM access WHERE (client LIKE '%chromium%' OR client LIKE '%Chrome%') AND auth_value=2 AND service IN ('kTCCServiceCamera','kTCCServiceMicrophone')" \
+        "SELECT service FROM access WHERE client='${tcc_bundle}' AND auth_value=2 AND service IN ('kTCCServiceCamera','kTCCServiceMicrophone')" \
         2>/dev/null) || grants=""
 
     if [[ -z "$grants" ]]; then
         report_result "$id" "Browser Security" \
-            "No camera/microphone TCC grants for Chromium" "PASS" "2.11"
+            "[${name}] No camera/microphone TCC grants" "PASS" "2.11" "" "$name"
     else
         report_result "$id" "Browser Security" \
-            "Chromium has camera/microphone TCC access: ${grants}" "WARN" "2.11" \
-            "Reset: tccutil reset Camera org.chromium.Chromium && tccutil reset Microphone org.chromium.Chromium"
+            "[${name}] Has camera/microphone TCC access: ${grants}" "WARN" "2.11" \
+            "Reset: tccutil reset Camera ${tcc_bundle} && tccutil reset Microphone ${tcc_bundle}" "$name"
     fi
 }
 
-check_chromium_version() {
-    local id="CHK-CHROMIUM-VERSION"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
-    fi
+check_browser_version() {
+    local browser="$1"
+    local id="CHK-BROWSER-VERSION"
+    local name="${BROWSER_NAME[$browser]}"
+    local binary="${BROWSER_BINARY_PATH[$browser]}"
+    local cask="${BROWSER_CASK[$browser]}"
 
-    # Get Chromium/Chrome version string
+    # Get browser version string
     local version_str=""
-    if [[ -d "/Applications/Chromium.app" ]]; then
-        version_str=$(/Applications/Chromium.app/Contents/MacOS/Chromium --version 2>/dev/null) || true
-    elif [[ -d "/Applications/Google Chrome.app" ]]; then
-        version_str=$("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --version 2>/dev/null) || true
+    if [[ -x "$binary" ]]; then
+        version_str=$("$binary" --version 2>/dev/null) || true
     fi
 
     if [[ -z "$version_str" ]]; then
         report_result "$id" "Browser Security" \
-            "Could not determine Chromium version" "WARN" "2.11" \
-            "Verify Chromium is installed and accessible"
+            "[${name}] Could not determine version" "WARN" "2.11" \
+            "Verify ${name} is installed and accessible" "$name"
         return
     fi
 
@@ -1860,15 +1870,14 @@ check_chromium_version() {
 
     if [[ -z "$major_version" ]]; then
         report_result "$id" "Browser Security" \
-            "Could not parse Chromium version: ${version_str}" "WARN" "2.11"
+            "[${name}] Could not parse version: ${version_str}" "WARN" "2.11" "" "$name"
         return
     fi
 
-    # Chromium releases a new major version roughly every 4 weeks.
+    # All Chromium-based browsers follow the same major version cadence.
     # Chromium 100 shipped 2022-03-29 (epoch 1648512000). We estimate the
     # current major version from the date, then flag if installed version
-    # is more than 2 major versions behind. This avoids hardcoded thresholds
-    # that silently go stale.
+    # is more than 2 major versions behind.
     local now_epoch chromium100_epoch=1648512000 secs_per_version=2419200  # 28 days
     now_epoch=$(date +%s)
     local estimated_current=$(( 100 + (now_epoch - chromium100_epoch) / secs_per_version ))
@@ -1876,32 +1885,32 @@ check_chromium_version() {
 
     if [[ "$major_version" -lt "$min_acceptable" ]]; then
         report_result "$id" "Browser Security" \
-            "Chromium version $major_version may be outdated (expected ≥${min_acceptable})" "WARN" "2.11" \
-            "Update Chromium: brew upgrade --cask chromium"
+            "[${name}] Version $major_version may be outdated (expected ≥${min_acceptable})" "WARN" "2.11" \
+            "Update: brew upgrade --cask ${cask}" "$name"
     else
         report_result "$id" "Browser Security" \
-            "Chromium version $major_version ($version_str)" "PASS" "2.11"
+            "[${name}] Version $major_version ($version_str)" "PASS" "2.11" "" "$name"
     fi
 }
 
-check_chromium_dangerflags() {
-    local id="CHK-CHROMIUM-DANGERFLAGS"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
-    fi
+check_browser_dangerflags() {
+    local browser="$1"
+    local id="CHK-BROWSER-DANGERFLAGS"
+    local name="${BROWSER_NAME[$browser]}"
+    local process_name="${BROWSER_PROCESS_NAME[$browser]}"
 
-    # Check running Chromium processes for dangerous flags
+    # Check running browser processes for dangerous flags
     local dangerous_flags="--disable-web-security|--allow-running-insecure-content|--disable-site-isolation-trials|--disable-features=IsolateOrigins|--remote-debugging-address=0\.0\.0\.0"
     local bad_flags
-    bad_flags=$(ps aux 2>/dev/null | grep -iE '[C]hrom' | grep -oE "$dangerous_flags" | sort -u) || true
+    bad_flags=$(ps aux 2>/dev/null | grep -F "$process_name" | grep -v grep | grep -oE "$dangerous_flags" | sort -u) || true
 
     if [[ -z "$bad_flags" ]]; then
         report_result "$id" "Browser Security" \
-            "No dangerous Chromium launch flags detected" "PASS" "2.11"
+            "[${name}] No dangerous launch flags detected" "PASS" "2.11" "" "$name"
     else
         report_result "$id" "Browser Security" \
-            "Dangerous Chromium flags in use: ${bad_flags//$'\n'/, }" "WARN" "2.11" \
-            "Remove dangerous flags from Chromium launch configuration: §2.11.9"
+            "[${name}] Dangerous flags in use: ${bad_flags//$'\n'/, }" "WARN" "2.11" \
+            "Remove dangerous flags from ${name} launch configuration: §2.11.9" "$name"
     fi
 
     # Also check OpenClaw config for dangerous browser.launchArgs
@@ -1912,10 +1921,35 @@ check_chromium_dangerflags() {
             | grep -E "$dangerous_flags") || true
         if [[ -n "$bad_args" ]]; then
             report_result "$id" "Browser Security" \
-                "Dangerous flags in OpenClaw config: ${bad_args//$'\n'/, }" "WARN" "2.11" \
-                "Edit ~/.openclaw/openclaw.json and remove dangerous browser.launchArgs"
+                "[${name}] Dangerous flags in OpenClaw config: ${bad_args//$'\n'/, }" "WARN" "2.11" \
+                "Edit ~/.openclaw/openclaw.json and remove dangerous browser.launchArgs" "$name"
         fi
     fi
+}
+
+# --- Multi-Browser Check Wrapper ---
+# Iterates all installed browsers and runs all 8 checks for each.
+run_browser_security_checks() {
+    local installed
+    installed=$(get_installed_browsers)
+
+    if [[ -z "$installed" ]]; then
+        report_result "CHK-BROWSER-POLICY" "Browser Security" \
+            "No supported browser installed (browser checks skipped)" "SKIP" "2.11"
+        return
+    fi
+
+    local browser
+    for browser in $installed; do
+        check_browser_policy "$browser"
+        check_browser_autofill "$browser"
+        check_browser_extensions "$browser"
+        check_browser_urlblock "$browser"
+        check_browser_cdp "$browser"
+        check_browser_tcc "$browser"
+        check_browser_version "$browser"
+        check_browser_dangerflags "$browser"
+    done
 }
 
 check_script_integrity() {
@@ -1950,37 +1984,6 @@ check_script_integrity() {
         report_result "$id" "Operational" \
             "Script integrity mismatch: ${mismatches}" "WARN" "10.1" \
             "If scripts were intentionally updated, regenerate baseline: shasum -a 256 $audit_script $fix_script > $hash_file"
-    fi
-}
-
-check_chromium_urlblock() {
-    local id="CHK-CHROMIUM-URLBLOCK"
-    if ! _chromium_installed; then
-        return  # already reported SKIP in check_chromium_policy
-    fi
-
-    local plist
-    plist="$(_chromium_policy_plist)"
-    if [[ ! -f "${plist}.plist" ]]; then
-        report_result "$id" "Browser Security" \
-            "Cannot check URL blocklist — no managed policy plist" "WARN" "2.11" \
-            "Deploy policy with URLBlocklist: §2.11.2"
-        return
-    fi
-
-    local blocklist
-    blocklist=$(defaults read "$plist" URLBlocklist 2>/dev/null) || blocklist=""
-    if echo "$blocklist" | grep -qF '"*"' || echo "$blocklist" | grep -qF "'*'"; then
-        report_result "$id" "Browser Security" \
-            "URLBlocklist deny-all-by-default configured" "PASS" "2.11"
-    elif [[ -n "$blocklist" ]]; then
-        report_result "$id" "Browser Security" \
-            "URLBlocklist is set but not deny-all-by-default" "WARN" "2.11" \
-            "Set URLBlocklist to [\"*\"] for deny-all, then use URLAllowlist for permitted domains"
-    else
-        report_result "$id" "Browser Security" \
-            "No URLBlocklist configured — browser can navigate anywhere" "WARN" "2.11" \
-            "Deploy URLBlocklist policy: §2.11.7 Defense Layer 1"
     fi
 }
 
@@ -2127,15 +2130,8 @@ main() {
     run_check check_n8n_nodes
     run_check check_n8n_webhook
 
-    # §2.11 Browser Security (Chromium) checks
-    run_check check_chromium_policy
-    run_check check_chromium_autofill
-    run_check check_chromium_extensions
-    run_check check_chromium_cdp
-    run_check check_chromium_tcc
-    run_check check_chromium_version
-    run_check check_chromium_dangerflags
-    run_check check_chromium_urlblock
+    # §2.11 Browser Security (Chromium / Chrome / Edge)
+    run_check run_browser_security_checks
 
     # §6 Bare-Metal Path checks (T032) — bare-metal only
     if [[ "$deployment" == "bare-metal" || "$deployment" == "unknown" ]]; then
