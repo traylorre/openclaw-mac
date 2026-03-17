@@ -1,7 +1,8 @@
-# OpenClaw-Mac Roadmap
+# Fledge: OpenClaw-Mac Roadmap
 
-Multi-agent automation platform on hardened macOS. Each milestone is
-a demo-able increment tagged in GitHub.
+Multi-agent automation platform on hardened macOS. From hello world
+to autonomous agents in 6 milestones. Each milestone is a demo-able
+increment tagged in GitHub.
 
 ## Milestone 1: Gateway Live (`v0.1.0-gateway`)
 
