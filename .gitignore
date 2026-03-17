@@ -34,6 +34,12 @@ local_audit_results.txt
 .claude/recovery-audit-complete
 .claude/recovery-logs/
 
+# Claude Code local state (machine-specific, contains session permissions)
+.claude/settings.local.json
+
+# Claude Code project memories (stored in private dotfiles repo)
+.claude/projects/*/memory/
+
 # Carryover runtime artifacts (002-context-auto-rotation)
 .claude/carryover-pending
 .claude/carryover-pending.claimed
