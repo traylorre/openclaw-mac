@@ -55,7 +55,23 @@
       "Bash(bash -n scripts/hardening-fix.sh && echo \"PARSE OK\")",
       "Bash(bash -n scripts/browser-cleanup.sh && echo \"PARSE OK\")",
       "Bash(which shellcheck:*)",
-      "Bash(bash -n scripts/browser-registry.sh && echo \"registry: OK\" && bash -n scripts/hardening-audit.sh && echo \"audit: OK\" && bash -n scripts/hardening-fix.sh && echo \"fix: OK\" && bash -n scripts/browser-cleanup.sh && echo \"cleanup: OK\")"
+      "Bash(bash -n scripts/browser-registry.sh && echo \"registry: OK\" && bash -n scripts/hardening-audit.sh && echo \"audit: OK\" && bash -n scripts/hardening-fix.sh && echo \"fix: OK\" && bash -n scripts/browser-cleanup.sh && echo \"cleanup: OK\")",
+      "WebFetch(domain:pastebin.com)",
+      "Bash(curl:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:hydradb.com)",
+      "WebFetch(domain:docs.hydradb.com)",
+      "WebFetch(domain:www.productcompass.pm)",
+      "WebFetch(domain:support.claude.com)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:news.aibase.com)",
+      "WebFetch(domain:docs.openclaw.ai)",
+      "WebFetch(domain:agentnativedev.medium.com)",
+      "WebFetch(domain:velvetshark.com)",
+      "WebFetch(domain:machinelearningmastery.com)",
+      "WebFetch(domain:docs.litellm.ai)",
+      "WebFetch(domain:n8nlab.io)"
     ]
   }
 }
