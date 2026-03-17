@@ -2531,7 +2531,7 @@ See §4.3 for the complete reference `docker-compose.yml` implementing all seven
 **Threat**: Misconfigured compose file exposes n8n to network, leaks credentials, or allows container escape
 **Layer**: Prevent
 **Deployment**: Containerized only
-**Source**: [Docker Compose Security](https://docs.docker.com/compose/security/), [CIS Docker Benchmark §5](https://www.cisecurity.org/benchmark/docker)
+**Source**: [Docker Compose Security](https://docs.docker.com/compose/how-tos/environment-variables/best-practices/), [CIS Docker Benchmark §5](https://www.cisecurity.org/benchmark/docker)
 
 #### Why This Matters
 
