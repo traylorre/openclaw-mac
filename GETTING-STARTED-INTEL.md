@@ -369,7 +369,8 @@ After hardening, consider these optional improvements:
 
 - **Set up Colima** (container runtime) for Docker workloads like
   n8n. The bootstrap script installs it automatically, but you need
-  to start the VM:
+  to start the VM. The hardening audit will report
+  `CHK-COLIMA-RUNNING` as WARN until this step is completed:
 
   ```bash
   # Verify Colima is installed (bootstrap handles this)
