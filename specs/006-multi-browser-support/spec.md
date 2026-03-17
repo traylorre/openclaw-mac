@@ -28,7 +28,7 @@ policies are deployed.
 **Acceptance Scenarios**:
 
 1. **Given** only Microsoft Edge is installed, **When** the audit
-   runs, **Then** all 8 `CHK-CHROMIUM-*` checks detect Edge and
+   runs, **Then** all 8 `CHK-BROWSER-*` checks detect Edge and
    report PASS/FAIL/WARN (not SKIP).
 2. **Given** only Microsoft Edge is installed, **When** the fix
    script deploys managed policies, **Then** the plist is written
@@ -161,9 +161,11 @@ is mentioned with its install command.
   renamed or expanded check IDs.
 - **FR-009**: The HARDENING.md coverage summary and badges MUST be
   updated if check IDs change.
-- **FR-010**: All existing Chromium-only behavior MUST continue to
-  work unchanged for operators who only have Chromium installed
-  (backward compatibility).
+- **FR-010**: All existing Chromium-only **functional behavior** MUST
+  continue to work for operators who only have Chromium installed
+  (backward compatibility). Note: check IDs change from
+  `CHK-CHROMIUM-*` to `CHK-BROWSER-*` per FR-006 — this is an
+  intentional output format change, not a functional regression.
 - **FR-011**: The GETTING-STARTED guides MUST mention Edge as a
   supported alternative with the correct Homebrew install command.
 

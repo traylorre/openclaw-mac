@@ -16,6 +16,11 @@
 
 set -euo pipefail
 
+# --- Browser Registry ---
+_BC_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=browser-registry.sh
+source "${_BC_SCRIPT_DIR}/browser-registry.sh"
+
 # --- Color Setup ---
 _BC_RED='\033[0;31m'
 _BC_GREEN='\033[0;32m'
@@ -36,50 +41,6 @@ _bc_run_as_user() {
     fi
 }
 
-# --- Detect Browser Profile ---
-_bc_detect_profile() {
-    local user_home
-    if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
-        user_home=$(eval echo "~${SUDO_USER}")
-    else
-        user_home="$HOME"
-    fi
-
-    # Prefer Chromium over Chrome
-    local chromium_profile="${user_home}/Library/Application Support/Chromium/Default"
-    local chrome_profile="${user_home}/Library/Application Support/Google/Chrome/Default"
-
-    if [[ -d "$chromium_profile" ]]; then
-        echo "$chromium_profile"
-        return
-    fi
-    if [[ -d "$chrome_profile" ]]; then
-        echo "$chrome_profile"
-        return
-    fi
-    echo ""
-}
-
-# --- Detect Browser Type ---
-_bc_detect_browser_type() {
-    local profile="$1"
-    if echo "$profile" | grep -qi "chromium"; then
-        echo "Chromium"
-    elif echo "$profile" | grep -qi "chrome"; then
-        echo "Google Chrome"
-    else
-        echo "Unknown"
-    fi
-}
-
-# --- Check if Browser is Running ---
-_bc_is_browser_running() {
-    if pgrep -f "Chromium" &>/dev/null || pgrep -f "Google Chrome" &>/dev/null; then
-        return 0
-    fi
-    return 1
-}
-
 # --- Session Data Targets ---
 # These are the files/directories that contain session artifacts.
 # Bookmarks, Extensions, Preferences, and Managed Preferences are preserved.
@@ -96,65 +57,32 @@ _BC_CLEANUP_TARGETS=(
     "GPUCache"
 )
 
-# --- Main Cleanup Function ---
-# This is the entry point when sourced by hardening-fix.sh
-run_browser_cleanup() {
-    local profile_path=""
-    local dry_run=false
+# --- Clean One Browser Profile ---
+_bc_clean_profile() {
+    local browser="$1"
+    local profile_path="$2"
+    local dry_run="$3"
+    local name="${BROWSER_NAME[$browser]}"
     local cleaned=0
     local skipped=0
 
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --profile) profile_path="$2"; shift 2 ;;
-            --dry-run) dry_run=true; shift ;;
-            --help)
-                echo "Usage: browser-cleanup.sh [--profile PATH] [--dry-run]"
-                echo ""
-                echo "Removes browser session data (cookies, cache, history, local storage)."
-                echo "Preserves bookmarks, extensions, and preferences."
-                echo ""
-                echo "Options:"
-                echo "  --profile PATH  Use a specific profile directory"
-                echo "  --dry-run       Show what would be removed without deleting"
-                return 0
-                ;;
-            *) echo "Unknown option: $1" >&2; return 2 ;;
-        esac
-    done
-
-    # Auto-detect profile if not specified
-    if [[ -z "$profile_path" ]]; then
-        profile_path=$(_bc_detect_profile)
-    fi
-
-    if [[ -z "$profile_path" ]]; then
-        printf "  ${_BC_YELLOW}SKIP${_BC_NC}  No Chromium or Chrome profile directory found\n"
-        return 0
-    fi
-
     if [[ ! -d "$profile_path" ]]; then
-        printf "  ${_BC_YELLOW}SKIP${_BC_NC}  Profile directory does not exist: %s\n" "$profile_path"
+        printf "  ${_BC_YELLOW}SKIP${_BC_NC}  [%s] Profile directory does not exist: %s\n" "$name" "$profile_path"
         return 0
     fi
 
-    local browser_type
-    browser_type=$(_bc_detect_browser_type "$profile_path")
-
-    # Safety: refuse to run if browser is active
-    if _bc_is_browser_running; then
-        printf "  ${_BC_RED}ABORT${_BC_NC}  %s is running — close the browser before cleanup\n" "$browser_type"
+    # Safety: refuse to run if this browser is active
+    if is_browser_running "$browser"; then
+        printf "  ${_BC_RED}ABORT${_BC_NC}  %s is running — close the browser before cleanup\n" "$name"
         return 1
     fi
 
     if ! $dry_run; then
-        printf "  ${_BC_CYAN}CLEAN${_BC_NC}  %s profile: %s\n" "$browser_type" "$profile_path"
+        printf "  ${_BC_CYAN}CLEAN${_BC_NC}  %s profile: %s\n" "$name" "$profile_path"
     else
-        printf "  ${_BC_CYAN}DRY-RUN${_BC_NC}  %s profile: %s\n" "$browser_type" "$profile_path"
+        printf "  ${_BC_CYAN}DRY-RUN${_BC_NC}  %s profile: %s\n" "$name" "$profile_path"
     fi
 
-    # Remove each target
     for target in "${_BC_CLEANUP_TARGETS[@]}"; do
         local target_path="${profile_path}/${target}"
         if [[ -e "$target_path" ]]; then
@@ -171,12 +99,96 @@ run_browser_cleanup() {
     done
 
     if $dry_run; then
-        printf "  ${_BC_CYAN}DRY-RUN${_BC_NC}  Would remove %d items (%d not present)\n" "$cleaned" "$skipped"
+        printf "  ${_BC_CYAN}DRY-RUN${_BC_NC}  [%s] Would remove %d items (%d not present)\n" "$name" "$cleaned" "$skipped"
     elif [[ $cleaned -gt 0 ]]; then
-        printf "  ${_BC_GREEN}DONE${_BC_NC}  Removed %d session data items (%d not present)\n" "$cleaned" "$skipped"
+        printf "  ${_BC_GREEN}DONE${_BC_NC}  [%s] Removed %d session data items (%d not present)\n" "$name" "$cleaned" "$skipped"
     else
-        printf "  ${_BC_YELLOW}SKIP${_BC_NC}  No session data found to clean\n"
+        printf "  ${_BC_YELLOW}SKIP${_BC_NC}  [%s] No session data found to clean\n" "$name"
     fi
+
+    return 0
+}
+
+# --- Main Cleanup Function ---
+# This is the entry point when sourced by hardening-fix.sh
+run_browser_cleanup() {
+    local profile_path=""
+    local dry_run=false
+    local cleanup_all=false
+    local cleanup_target=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile) profile_path="$2"; shift 2 ;;
+            --dry-run) dry_run=true; shift ;;
+            --all) cleanup_all=true; shift ;;
+            --browser) cleanup_target="$2"; shift 2 ;;
+            --help)
+                echo "Usage: browser-cleanup.sh [OPTIONS]"
+                echo ""
+                echo "Removes browser session data (cookies, cache, history, local storage)."
+                echo "Preserves bookmarks, extensions, and preferences."
+                echo ""
+                echo "Options:"
+                echo "  --profile PATH   Use a specific profile directory"
+                echo "  --all            Clean all installed browsers"
+                echo "  --browser NAME   Clean a specific browser (chromium, chrome, edge)"
+                echo "  --dry-run        Show what would be removed without deleting"
+                echo ""
+                echo "Default (no flags): cleans preferred browser (Chromium > Chrome > Edge)"
+                return 0
+                ;;
+            *) echo "Unknown option: $1" >&2; return 2 ;;
+        esac
+    done
+
+    # If --profile is specified, clean that path directly (legacy mode)
+    if [[ -n "$profile_path" ]]; then
+        # Determine which browser this profile belongs to
+        local detected_browser="chromium"  # default fallback
+        local browser
+        for browser in "${BROWSER_PREFERENCE_ORDER[@]}"; do
+            if echo "$profile_path" | grep -qi "${BROWSER_NAME[$browser]}"; then
+                detected_browser="$browser"
+                break
+            fi
+        done
+        _bc_clean_profile "$detected_browser" "$profile_path" "$dry_run"
+        return $?
+    fi
+
+    # Determine which browsers to clean
+    local -a targets=()
+    if $cleanup_all; then
+        local installed
+        installed=$(get_installed_browsers)
+        if [[ -z "$installed" ]]; then
+            printf "  ${_BC_YELLOW}SKIP${_BC_NC}  No supported browser installed\n"
+            return 0
+        fi
+        read -ra targets <<< "$installed"
+    elif [[ -n "$cleanup_target" ]]; then
+        if [[ -z "${BROWSER_NAME[$cleanup_target]+x}" ]]; then
+            printf "  ${_BC_RED}ERROR${_BC_NC}  Unknown browser: %s (valid: chromium, chrome, edge)\n" "$cleanup_target" >&2
+            return 2
+        fi
+        targets=("$cleanup_target")
+    else
+        local preferred
+        if ! preferred=$(get_preferred_browser); then
+            printf "  ${_BC_YELLOW}SKIP${_BC_NC}  No supported browser installed\n"
+            return 0
+        fi
+        targets=("$preferred")
+    fi
+
+    local browser
+    for browser in "${targets[@]}"; do
+        local profile
+        profile=$(get_browser_profile_path "$browser")
+        _bc_clean_profile "$browser" "$profile" "$dry_run"
+    done
 
     return 0
 }

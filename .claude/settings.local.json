@@ -46,7 +46,16 @@
       "Bash(bash -n scripts/hardening-audit.sh && bash -n scripts/hardening-fix.sh && bash -n scripts/audit-cron.sh && bash -n scripts/audit-notify.sh && echo \"All scripts: OK\")",
       "Bash(bash -n scripts/audit-cron.sh && bash -n scripts/audit-notify.sh && bash -n scripts/hardening-fix.sh && echo \"All syntax OK\")",
       "Bash(git reset:*)",
-      "Bash(bash -n scripts/hardening-fix.sh && echo \"OK\")"
+      "Bash(bash -n scripts/hardening-fix.sh && echo \"OK\")",
+      "Bash(bash /Users/scotthazlett/projects/openclaw-mac/.specify/scripts/bash/update-agent-context.sh claude 2>&1)",
+      "Bash(bash /Users/scotthazlett/projects/openclaw-mac/.specify/scripts/bash/check-prerequisites.sh --json --require-tasks --include-tasks 2>&1)",
+      "Bash(bash /Users/scotthazlett/projects/openclaw-mac/.specify/scripts/bash/check-prerequisites.sh --json 2>&1)",
+      "Bash(bash -n scripts/browser-registry.sh && echo \"PARSE OK\" && bash -n scripts/hardening-audit.sh && echo \"AUDIT PARSE OK\" && bash -n scripts/hardening-fix.sh && echo \"FIX PARSE OK\" && bash -n scripts/browser-cleanup.sh && echo \"CLEANUP PARSE OK\")",
+      "Bash(bash -n scripts/hardening-audit.sh && echo \"PARSE OK\")",
+      "Bash(bash -n scripts/hardening-fix.sh && echo \"PARSE OK\")",
+      "Bash(bash -n scripts/browser-cleanup.sh && echo \"PARSE OK\")",
+      "Bash(which shellcheck:*)",
+      "Bash(bash -n scripts/browser-registry.sh && echo \"registry: OK\" && bash -n scripts/hardening-audit.sh && echo \"audit: OK\" && bash -n scripts/hardening-fix.sh && echo \"fix: OK\" && bash -n scripts/browser-cleanup.sh && echo \"cleanup: OK\")"
     ]
   }
 }
