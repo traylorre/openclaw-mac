@@ -1647,7 +1647,7 @@ The proxy requires Deno 2.1.4+. Write plugins by extending `BaseCDPPlugin` — e
 
 **Canary and honeypot approaches:**
 
-- Deploy [canary credentials](§8.5) — fake API keys, database passwords, or session tokens planted in system prompts or scraped content. If they appear in outbound traffic or tool calls, the agent has been compromised.
+- Deploy [canary credentials](#85-credential-exposure-monitoring-audit-only) — fake API keys, database passwords, or session tokens planted in system prompts or scraped content. If they appear in outbound traffic or tool calls, the agent has been compromised.
 - Embed unique canary strings in the system prompt; monitor for their appearance in agent output (indicates prompt leakage).
 - Consider [HoneyAgents](https://github.com/mrwadams/honeyagents) — a PoC system combining honeypots with AI agents for threat detection.
 
