@@ -4,6 +4,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
 
+- n8n workflow JSON (declarative), Bash 5.x (setup scripts) + n8n v2.13.0 (Docker), Colima, Docker CLI (007-n8n-gateway)
+- Docker volume `n8n_data` (workflows, credentials, execution logs) (007-n8n-gateway)
 - Markdown (documentation), Bash 5.x (one identifier rename) + None (manual markdown edits) (004-hardening-coverage-map)
 - N/A (filesystem, git-tracked markdown files) (004-hardening-coverage-map)
 - Bash 5.x + macOS CLI tools (lsof, ps, brew), existing hardening-audit.sh and hardening-fix.sh (005-chromium-cdp-hardening)
@@ -34,9 +36,9 @@ Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
 
+- 007-n8n-gateway: Added n8n workflow JSON (declarative), Bash 5.x (setup scripts) + n8n v2.13.0 (Docker), Colima, Docker CLI
 - 006-multi-browser-support: Added Bash 5.x (POSIX-compatible subset per constitution) + `defaults`, `lsof`, `pgrep`, `sqlite3`
 - 005-chromium-cdp-hardening: Added Bash 5.x + macOS CLI tools (lsof, ps, brew), existing hardening-audit.sh and hardening-fix.sh
-- 004-hardening-coverage-map: Added Markdown (documentation), Bash 5.x (one identifier rename) + None (manual markdown edits)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
