@@ -1,0 +1,51 @@
+#!/bin/bash
+set -euo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# Only lint markdown files that are staged for commit
+STAGED_MD=$(git diff --cached --name-only --diff-filter=ACM | grep '\.md$' || true)
+
+if [[ -z "$STAGED_MD" ]]; then
+    exit 0  # No markdown files staged, skip lint
+fi
+
+# Check if any staged files are outside the ignored directories
+LINTABLE=""
+for f in $STAGED_MD; do
+    case "$f" in
+        node_modules/*|audit/*|.claude/*|.specify/*|specs/*) continue ;;
+        *) LINTABLE="$LINTABLE $f" ;;
+    esac
+done
+
+if [[ -z "$LINTABLE" ]]; then
+    exit 0  # All staged markdown files are in ignored directories
+fi
+
+echo "Linting staged markdown files..."
+
+LOCAL_BIN="${REPO_ROOT}/node_modules/.bin/markdownlint-cli2"
+
+if [[ -x "$LOCAL_BIN" ]]; then
+    LINT_CMD="$LOCAL_BIN"
+elif command -v markdownlint-cli2 > /dev/null 2>&1; then
+    LINT_CMD="markdownlint-cli2"
+else
+    echo -e "${RED}markdownlint-cli2 not found. Run: npm install${NC}"
+    exit 1
+fi
+
+cd "$REPO_ROOT"
+
+# shellcheck disable=SC2086
+if $LINT_CMD $LINTABLE; then
+    echo -e "${GREEN}Markdown lint passed.${NC}"
+else
+    echo -e "${RED}Markdown lint failed. Fix errors before committing.${NC}"
+    exit 1
+fi

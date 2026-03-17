@@ -76,7 +76,7 @@ brew --version
 
 You should see output like:
 
-```
+```text
 Homebrew 4.x.x
 ```
 
@@ -119,7 +119,7 @@ not an Apple ID password. You will not see the characters as you type.
 
 You should see output similar to this:
 
-```
+```text
 OpenClaw Bootstrap v0.1.0
 Mode: install (will install dependencies and create directories)
 
@@ -185,7 +185,7 @@ sudo bash scripts/hardening-audit.sh
 You should see output similar to this (your results will vary based
 on your Mac's current configuration):
 
-```
+```text
 ================================================================
   OpenClaw Mac Hardening Audit
   Version: 0.1.0 | Date: 2026-03-16
@@ -267,7 +267,7 @@ sudo bash scripts/hardening-fix.sh --auto --audit-file openclaw-audit.json
 Your Mac may ask for your password again if more than a few minutes
 have passed since Step 6. You should see output similar to this:
 
-```
+```text
 ================================================================
   OpenClaw Mac Hardening Fix
   Version: 0.1.0 | Date: 2026-03-16
@@ -314,7 +314,7 @@ sudo bash scripts/hardening-audit.sh
 You should see your PASS count increase and your FAIL count decrease
 compared to Step 5. A typical result after applying fixes:
 
-```
+```text
 ================================================================
   Results: 26 PASS | 1 FAIL | 21 WARN | 19 SKIP
 ================================================================
