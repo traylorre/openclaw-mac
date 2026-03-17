@@ -596,15 +596,19 @@ check_spotlight() {
 check_colima_running() {
     local id="CHK-COLIMA-RUNNING"
     if ! command -v colima &>/dev/null; then
-        report_result "$id" "Container Runtime" \
-            "Colima not installed" "SKIP" "4.1" \
-            "Install: brew install colima docker"
+        if docker info &>/dev/null; then
+            report_result "$id" "Container Runtime" \
+                "Docker available but Colima not installed (non-standard runtime)" "WARN" "4.1" \
+                "Install Colima (recommended per hardening guide): brew install colima"
+        else
+            report_result "$id" "Container Runtime" \
+                "Colima not installed" "SKIP" "4.1" \
+                "Install: brew install colima docker"
+        fi
         return
     fi
 
-    local colima_status
-    colima_status=$(colima status 2>&1) || true
-    if ! echo "$colima_status" | grep -qi "running"; then
+    if ! colima status &>/dev/null; then
         report_result "$id" "Container Runtime" \
             "Colima is installed but not running" "WARN" "4.1" \
             "Start Colima: colima start"
@@ -614,7 +618,7 @@ check_colima_running() {
     # Verify Docker socket is actually reachable (catches stale socket after crash)
     if docker info &>/dev/null; then
         local colima_ver
-        colima_ver=$(colima version 2>/dev/null | head -1) || colima_ver="unknown"
+        colima_ver=$(colima version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || colima_ver="unknown"
         report_result "$id" "Container Runtime" \
             "Colima running (${colima_ver}), Docker socket reachable" "PASS" "4.1"
     else

@@ -1392,9 +1392,7 @@ fix_colima_running() {
     fi
 
     # Check if already running
-    local colima_status
-    colima_status=$(colima status 2>&1) || true
-    if echo "$colima_status" | grep -qi "running" && docker info &>/dev/null; then
+    if colima status &>/dev/null && docker info &>/dev/null; then
         report_fix "$id" "Colima already running" "SKIPPED"
         return 0
     fi
@@ -1408,12 +1406,12 @@ fix_colima_running() {
     # Detect hardware and choose appropriate flags
     local hw_arch
     hw_arch=$(uname -m)
-    local colima_cmd="colima start --cpu 2 --memory 4 --disk 60 --no-kubernetes"
+    local -a colima_args=(start --cpu 2 --memory 4 --disk 60 --no-kubernetes)
     if [[ "$hw_arch" == "arm64" ]]; then
-        colima_cmd="colima start --cpu 2 --memory 4 --disk 60 --vm-type vz --vz-rosetta --no-kubernetes"
+        colima_args=(start --cpu 2 --memory 4 --disk 60 --vm-type vz --vz-rosetta --no-kubernetes)
     fi
 
-    if run_fix_cmd "Start Colima (${hw_arch})" $colima_cmd; then
+    if run_fix_cmd "Start Colima (${hw_arch})" colima "${colima_args[@]}"; then
         # Verify Docker socket is reachable after start
         if docker info &>/dev/null; then
             report_fix "$id" "Colima started, Docker socket reachable" "FIXED"

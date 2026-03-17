@@ -377,12 +377,19 @@ validate_commands() {
     fi
 
     if command -v colima &>/dev/null; then
-        report OK "colima: $(colima version 2>/dev/null | head -1)"
+        local colima_ver
+        colima_ver=$(colima version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || colima_ver="unknown"
+        report OK "colima: ${colima_ver}"
     elif [[ "$CHECK_ONLY" == true ]]; then
         report FAIL "colima not installed"
     else
         report INFO "Installing colima via Homebrew..."
-        brew install colima 2>/dev/null && report FIXED "colima installed" || report FAIL "colima install failed"
+        local brew_err
+        if brew_err=$(brew install colima 2>&1); then
+            report FIXED "colima installed"
+        else
+            report FAIL "colima install failed: ${brew_err##*$'\n'}"
+        fi
     fi
 
     if command -v docker &>/dev/null; then
@@ -391,7 +398,12 @@ validate_commands() {
         report FAIL "docker not installed"
     else
         report INFO "Installing docker via Homebrew..."
-        brew install docker 2>/dev/null && report FIXED "docker installed" || report FAIL "docker install failed"
+        local brew_err
+        if brew_err=$(brew install docker 2>&1); then
+            report FIXED "docker installed"
+        else
+            report FAIL "docker install failed: ${brew_err##*$'\n'}"
+        fi
     fi
 
     # Chromium (optional, for OpenClaw browser control)
