@@ -367,6 +367,21 @@ transfer), see [Undo a Specific Change](#undo-a-specific-change).
 
 After hardening, consider these optional improvements:
 
+- **Set up Colima** (container runtime) for Docker workloads like
+  n8n. The bootstrap script installs it automatically, but you need
+  to start the VM:
+
+  ```bash
+  # Verify Colima is installed (bootstrap handles this)
+  colima version
+
+  # Start Colima with hardened defaults (Intel)
+  colima start --cpu 2 --memory 4 --disk 60 --no-kubernetes
+
+  # Verify Docker is working
+  docker info
+  ```
+
 - **Install n8n** and re-run the audit to validate its security
   configuration
 - **Install detection tools** like LuLu (outbound firewall) or
