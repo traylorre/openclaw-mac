@@ -19,44 +19,51 @@ URL, n8n handles all routing.
 
 ---
 
-## Milestone 2: Lead Prospector (`v0.2.0-lead-prospector`)
+## Milestone 2: Trust Audit Agent (`v0.2.0-trust-audit`)
 
-**Goal**: First real sub-agent delivering scored leads.
+**Goal**: Autonomous compliance auditing against established standards.
+
+- [ ] Sub-agent runs `hardening-audit.sh`, parses JSON output
+- [ ] Maps findings to CIS Benchmarks / NIST SP 800-179 references
+- [ ] Maps findings to OWASP Top 10 for Agentic Applications (ASI01-ASI10)
+- [ ] Generates structured compliance report (markdown + JSON)
+- [ ] Documents where controls exist but fail to operate as intended (NIST 800-53A: control effectiveness vs existence)
+
+**Demo**: An autonomous agent audits its own infrastructure against
+OWASP and NIST standards, and reports where "passing" controls
+aren't actually protecting you.
+
+---
+
+## Milestone 3: Lead Prospector (`v0.3.0-lead-prospector`)
+
+**Goal**: First sub-agent with real-world authority (API keys, data writes).
 
 - [ ] Lead Prospector sub-agent: webhook → Apify (LinkedIn/Google Maps) → Claude enrichment → Airtable/Notion
 - [ ] Mem0 + Qdrant memory running (open-source mode, Ollama embeddings)
 - [ ] Guardian script integrated with OpenClaw memory flush
 - [ ] ICP scoring pipeline with configurable verticals
+- [ ] Document exactly what authority the agent has and how scope is verified
 
 **Demo**: Scored leads for a target vertical, delivered to
-Airtable/Notion with enrichment data.
+Airtable/Notion with enrichment data. Clear accounting of what
+credentials the agent holds and what it can reach.
 
 ---
 
-## Milestone 3: Morning Briefing (`v0.3.0-briefing`)
+## Milestone 4: Automation & Productivity (`v0.4.0-automation`)
 
-**Goal**: Daily automated intelligence digest.
+**Goal**: Daily intelligence and content pipeline.
 
 - [ ] 7am daily digest: overdue tasks, top news for target verticals, memory recall from Qdrant
 - [ ] Weekly competitive landscape scan (GitHub stars/releases, LinkedIn activity of target companies)
 - [ ] Delivery via Telegram or email
+- [ ] Content Repurposer: turn work outputs into LinkedIn posts, readme sections
+- [ ] Repo Improver: static analysis diff, readme staleness, dependency drift on push
+- [ ] API Cost Monitor: track LLM spend daily, alert on budget threshold
 
-**Demo**: Every morning — a briefing. Every week — a competitive
-scan. Zero manual effort.
-
----
-
-## Milestone 4: Trust Audit Agent (`v0.4.0-trust-audit`)
-
-**Goal**: Autonomous compliance auditing with verifiable output.
-
-- [ ] Sub-agent runs `hardening-audit.sh`, parses JSON output
-- [ ] Maps findings to CIS Benchmarks / NIST SP 800-179 references
-- [ ] Generates structured compliance report (markdown + JSON)
-- [ ] Outputs verifiable assertions suitable for trust frameworks
-
-**Demo**: An autonomous agent audits trust infrastructure against
-named standards and produces verifiable compliance artifacts.
+**Demo**: Automated briefings, content pipeline, and repo maintenance
+with zero manual intervention.
 
 ---
 
@@ -74,16 +81,17 @@ traversal finds answers that flat vector search misses.
 
 ---
 
-## Milestone 6: Personal Productivity Agents (`v0.6.0-personal-agents`)
+## Milestone 6: Deployment Observations (`v0.6.0-observations`)
 
-**Goal**: Agents that compound personal and project value.
+**Goal**: Contribute practitioner findings to trust framework discussions.
 
-- [ ] Content Repurposer: turn work outputs into LinkedIn posts, readme sections
-- [ ] Repo Improver: static analysis diff, readme staleness, dependency drift on push
-- [ ] API Cost Monitor: track LLM spend daily, alert on budget threshold
+- [ ] Compile deployment observations from milestones 1-5: where agent security controls failed in practice, where audits passed but protection didn't hold
+- [ ] Map observations against published frameworks (OWASP Agentic Top 10, NIST AI Agent Standards Initiative, CSA Agentic Trust Framework)
+- [ ] Identify gaps that deployment experience reveals but current frameworks don't address
+- [ ] Publish findings in a format suitable for working group contribution
 
-**Demo**: Automated content pipeline and repo maintenance with
-zero manual intervention.
+**Demo**: A practitioner report grounded in real deployment data,
+structured for contribution to ongoing trust framework work.
 
 ---
 
@@ -94,8 +102,9 @@ These milestones follow two objectives:
 1. **Engineering fundamentals**: Context protection and separation,
    vector + graph memory, scalable sub-agents, security-first design
 2. **Real-world value**: Each milestone delivers something usable,
-   not just infrastructure. Lead gen, briefings, compliance reports,
-   content automation.
+   not just infrastructure. Compliance auditing, lead gen, briefings,
+   content automation, and practitioner observations that contribute
+   back to the security community.
 
 ## Infrastructure Stack
 
