@@ -21,11 +21,11 @@ configuration and documentation.
 **Purpose**: Pin n8n version, create environment template, verify
 n8n starts and is reachable.
 
-- [ ] T001 Pin n8n image from `n8nio/n8n:latest` to `n8nio/n8n:2.13.0` in scripts/templates/docker-compose.yml
-- [ ] T002 [P] Create scripts/templates/.env.example with GATEWAY_BEARER_TOKEN placeholder and generation instructions
-- [ ] T003 [P] Add .env to .gitignore in scripts/templates/ to prevent token leakage
-- [ ] T004 Create n8n/workflows/ directory at repo root for workflow JSON files
-- [ ] T005 Start n8n with `docker compose up -d` from scripts/templates/ and verify it responds on localhost:5678
+- [x] T001 Pin n8n image from `n8nio/n8n:latest` to `n8nio/n8n:2.13.0` in scripts/templates/docker-compose.yml
+- [x] T002 [P] Create scripts/templates/.env.example with GATEWAY_BEARER_TOKEN placeholder and generation instructions
+- [x] T003 [P] Add .env to .gitignore in scripts/templates/ to prevent token leakage
+- [x] T004 Create n8n/workflows/ directory at repo root for workflow JSON files
+- [x] T005 Start n8n with `docker compose up -d` from scripts/templates/ and verify it responds on localhost:5678
 
 **Checkpoint**: n8n is running in Docker, pinned to a specific version,
 with persistent volume. No workflows configured yet.
@@ -40,9 +40,9 @@ echoing the body.
 **Independent Test**: `curl -X POST http://localhost:5678/webhook/hello-world -H "Content-Type: application/json" -d '{"test": true}'`
 returns 200 with echoed body.
 
-- [ ] T006 [US1] Build hello-world workflow in n8n editor: Webhook node (POST, path: hello-world, Response Mode: "Using Respond to Webhook Node") → Set node (build response JSON with status + echoed body) → Respond to Webhook node (200, JSON)
-- [ ] T007 [US1] Activate the hello-world workflow and test with curl from terminal
-- [ ] T008 [US1] Export hello-world workflow as JSON and save to n8n/workflows/hello-world.json
+- [x] T006 [US1] Build hello-world workflow in n8n editor: Webhook node (POST, path: hello-world, Response Mode: "Using Respond to Webhook Node") → Set node (build response JSON with status + echoed body) → Respond to Webhook node (200, JSON)
+- [x] T007 [US1] Activate the hello-world workflow and test with curl from terminal
+- [x] T008 [US1] Export hello-world workflow as JSON and save to n8n/workflows/hello-world.json
 
 **Checkpoint**: Hello world works. n8n is alive and reachable.
 
@@ -56,10 +56,10 @@ proceed to the workflow.
 **Independent Test**: `curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5678/webhook/hello-world -d '{}'`
 returns 401.
 
-- [ ] T009 [US2] Create Header Auth credential in n8n: name `gateway-bearer-token`, header `Authorization`, value `Bearer <token from .env>`
-- [ ] T010 [US2] Update hello-world workflow Webhook node to require Header Auth credential `gateway-bearer-token`
-- [ ] T011 [US2] Test: request without token returns 401, request with correct token returns 200
-- [ ] T012 [US2] Export updated hello-world workflow JSON to n8n/workflows/hello-world.json (overwrite)
+- [x] T009 [US2] Create Header Auth credential in n8n: name `gateway-bearer-token`, header `Authorization`, value `Bearer <token from .env>`
+- [x] T010 [US2] Update hello-world workflow Webhook node to require Header Auth credential `gateway-bearer-token`
+- [x] T011 [US2] Test: request without token returns 401, request with correct token returns 200
+- [x] T012 [US2] Export updated hello-world workflow JSON to n8n/workflows/hello-world.json (overwrite)
 
 **Checkpoint**: Auth gate works. No unauthenticated access possible.
 
@@ -74,13 +74,13 @@ to different sub-workflows.
 response. POST with `{"intent": "unknown"}` returns 400 with
 valid_intents list.
 
-- [ ] T013 [US3] Build gateway workflow in n8n editor: Webhook node (POST, path: gateway, Header Auth, Response Mode: "Using Respond to Webhook Node")
-- [ ] T014 [US3] Add IF node after Webhook to check `{{ $json.body.intent }}` exists — if missing, route to error Respond to Webhook node (400, "Missing required field: intent", valid_intents array)
-- [ ] T015 [US3] Add Switch node (Routing Rules mode) after IF node: rule `{{ $json.body.intent }}` equals "hello" → output 0, Fallback Output → error response
-- [ ] T016 [US3] Connect Switch output 0 ("hello") to a Set node that builds the hello response (reuse logic from hello-world workflow) → Respond to Webhook node (200)
-- [ ] T017 [US3] Connect Switch Fallback Output to a Set node that builds error response with unknown intent name and valid_intents array → Respond to Webhook node (400)
-- [ ] T018 [US3] Test all three paths: valid intent returns 200, unknown intent returns 400 with valid_intents, missing intent returns 400 with error message
-- [ ] T019 [US3] Export gateway workflow as JSON and save to n8n/workflows/gateway.json
+- [x] T013 [US3] Build gateway workflow in n8n editor: Webhook node (POST, path: gateway, Header Auth, Response Mode: "Using Respond to Webhook Node")
+- [x] T014 [US3] Add IF node after Webhook to check `{{ $json.body.intent }}` exists — if missing, route to error Respond to Webhook node (400, "Missing required field: intent", valid_intents array)
+- [x] T015 [US3] Add Switch node (Routing Rules mode) after IF node: rule `{{ $json.body.intent }}` equals "hello" → output 0, Fallback Output → error response
+- [x] T016 [US3] Connect Switch output 0 ("hello") to a Set node that builds the hello response (reuse logic from hello-world workflow) → Respond to Webhook node (200)
+- [x] T017 [US3] Connect Switch Fallback Output to a Set node that builds error response with unknown intent name and valid_intents array → Respond to Webhook node (400)
+- [x] T018 [US3] Test all three paths: valid intent returns 200, unknown intent returns 400 with valid_intents, missing intent returns 400 with error message
+- [x] T019 [US3] Export gateway workflow as JSON and save to n8n/workflows/gateway.json
 
 **Checkpoint**: Single gateway URL routes by intent. Adding a new
 intent means adding one Switch rule and one output connection.
@@ -95,10 +95,10 @@ running.
 **Independent Test**: `sudo bash scripts/hardening-audit.sh --json`
 shows zero new FAIL results.
 
-- [ ] T020 [US4] Run `sudo bash scripts/hardening-audit.sh --json` with n8n container running and capture results
-- [ ] T021 [US4] Verify container isolation: non-root user, no privileged mode, no Docker socket mount via `docker inspect`
-- [ ] T022 [US4] Verify localhost-only binding: `lsof -i :5678 -sTCP:LISTEN` shows 127.0.0.1 only
-- [ ] T023 [US4] Compare FAIL count to pre-n8n baseline — document any discrepancies and resolve
+- [x] T020 [US4] Run `sudo bash scripts/hardening-audit.sh --json` with n8n container running and capture results
+- [x] T021 [US4] Verify container isolation: non-root user, no privileged mode, no Docker socket mount via `docker inspect`
+- [x] T022 [US4] Verify localhost-only binding: `lsof -i :5678 -sTCP:LISTEN` shows 127.0.0.1 only
+- [x] T023 [US4] Compare FAIL count to pre-n8n baseline — document any discrepancies and resolve
 
 **Checkpoint**: Security posture maintained. Gateway is production-ready.
 
@@ -108,10 +108,10 @@ shows zero new FAIL results.
 
 **Purpose**: Setup documentation, workflow import instructions, cleanup.
 
-- [ ] T024 [P] Add n8n gateway setup section to GETTING-STARTED.md with step-by-step instructions referencing quickstart.md
-- [ ] T025 [P] Add n8n gateway setup section to GETTING-STARTED-INTEL.md (same content as T024)
-- [ ] T026 Update ROADMAP.md to check off Milestone 1 items as completed
-- [ ] T027 Run markdownlint on all modified files and fix any errors
+- [x] T024 [P] Add n8n gateway setup section to GETTING-STARTED.md with step-by-step instructions referencing quickstart.md
+- [x] T025 [P] Add n8n gateway setup section to GETTING-STARTED-INTEL.md (same content as T024)
+- [x] T026 Update ROADMAP.md to check off Milestone 1 items as completed
+- [x] T027 Run markdownlint on all modified files and fix any errors
 
 ---
 
