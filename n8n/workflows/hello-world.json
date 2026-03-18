@@ -1,11 +1,11 @@
 {
-  "id": "1",
   "name": "Hello World",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "hello-world",
+        "authentication": "headerAuth",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -13,8 +13,17 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [250, 300],
-      "webhookId": "hello-world-webhook"
+      "position": [
+        256,
+        304
+      ],
+      "webhookId": "hello-world-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qmaOy11EZMmalmh1",
+          "name": "Header Auth account"
+        }
+      }
     },
     {
       "parameters": {
@@ -46,7 +55,10 @@
       "name": "Build Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [470, 300]
+      "position": [
+        480,
+        304
+      ]
     },
     {
       "parameters": {
@@ -60,9 +72,13 @@
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [690, 300]
+      "position": [
+        704,
+        304
+      ]
     }
   ],
+  "pinData": {},
   "connections": {
     "Webhook": {
       "main": [
@@ -87,9 +103,16 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate"
   },
+  "versionId": "c24eff46-d9ed-433b-841c-c26acb06c8f6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1fd0eeee932ae06c66bc6d70a5bd090a7e623c2434298e4b5d4b2954d5b4aba0"
+  },
+  "id": "1",
   "tags": []
 }
