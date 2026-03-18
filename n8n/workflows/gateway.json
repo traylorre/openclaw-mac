@@ -1,0 +1,318 @@
+{
+  "id": "2",
+  "name": "Gateway",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gateway",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-gateway",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "gateway-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-intent-exists",
+              "leftValue": "={{ $json.body.intent }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-intent",
+      "name": "Has Intent?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [470, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.intent }}",
+                    "rightValue": "hello",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "hello"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route-intent",
+      "name": "Route Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [690, 240]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "ok",
+              "type": "string"
+            },
+            {
+              "id": "intent",
+              "name": "intent",
+              "value": "={{ $json.body.intent }}",
+              "type": "string"
+            },
+            {
+              "id": "result-message",
+              "name": "result.message",
+              "value": "Hello from n8n gateway",
+              "type": "string"
+            },
+            {
+              "id": "result-received",
+              "name": "result.received",
+              "value": "={{ $json.body.payload }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "hello-response",
+      "name": "Hello Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [910, 180]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "error",
+              "type": "string"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "={{ 'Unknown intent: ' + $json.body.intent }}",
+              "type": "string"
+            },
+            {
+              "id": "valid-intents",
+              "name": "valid_intents",
+              "value": "={{ ['hello'] }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "unknown-intent",
+      "name": "Unknown Intent",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [910, 340]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "error",
+              "type": "string"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "Missing required field: intent",
+              "type": "string"
+            },
+            {
+              "id": "valid-intents",
+              "name": "valid_intents",
+              "value": "={{ ['hello'] }}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "missing-intent",
+      "name": "Missing Intent",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [690, 460]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1130, 180]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-unknown",
+      "name": "Respond 400 Unknown",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1130, 340]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-missing",
+      "name": "Respond 400 Missing",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [910, 460]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Has Intent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Intent?": {
+      "main": [
+        [
+          {
+            "node": "Route Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Missing Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Intent": {
+      "main": [
+        [
+          {
+            "node": "Hello Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unknown Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hello Response": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unknown Intent": {
+      "main": [
+        [
+          {
+            "node": "Respond 400 Unknown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Missing Intent": {
+      "main": [
+        [
+          {
+            "node": "Respond 400 Missing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
