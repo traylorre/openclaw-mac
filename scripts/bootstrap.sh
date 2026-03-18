@@ -406,6 +406,20 @@ validate_commands() {
         fi
     fi
 
+    if docker compose version &>/dev/null; then
+        report OK "docker-compose: $(docker compose version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    elif [[ "$CHECK_ONLY" == true ]]; then
+        report FAIL "docker-compose not installed"
+    else
+        report INFO "Installing docker-compose via Homebrew..."
+        local brew_err
+        if brew_err=$(brew install docker-compose 2>&1); then
+            report FIXED "docker-compose installed"
+        else
+            report FAIL "docker-compose install failed: ${brew_err##*$'\n'}"
+        fi
+    fi
+
     # Chromium (optional, for OpenClaw browser control)
     if [[ -d "/Applications/Chromium.app" ]] || command -v chromium &>/dev/null; then
         report OK "Chromium available (browser control enabled)"
