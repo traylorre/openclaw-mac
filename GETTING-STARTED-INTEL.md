@@ -394,6 +394,28 @@ After hardening, consider these optional improvements:
   sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist
   ```
 
+- **Set up the n8n gateway** (Fledge Milestone 1). This is the
+  orchestration backbone for all automation workflows:
+
+  ```bash
+  bash scripts/gateway-setup.sh
+  ```
+
+  The script starts Colima, launches n8n in Docker, and imports the
+  gateway workflows. After it completes, follow the manual steps it
+  prints to create your n8n account and set up Bearer auth. Open
+  `http://localhost:5678` in Chrome (not Safari) to access the n8n
+  editor.
+
+  Verify the gateway works:
+
+  ```bash
+  curl -s -X POST http://localhost:5678/webhook/gateway \
+    -H "Authorization: Bearer $(n8n-token)" \
+    -H "Content-Type: application/json" \
+    -d '{"intent": "hello"}'
+  ```
+
 - **Set up a browser** if you will use browser automation (e.g.,
   OpenClaw with Chrome DevTools Protocol). Chromium is recommended,
   but Google Chrome and Microsoft Edge are also fully supported —
