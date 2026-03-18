@@ -376,8 +376,8 @@ After hardening, consider these optional improvements:
   # Verify Colima is installed (bootstrap handles this)
   colima version
 
-  # Start Colima with hardened defaults (Intel)
-  colima start --cpu 2 --memory 4 --disk 60 --no-kubernetes
+  # Start Colima with resource limits
+  colima start --cpus 2 --memory 4 --disk 60
 
   # Verify Docker is working
   docker info

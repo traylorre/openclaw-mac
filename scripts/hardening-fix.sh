@@ -1406,9 +1406,9 @@ fix_colima_running() {
     # Detect hardware and choose appropriate flags
     local hw_arch
     hw_arch=$(uname -m)
-    local -a colima_args=(start --cpu 2 --memory 4 --disk 60 --no-kubernetes)
+    local -a colima_args=(start --cpus 2 --memory 4 --disk 60)
     if [[ "$hw_arch" == "arm64" ]]; then
-        colima_args=(start --cpu 2 --memory 4 --disk 60 --vm-type vz --vz-rosetta --no-kubernetes)
+        colima_args+=(--arch aarch64)
     fi
 
     if run_fix_cmd "Start Colima (${hw_arch})" colima "${colima_args[@]}"; then
