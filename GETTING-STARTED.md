@@ -365,17 +365,11 @@ After hardening, consider these optional improvements:
   # Verify Colima is installed (bootstrap handles this)
   colima version
 
-  # Start Colima with hardened defaults (Apple Silicon)
-  colima start --cpu 2 --memory 4 --disk 60 --vm-type vz --vz-rosetta --no-kubernetes
+  # Start Colima with resource limits
+  colima start --cpus 2 --memory 4 --disk 60
 
   # Verify Docker is working
   docker info
-  ```
-
-  For Intel Macs, omit the `--vm-type vz --vz-rosetta` flags:
-
-  ```bash
-  colima start --cpu 2 --memory 4 --disk 60 --no-kubernetes
   ```
 
 - **Install n8n** and re-run the audit to validate its security
