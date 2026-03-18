@@ -6,19 +6,18 @@
 #   2. Generate key: openssl rand -hex 32 > secrets/n8n_encryption_key.txt
 #   3. Set permissions: chmod 600 secrets/n8n_encryption_key.txt
 #   4. Deploy: docker compose up -d
-version: '3.9'
-
 secrets:
   n8n_encryption_key:
     file: ./secrets/n8n_encryption_key.txt  # chmod 600 (FR-058, R-012)
 
 services:
   n8n:
-    # Pin image by digest for supply chain integrity (FR-040)
-    # Update digest after verifying new version:
-    #   docker pull n8nio/n8n:latest
-    #   docker inspect n8nio/n8n:latest | jq -r '.[0].RepoDigests'
-    image: n8nio/n8n:latest
+    # Pin to specific version (FR-002). To update:
+    #   1. Change tag below
+    #   2. docker compose pull n8n
+    #   3. docker compose up -d --no-deps n8n
+    #   4. Re-run hardening audit to verify
+    image: n8nio/n8n:2.13.0
 
     # Non-root user (FR-041) — UID 1000 matches Colima default
     user: "1000:1000"
@@ -33,12 +32,14 @@ services:
     tmpfs:
       - /tmp
       - /var/tmp
+      - /home/node/.cache:uid=1000,gid=1000
 
     # Persistent data only — no host directory mounts (FR-058)
     # NOTE: Never mount /var/run/docker.sock (SC-017)
     volumes:
       - n8n_data:/home/node/.n8n
       - ./n8n-entrypoint.sh:/entrypoint.sh:ro
+      - ../../n8n/workflows:/tmp/workflows:ro
 
     # Docker secrets — NOT environment variables (FR-058, FR-090)
     secrets:
