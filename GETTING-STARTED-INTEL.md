@@ -367,24 +367,33 @@ transfer), see [Undo a Specific Change](#undo-a-specific-change).
 
 After hardening, consider these optional improvements:
 
-- **Set up Colima** (container runtime) for Docker workloads like
-  n8n. The bootstrap script installs it automatically, but you need
-  to start the VM. The hardening audit will report
-  `CHK-COLIMA-RUNNING` as WARN until this step is completed:
+- **Set up the n8n gateway** (Fledge Milestone 1). One command
+  handles everything: starts Colima, launches n8n in Docker, and
+  imports the gateway workflows:
 
   ```bash
-  # Verify Colima is installed (bootstrap handles this)
-  colima version
-
-  # Start Colima with resource limits
-  colima start --cpus 2 --memory 4 --disk 60
-
-  # Verify Docker is working
-  docker info
+  bash scripts/gateway-setup.sh
   ```
 
-- **Install n8n** and re-run the audit to validate its security
-  configuration
+  The script prints manual steps at the end for creating your n8n
+  account and setting up Bearer auth. Open `http://localhost:5678`
+  in Chrome (not Safari) to complete them. Do not use Safari (it
+  forces HTTPS which n8n doesn't serve on localhost).
+
+  After completing all manual steps (including Keychain storage and
+  the `n8n-token` alias), verify the gateway works:
+
+  ```bash
+  curl -s -X POST http://localhost:5678/webhook/gateway \
+    -H "Authorization: Bearer $(n8n-token)" \
+    -H "Content-Type: application/json" \
+    -d '{"intent": "hello"}'
+  ```
+
+  To stop the gateway: `docker compose -f scripts/templates/docker-compose.yml down`
+  To stop Colima: `colima stop`
+  To restart everything: `bash scripts/gateway-setup.sh`
+
 - **Install detection tools** like LuLu (outbound firewall) or
   BlockBlock (persistence monitor) to address WARN items
 - **Set up scheduled audits** by loading the launchd job that was
@@ -392,28 +401,6 @@ After hardening, consider these optional improvements:
 
   ```bash
   sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist
-  ```
-
-- **Set up the n8n gateway** (Fledge Milestone 1). This is the
-  orchestration backbone for all automation workflows:
-
-  ```bash
-  bash scripts/gateway-setup.sh
-  ```
-
-  The script starts Colima, launches n8n in Docker, and imports the
-  gateway workflows. After it completes, follow the manual steps it
-  prints to create your n8n account and set up Bearer auth. Open
-  `http://localhost:5678` in Chrome (not Safari) to access the n8n
-  editor.
-
-  Verify the gateway works:
-
-  ```bash
-  curl -s -X POST http://localhost:5678/webhook/gateway \
-    -H "Authorization: Bearer $(n8n-token)" \
-    -H "Content-Type: application/json" \
-    -d '{"intent": "hello"}'
   ```
 
 - **Set up a browser** if you will use browser automation (e.g.,

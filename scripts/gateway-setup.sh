@@ -77,6 +77,10 @@ step_prerequisites() {
         return 1
     fi
     report OK "docker-compose.yml found"
+
+    if [[ ! -d "${REPO_ROOT}/node_modules" ]]; then
+        report WARN "node_modules not found. Run 'npm install' from repo root for git hooks."
+    fi
 }
 
 # --- Step 2: Start Colima ---
@@ -93,7 +97,7 @@ step_colima() {
         return 1
     fi
 
-    report INFO "Starting Colima..."
+    report INFO "Starting Colima (this takes 30-60 seconds, warnings are normal)..."
     local hw_arch
     hw_arch=$(uname -m)
     local -a colima_args=(start --cpus 2 --memory 4 --disk 60)
@@ -101,7 +105,7 @@ step_colima() {
         colima_args+=(--arch aarch64)
     fi
 
-    if colima "${colima_args[@]}" 2>&1 | tail -3; then
+    if colima "${colima_args[@]}" 2>/dev/null; then
         if docker info &>/dev/null; then
             report FIXED "Colima started, Docker socket reachable"
         else
@@ -217,10 +221,12 @@ step_workflows() {
     done
 
     if ! $CHECK_ONLY; then
-        # Activate workflows
+        # Activate workflows (publish:workflow may show deprecation warnings)
         for id in 1 2; do
             docker compose -f "${COMPOSE_DIR}/docker-compose.yml" exec -T n8n \
-                n8n publish:workflow --id="$id" 2>/dev/null || true
+                n8n publish:workflow --id="$id" 2>/dev/null || \
+            docker compose -f "${COMPOSE_DIR}/docker-compose.yml" exec -T n8n \
+                n8n update:workflow --id="$id" --active=true 2>/dev/null || true
         done
         report INFO "Workflows published (restart needed for activation)"
 
@@ -278,6 +284,11 @@ step_manual() {
     printf "       -H \"Authorization: Bearer \$(n8n-token)\" \\\\\n"
     printf "       -H \"Content-Type: application/json\" \\\\\n"
     printf "       -d '{\"intent\": \"hello\"}'\n\n"
+
+    printf "  ${BOLD}Stop / Restart${NC}\n"
+    printf "     Stop gateway:  docker compose -f scripts/templates/docker-compose.yml down\n"
+    printf "     Stop Colima:   colima stop\n"
+    printf "     Restart all:   bash scripts/gateway-setup.sh\n\n"
 }
 
 # --- Main ---
