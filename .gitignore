@@ -23,6 +23,7 @@ openclaw-audit.json
 *.swp
 .env
 local_audit_results.txt
+scripts/templates/secrets/
 
 # Terminal / Shell History (if you store scripts locally)
 .bash_history
