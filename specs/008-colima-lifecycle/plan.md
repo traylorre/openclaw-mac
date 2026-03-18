@@ -63,19 +63,22 @@ scripts following their established patterns.
 
 ### D1: Colima start defaults
 
-**Decision**: Start Colima with `colima start --cpu 2 --memory 4
---disk 60 --arch aarch64 --vm-type vz --vz-rosetta --no-kubernetes`.
+**Decision**: Start Colima with `colima start --cpus 2 --memory 4
+--disk 60`. On Apple Silicon, add `--arch aarch64`.
 
-**Rationale**: Matches the Mac Mini's resources. `vz` VM type uses
-Apple's Virtualization.framework (faster, lower overhead than QEMU
-on Apple Silicon). `--vz-rosetta` enables x86 emulation for
-containers that need it. Kubernetes disabled to save resources.
-For Intel Macs, omit `--arch aarch64 --vm-type vz --vz-rosetta`
-and use defaults.
+**Rationale**: Matches the Mac Mini's resources. Kubernetes is
+disabled by default (no flag needed). The `vz` VM type is the
+default in Colima 0.10+ on both architectures. Resource limits
+prevent the VM from starving the host.
+
+**Note (post-implementation)**: Original plan specified
+`--no-kubernetes`, `--cpu`, and `--vz-rosetta` flags. Runtime
+testing revealed: `--no-kubernetes` doesn't exist (Kubernetes is
+opt-in), `--cpu` should be `--cpus`, and `--vz-rosetta` is not
+available in Colima 0.10.1.
 
 **Alternatives rejected**:
 - Default `colima start` (no resource limits): could starve the host
-- QEMU VM type: slower than vz on Apple Silicon
 
 ### D2: Bootstrap installs but does not start Colima
 
