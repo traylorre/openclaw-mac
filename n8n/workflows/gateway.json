@@ -1,11 +1,11 @@
 {
-  "id": "2",
   "name": "Gateway",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "gateway",
+        "authentication": "headerAuth",
         "responseMode": "responseNode",
         "options": {}
       },
@@ -13,8 +13,17 @@
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [250, 300],
-      "webhookId": "gateway-webhook"
+      "position": [
+        256,
+        304
+      ],
+      "webhookId": "gateway-webhook",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "qmaOy11EZMmalmh1",
+          "name": "Header Auth account"
+        }
+      }
     },
     {
       "parameters": {
@@ -22,7 +31,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "strict"
+            "typeValidation": "strict",
+            "version": 2
           },
           "conditions": [
             {
@@ -43,7 +53,10 @@
       "name": "Has Intent?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.2,
-      "position": [470, 300]
+      "position": [
+        480,
+        304
+      ]
     },
     {
       "parameters": {
@@ -54,7 +67,8 @@
                 "options": {
                   "caseSensitive": true,
                   "leftValue": "",
-                  "typeValidation": "strict"
+                  "typeValidation": "strict",
+                  "version": 2
                 },
                 "conditions": [
                   {
@@ -63,7 +77,8 @@
                     "operator": {
                       "type": "string",
                       "operation": "equals"
-                    }
+                    },
+                    "id": "13768a49-60e1-4fe2-8902-b008e1805045"
                   }
                 ],
                 "combinator": "and"
@@ -81,7 +96,10 @@
       "name": "Route Intent",
       "type": "n8n-nodes-base.switch",
       "typeVersion": 3.2,
-      "position": [690, 240]
+      "position": [
+        704,
+        240
+      ]
     },
     {
       "parameters": {
@@ -119,7 +137,10 @@
       "name": "Hello Response",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [910, 180]
+      "position": [
+        912,
+        192
+      ]
     },
     {
       "parameters": {
@@ -140,8 +161,8 @@
             {
               "id": "valid-intents",
               "name": "valid_intents",
-              "value": "={{ ['hello'] }}",
-              "type": "object"
+              "value": "=['hello']",
+              "type": "array"
             }
           ]
         },
@@ -151,7 +172,10 @@
       "name": "Unknown Intent",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [910, 340]
+      "position": [
+        912,
+        352
+      ]
     },
     {
       "parameters": {
@@ -172,8 +196,8 @@
             {
               "id": "valid-intents",
               "name": "valid_intents",
-              "value": "={{ ['hello'] }}",
-              "type": "object"
+              "value": "=['hello']",
+              "type": "array"
             }
           ]
         },
@@ -183,7 +207,10 @@
       "name": "Missing Intent",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
-      "position": [690, 460]
+      "position": [
+        704,
+        464
+      ]
     },
     {
       "parameters": {
@@ -197,7 +224,10 @@
       "name": "Respond OK",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1130, 180]
+      "position": [
+        1136,
+        192
+      ]
     },
     {
       "parameters": {
@@ -211,7 +241,10 @@
       "name": "Respond 400 Unknown",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [1130, 340]
+      "position": [
+        1136,
+        352
+      ]
     },
     {
       "parameters": {
@@ -225,9 +258,13 @@
       "name": "Respond 400 Missing",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
-      "position": [910, 460]
+      "position": [
+        912,
+        464
+      ]
     }
   ],
+  "pinData": {},
   "connections": {
     "Webhook": {
       "main": [
@@ -310,9 +347,16 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate"
   },
+  "versionId": "c6874074-3d39-4677-b0c3-c7382412582e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1fd0eeee932ae06c66bc6d70a5bd090a7e623c2434298e4b5d4b2954d5b4aba0"
+  },
+  "id": "2",
   "tags": []
 }

@@ -3952,6 +3952,7 @@ This deployment manages multiple high-value credentials. The `N8N_ENCRYPTION_KEY
 | SSH private key | certificate | N/A (host-level) | N/A (host-level) | Remote Mac Mini access |
 | SMTP relay credentials | password | Docker secret or n8n | Keychain or n8n | Email sending, phishing vector |
 | n8n API key (if enabled) | api_key | n8n credential store | n8n credential store | Workflow CRUD, credential access |
+| n8n gateway Bearer token | api_key | n8n Header Auth credential | Keychain (`n8n-gateway-bearer`) | Unauthorized workflow execution via webhook |
 
 **Per-path storage guidance:**
 
@@ -3968,6 +3969,44 @@ openssl rand -hex 32
 # Generate a random JWT secret
 openssl rand -hex 32
 ```
+
+**Shell safety when handling secrets:**
+
+Credentials typed into the terminal persist in shell history indefinitely.
+Three defenses, all of which should be used together:
+
+```bash
+# 1. Prevent commands starting with a space from being recorded
+#    Add to ~/.bashrc or ~/.bash_profile:
+export HISTCONTROL=ignorespace
+
+# 2. Generate secrets with a leading space (not recorded in history)
+ openssl rand -hex 32
+
+# 3. Store in macOS Keychain (encrypted at rest, no plaintext files)
+ security add-generic-password -a "openclaw" -s "n8n-gateway-bearer" -w "TOKEN_HERE"
+
+# 4. Retrieve via alias (never paste the raw token into commands)
+#    Add to ~/.bashrc or ~/.bash_profile:
+alias n8n-token='security find-generic-password -a "openclaw" -s "n8n-gateway-bearer" -w'
+
+# Usage in curl (token never appears in history or process list):
+curl -s -X POST http://localhost:5678/webhook/gateway \
+  -H "Authorization: Bearer $(n8n-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"intent": "hello"}'
+```
+
+If a token has already leaked into history, remove it:
+
+```bash
+# Find the line number
+history | grep -n "Bearer"
+# Delete that specific line
+history -d LINE_NUMBER
+```
+
+**Source**: [MITRE ATT&CK T1552.003](https://attack.mitre.org/techniques/T1552/003/) (Bash History), [CIS Benchmark §5.4](https://www.cisecurity.org/benchmark/apple_os) (Access Control)
 
 **Credential reuse warning**: Use a unique password for every service — the Mac Mini login, n8n web UI, SMTP, and all API keys must be different. Credential reuse is the #1 enabler of lateral movement. Use Bitwarden CLI (free) for generating and managing unique credentials:
 
