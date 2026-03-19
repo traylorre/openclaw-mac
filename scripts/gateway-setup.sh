@@ -17,6 +17,11 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_DIR="${SCRIPT_DIR}/templates"
 WORKFLOW_DIR="${REPO_ROOT}/n8n/workflows"
 
+# --- Source Manifest Library ---
+# shellcheck source=lib/manifest.sh
+source "${SCRIPT_DIR}/lib/manifest.sh"
+MANIFEST_AVAILABLE=false
+
 # --- Colors ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -116,6 +121,14 @@ step_colima() {
         report FAIL "Failed to start Colima"
         return 1
     fi
+
+    # Track Colima VM in manifest
+    if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+        local colima_ver
+        colima_ver=$(colima version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || colima_ver="unknown"
+        manifest_add "colima-vm-default" "colima-vm" "tooling" "default" \
+            "${colima_ver}" "null" "gateway-setup.sh" false true ""
+    fi
 }
 
 # --- Step 3: Create secrets ---
@@ -140,6 +153,14 @@ step_secrets() {
     openssl rand -hex 32 > "$key_file"
     chmod 600 "$key_file"
     report FIXED "Generated encryption key"
+
+    # Track secrets file in manifest
+    if [[ "$MANIFEST_AVAILABLE" == true ]] && [[ -f "$key_file" ]]; then
+        local cksum
+        cksum="$(manifest_checksum "$key_file")"
+        manifest_add "file-n8n-encryption-key" "file" "tooling" "${key_file}" "N/A" \
+            "${cksum}" "gateway-setup.sh" false true ""
+    fi
 }
 
 # --- Step 4: Start n8n ---
@@ -170,6 +191,26 @@ step_n8n() {
     else
         report FAIL "Failed to start n8n container"
         return 1
+    fi
+
+    # Track Docker artifacts in manifest
+    if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+        # Container name from compose
+        local container_name
+        container_name=$(docker compose -f "${COMPOSE_DIR}/docker-compose.yml" ps --format '{{.Name}}' 2>/dev/null | head -1) || container_name="templates-n8n-1"
+        manifest_add "docker-container-n8n" "docker-container" "tooling" \
+            "${container_name}" "N/A" "null" "gateway-setup.sh" false true ""
+        # Docker volume
+        local volume_name
+        volume_name=$(docker compose -f "${COMPOSE_DIR}/docker-compose.yml" config --volumes 2>/dev/null | head -1) || volume_name="templates_n8n_data"
+        manifest_add "docker-volume-n8n-data" "docker-volume" "tooling" \
+            "${volume_name}" "N/A" "null" "gateway-setup.sh" false true ""
+        # Docker image
+        local image_name
+        image_name=$(docker compose -f "${COMPOSE_DIR}/docker-compose.yml" config 2>/dev/null | grep 'image:' | awk '{print $2}' | head -1) || image_name="n8nio/n8n:2.13.0"
+        local image_tag="${image_name##*:}"
+        manifest_add "docker-image-n8n" "docker-image" "tooling" \
+            "${image_name}" "${image_tag}" "null" "gateway-setup.sh" false true ""
     fi
 
     # Wait for n8n to be ready
@@ -276,8 +317,9 @@ step_manual() {
     printf "     Run (with leading space to avoid history):\n"
     printf "      security add-generic-password -a 'openclaw' -s 'n8n-gateway-bearer' -w 'YOUR_TOKEN'\n\n"
 
-    printf "  ${BOLD}E. Add alias to ~/.bashrc or ~/.bash_profile${NC}\n"
-    printf "     alias n8n-token='security find-generic-password -a \"openclaw\" -s \"n8n-gateway-bearer\" -w'\n\n"
+    printf "  ${BOLD}E. Shell aliases${NC} (automatically configured)\n"
+    printf "     The n8n-token and openclaw aliases are in ~/.openclaw/shellrc\n"
+    printf "     Open a new terminal for them to take effect.\n\n"
 
     printf "  ${BOLD}F. Test${NC}\n"
     printf "     curl -s -X POST http://localhost:5678/webhook/gateway \\\\\n"
@@ -298,6 +340,14 @@ main() {
         printf "Mode: ${YELLOW}check only${NC}\n"
     else
         printf "Mode: ${GREEN}setup${NC}\n"
+    fi
+
+    # Initialize manifest tracking (if not check-only and jq available)
+    if ! $CHECK_ONLY && command -v jq &>/dev/null; then
+        manifest_setup_traps
+        manifest_lock
+        manifest_init
+        MANIFEST_AVAILABLE=true
     fi
 
     step_prerequisites || { printf "\n${RED}Prerequisites not met. Run bootstrap.sh first.${NC}\n"; exit 1; }
