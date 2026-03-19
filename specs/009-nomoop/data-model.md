@@ -1,0 +1,203 @@
+# Data Model: 009-nomoop
+
+**Date**: 2026-03-18 | **Spec**: `specs/009-nomoop/spec.md`
+
+## Entity: Manifest
+
+**Location**: `~/.openclaw/manifest.json`
+
+The manifest is the single source of truth for all artifacts placed
+on the system by openclaw. It is an ordered JSON object with metadata
+and an array of artifact entries.
+
+```json
+{
+  "version": "1.0.0",
+  "repo_root": "/Users/operator/projects/openclaw-mac",
+  "created_at": "2026-03-18T14:30:00Z",
+  "updated_at": "2026-03-18T14:35:00Z",
+  "artifacts": [
+    { "...artifact entries..." }
+  ]
+}
+```
+
+### Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `version` | string | yes | Manifest schema version (semver) |
+| `repo_root` | string | yes | Absolute path to the openclaw repo clone |
+| `created_at` | string | yes | ISO 8601 timestamp of first install |
+| `updated_at` | string | yes | ISO 8601 timestamp of last modification |
+| `artifacts` | array | yes | Ordered list of artifact entries |
+
+## Entity: Artifact Entry
+
+Each artifact entry represents a single item placed on the system.
+
+```json
+{
+  "id": "brew-colima",
+  "type": "brew-package",
+  "category": "tooling",
+  "path": "colima",
+  "version": "0.10.1",
+  "checksum": null,
+  "installed_at": "2026-03-18T14:30:05Z",
+  "installed_by": "bootstrap.sh",
+  "pre_existing": false,
+  "removable": true,
+  "status": "installed",
+  "notes": null
+}
+```
+
+### Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | Unique identifier (type + short name) |
+| `type` | string | yes | One of the artifact type taxonomy values |
+| `category` | string | yes | One of: `tooling`, `hardening` |
+| `path` | string | yes | Filesystem path, package name, or key identifier |
+| `version` | string | yes | Installed version: brew version, image tag, or "N/A" for files/dirs |
+| `checksum` | string/null | no | SHA-256 hash (files only, null for non-file types) |
+| `installed_at` | string | yes | ISO 8601 timestamp of installation |
+| `installed_by` | string | yes | Script that created this artifact |
+| `pre_existing` | boolean | yes | True if artifact existed before openclaw install |
+| `removable` | boolean | yes | True if safe to remove during uninstall |
+| `status` | string | yes | One of: `installed`, `pending`, `removed`, `skipped` |
+| `notes` | string/null | no | Human-readable context (e.g., "shared with other tools") |
+
+### Artifact Type Values
+
+| Type | `path` contains | `checksum` | Removal command |
+|------|----------------|------------|-----------------|
+| `brew-package` | package name | null | `brew uninstall <name>` |
+| `directory` | absolute path | null | `rm -rf <path>` (may need sudo) |
+| `file` | absolute path | SHA-256 | `rm <path>` (may need sudo) |
+| `shell-config-line` | path to rc file | null | `sed` removal of source line |
+| `shell-rc-file` | `~/.openclaw/shellrc` | SHA-256 | `rm <path>` |
+| `keychain-entry` | service name | null | `security delete-generic-password` |
+| `launchd-plist` | absolute path | SHA-256 | `launchctl bootout` then `rm` |
+| `docker-volume` | volume name | null | `docker volume rm <name>` |
+| `docker-container` | container name | null | `docker rm -f <name>` |
+| `docker-image` | image:tag | null | `docker rmi <image>` |
+| `colima-vm` | profile name | null | `colima delete <profile>` |
+| `system-account` | username | null | `sysadminctl -deleteUser <name>` |
+| `system-config-file` | absolute path | SHA-256 | `sudo rm <path>` (backup first) |
+| `system-config-line` | path to config file | null | `sudo sed` removal |
+| `managed-preference` | absolute path | SHA-256 | `sudo rm <path>` |
+| `spotlight-exclusion` | absolute path | null | `sudo mdutil -i on <path>` |
+
+### Status Transitions
+
+```text
+  install start
+       │
+       ▼
+   ┌─────────┐    install completes    ┌───────────┐
+   │ pending  │ ─────────────────────▶ │ installed  │
+   └─────────┘                         └───────────┘
+       │                                    │
+       │  install skipped                   │  uninstall
+       │  (pre-existing)                    │
+       ▼                                    ▼
+   ┌─────────┐                         ┌─────────┐
+   │ skipped  │                         │ removed  │
+   └─────────┘                         └─────────┘
+```
+
+- **pending**: Install step has begun but not completed (interrupt
+  recovery marker).
+- **installed**: Artifact is on disk and tracked.
+- **skipped**: Artifact pre-existed; tracked but not removable.
+- **removed**: Artifact was removed during uninstall.
+
+## Entity: Shell RC File
+
+**Location**: `~/.openclaw/shellrc`
+
+A sourceable shell script containing all openclaw shell additions.
+Not a data model per se, but a well-defined artifact with structure:
+
+```bash
+# OpenClaw Shell Configuration
+# Sourced from your shell config via:
+#   [ -f ~/.openclaw/shellrc ] && source ~/.openclaw/shellrc
+# Do not edit this file directly — it is managed by openclaw.
+
+# --- Aliases ---
+alias openclaw='bash /path/to/repo/scripts/openclaw.sh'
+alias n8n-token='security find-generic-password -a "openclaw" -s "n8n-gateway-bearer" -w'
+
+# --- Environment ---
+# (reserved for future use)
+
+# --- Functions ---
+# (reserved for future use)
+```
+
+## Entity: Uninstall Report
+
+**Location**: `~/.openclaw/uninstall-report.txt`
+
+Plain-text report generated after uninstall completes.
+
+```text
+OpenClaw Uninstall Report
+Generated: 2026-03-18T15:00:00Z
+Repo: /Users/operator/projects/openclaw-mac
+
+REMOVED — TOOLING (12 items):
+  ✓ [file]              /opt/n8n/scripts/hardening-audit.sh
+  ✓ [file]              /opt/n8n/scripts/hardening-fix.sh
+  ✓ [file]              /opt/n8n/etc/notify.conf
+  ✓ [directory]         /opt/n8n
+  ✓ [launchd-plist]     /Library/LaunchDaemons/com.openclaw.audit-cron.plist
+  ✓ [docker-container]  templates-n8n-1
+  ✓ [docker-volume]     templates_n8n_data
+  ✓ [keychain-entry]    n8n-gateway-bearer
+  ✓ [shell-config-line] ~/.bash_profile (source line)
+  ✓ [shell-rc-file]     ~/.openclaw/shellrc
+  ✓ [brew-package]      docker-compose
+  ✓ [colima-vm]         default
+
+REMOVED — HARDENING (5 items):
+  ⚠ [system-account]       _n8n (WARNING: re-run sysadminctl to recreate)
+  ⚠ [system-config-file]   /etc/ssh/sshd_config.d/hardening.conf (WARNING: re-enables SSH password auth)
+  ⚠ [system-config-line]   /etc/pf.conf anchor (WARNING: weakens firewall)
+  ⚠ [managed-preference]   /Library/Managed Preferences/org.chromium.Chromium.plist (WARNING: loosens browser policy)
+  ⚠ [spotlight-exclusion]  /opt/n8n (WARNING: Spotlight will re-index)
+
+SKIPPED — PRE-EXISTING (2 items):
+  — [brew-package]      jq (installed before openclaw)
+  — [brew-package]      bash (installed before openclaw)
+
+SKIPPED — SHARED (1 item):
+  — [brew-package]      docker (used by: docker-compose)
+
+BACKED UP — MODIFIED (1 item):
+  ⚠ [file]              /opt/n8n/etc/notify.conf
+                         Backup: ~/.openclaw/backups/2026-03-18T150000Z/opt/n8n/etc/notify.conf
+
+MANUAL CLEANUP:
+  • /etc/shells: Line containing /opt/homebrew/bin/bash (added by bootstrap)
+
+This report is the only remaining openclaw artifact.
+Delete it with: rm -rf ~/.openclaw
+```
+
+## Validation Rules
+
+1. **Manifest uniqueness**: No two entries may share the same `id`.
+2. **Manifest ordering**: Entries are ordered by `installed_at` (ascending).
+3. **Checksum presence**: Entries with type `file`, `shell-rc-file`, or
+   `launchd-plist` MUST have a non-null `checksum`.
+4. **Pre-existing implies not removable**: If `pre_existing` is true,
+   `removable` MUST be true but uninstall skips it. (Removable means
+   "would be safe to remove", pre_existing means "we didn't put it there".)
+5. **Status consistency**: An entry with `status: "removed"` should only
+   exist in the manifest during uninstall (for the report). After
+   uninstall, the manifest itself is deleted.

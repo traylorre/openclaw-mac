@@ -5,6 +5,20 @@
 **Status**: Draft
 **Input**: Installation manifest with clean install/uninstall, self-healing state tracking, and leave-no-trace methodology. Every artifact placed on the system is tracked, reversible, and verifiable.
 
+## Clarifications
+
+### Session 2026-03-18
+
+- Q: Should manifest tracking cover only install scripts (bootstrap.sh + gateway-setup.sh) or also hardening-fix.sh which creates system accounts, SSH configs, Chromium policies, and firewall rules? → A: Track all artifacts from all scripts — leave no stone unturned. All three scripts (bootstrap.sh, gateway-setup.sh, hardening-fix.sh) must record to the manifest.
+- Q: Should the manifest format remain JSON+jq, or switch to YAML or another format? → A: JSON+jq is the right choice (jq already a dependency). Format flexibility noted — any format is acceptable if it makes scripting easier, but JSON+jq is optimal for this use case.
+- Q: Sudo strategy during uninstall — single upfront prompt, per-step prompts, or run entire script as root? → A: Hybrid — default is `sudo -v` upfront (single prompt, cached credentials). Power users can pass `--confirm` flag to see each sudo command and approve individually. Script always runs as user (never `sudo openclaw uninstall`) to avoid $HOME/$USER resolution issues.
+- Q: Manifest file permissions? → A: `600` on manifest.json, `700` on `~/.openclaw/` directory. Self-evident — no use case for wider access, single-operator machine, secrets live in Keychain not manifest.
+- Q: Should security-hardening artifacts be auto-removed during uninstall? → A: Option C + mirror. Uninstall auto-removes all by default with per-item warnings, but supports `--keep-hardening` to preserve security posture. Mirror operation: install supports `--hardening-only` to apply only hardening artifacts without the full stack. Artifacts gain a `category` field ("hardening" vs "tooling") to enable this filtering.
+- Q: Should the manifest track which script created each artifact? → A: Yes. Each entry includes an `installed_by` field with the script filename. Enables filtering (e.g., `openclaw manifest --source hardening-fix.sh`) and debugging provenance.
+- Q: How should manifest writes survive interrupts (Ctrl+C, SIGHUP, terminal close)? → A: All jq writes MUST use atomic write pattern (write to .tmp, then mv). Scripts MUST set trap handlers for INT, HUP, TERM signals. This prevents manifest corruption on any interrupt type.
+- Q: Should the manifest track artifact versions? → A: Yes. Each entry includes a `version` field (package version for brew, image tag for Docker, "N/A" for files/dirs). Enables `--verify` to detect VERSION_DRIFT and future `openclaw update` command.
+- Q: Should install scripts handle sudo credential expiry? → A: Yes. Both install and uninstall scripts MUST run a background `sudo -v` refresh loop to prevent credential timeout during long operations (brew downloads, Docker image pulls).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 — Fresh Install With Manifest Tracking (Priority: P1)
@@ -169,9 +183,12 @@ manifest verify, see the drift reported.
 - Operator has a non-standard shell config path (e.g., `~/.zshenv`
   instead of `~/.zshrc`). The installer detects the active shell
   and appends to the correct file.
-- `/opt/n8n/` was created by bootstrap with sudo. Uninstall needs
-  sudo to remove it. The uninstall script should prompt for sudo
-  only when needed and explain why.
+- `/opt/n8n/` was created by bootstrap with sudo. Uninstall uses
+  `sudo -v` upfront (single password prompt with explanation of
+  which steps need elevation). Power users can pass `--confirm`
+  to approve each sudo command individually. The script must
+  never be run as `sudo openclaw uninstall` — it always runs as
+  the operator's user to ensure correct $HOME and $USER resolution.
 - Operator runs uninstall but Docker containers are still running.
   Uninstall should stop containers and Colima before removing
   artifacts.
@@ -180,6 +197,24 @@ manifest verify, see the drift reported.
 - The `~/.openclaw/` directory itself is deleted by the operator
   manually. The install script should be able to reconstruct the
   manifest from known artifact locations (best-effort rebuild).
+- Operator's `$SHELL` is ksh, fish, or another non-bash/zsh shell.
+  The installer MUST validate that `$SHELL` is bash or zsh. If not,
+  warn the operator and prompt for which rc file to modify (or
+  default to `~/.zshrc` since zsh is macOS default since Catalina).
+- Network operations hang indefinitely (`brew install`, `colima
+  start`, `docker compose up`). Scripts SHOULD use `timeout`
+  wrappers for network-dependent operations and report a clear
+  error if a timeout is exceeded rather than hanging silently.
+- Disk is nearly full (<5GB free). Bootstrap SHOULD check available
+  disk space before starting and warn if below 8GB (Colima VM +
+  Docker images + packages can consume 5-10GB).
+- Two terminals run bootstrap.sh simultaneously. Manifest writes
+  SHOULD use `flock` to prevent concurrent corruption:
+  `flock -n /tmp/openclaw-manifest.lock` at script start, exit
+  with clear error if lock is held by another process.
+- Operator runs `brew upgrade` which upgrades openclaw dependencies
+  to untested versions. `openclaw manifest --verify` SHOULD detect
+  VERSION_DRIFT for brew packages and report the old vs new version.
 
 ## Requirements *(mandatory)*
 
@@ -187,12 +222,13 @@ manifest verify, see the drift reported.
 
 - **FR-001**: An installation manifest MUST be maintained at
   `~/.openclaw/manifest.json` recording every artifact placed on
-  the system outside the repo directory.
+  the system outside the repo directory by any openclaw script
+  (bootstrap.sh, gateway-setup.sh, hardening-fix.sh).
 - **FR-002**: Each manifest entry MUST include: artifact path, type
-  (file, directory, brew-package, shell-config-line,
-  keychain-entry, launchd-plist, docker-volume, docker-container),
-  installed timestamp, checksum (for files), and a removable flag
-  (true/false).
+  (see Artifact Type Taxonomy for complete list of 16 types),
+  category (`tooling` or `hardening`), version (package version,
+  image tag, or "N/A"), installed timestamp, checksum (for files),
+  and a removable flag (true/false).
 - **FR-003**: Artifacts that pre-existed before install MUST be
   marked as `"pre_existing": true` and MUST NOT be removed during
   uninstall.
@@ -228,6 +264,44 @@ manifest verify, see the drift reported.
   was removed and what requires manual cleanup.
 - **FR-015**: Modified files MUST be backed up before removal
   during uninstall. Backups stored in `~/.openclaw/backups/`.
+- **FR-016**: Uninstall MUST use `sudo -v` at the start to cache
+  credentials, with a clear explanation of which steps require
+  elevation. The script MUST NOT be designed to run as root.
+- **FR-017**: Uninstall MUST support a `--confirm` flag that
+  displays each sudo command and waits for operator approval
+  before executing, enabling per-step inspection for power users.
+- **FR-018**: Uninstall MUST support a `--keep-hardening` flag
+  that skips removal of artifacts with `category: "hardening"`.
+  Skipped artifacts MUST be listed in the uninstall report as
+  "KEPT: hardening artifact preserved."
+- **FR-019**: When auto-removing hardening artifacts, uninstall
+  MUST display a per-item warning describing the security
+  implication (e.g., "Removing SSH hardening — this re-enables
+  password authentication").
+- **FR-020**: Install MUST support a `--hardening-only` flag
+  (via `openclaw install --hardening-only` or
+  `hardening-fix.sh --manifest`) that applies only hardening
+  artifacts and records them to the manifest, without requiring
+  the full bootstrap/gateway stack.
+- **FR-021**: All manifest JSON writes MUST use atomic write
+  pattern: write to a temporary file, then `mv` to the final
+  path. This prevents manifest corruption if the script is
+  interrupted during a write (Ctrl+C, SIGHUP, terminal close,
+  power loss). `mv` on the same filesystem is atomic on APFS.
+- **FR-022**: All scripts that modify the manifest MUST set
+  signal trap handlers for INT, HUP, and TERM that print a
+  resume message and exit cleanly: `trap 'echo "Interrupted.
+  Re-run to resume." >&2; exit 130' INT HUP TERM`.
+- **FR-023**: Each manifest entry MUST include a `version` field
+  recording the installed version: brew packages use `brew info
+  --json <pkg> | jq -r '.[0].installed[0].version'`, Docker
+  images use the image tag, files/directories use "N/A". The
+  `--verify` command MUST report VERSION_DRIFT when the current
+  version differs from the recorded version.
+- **FR-024**: Both install and uninstall scripts MUST maintain
+  a background `sudo -v` refresh loop (every 4 minutes) to
+  prevent credential timeout during long operations. The loop
+  MUST be killed on script exit via trap handler.
 
 ### Key Entities
 
@@ -235,7 +309,9 @@ manifest verify, see the drift reported.
   single source of truth for installed state. Contains an ordered
   array of artifact entries.
 - **Artifact Entry**: A single installed item with path, type,
-  checksum, timestamp, pre_existing flag, and removable flag.
+  category (tooling/hardening), version, installed_by (source
+  script), checksum, timestamp, pre_existing flag, and removable
+  flag.
 - **Shell RC**: The `~/.openclaw/shellrc` file containing all
   openclaw shell additions (aliases, exports, functions).
 - **Uninstall Report**: Plain-text file left after uninstall
@@ -245,19 +321,24 @@ manifest verify, see the drift reported.
 
 Every artifact placed on the system falls into one of these types:
 
-| Type | Example | Removable? | Notes |
-|------|---------|-----------|-------|
-| `brew-package` | colima, docker, jq | Conditional | Only if no other dependents |
-| `directory` | /opt/n8n, ~/.openclaw | Yes | Recursive removal |
-| `file` | /opt/n8n/scripts/hardening-audit.sh | Yes | Checksum tracked |
-| `shell-config-line` | source line in ~/.bash_profile | Yes | Single line, grep-removable |
-| `shell-rc-file` | ~/.openclaw/shellrc | Yes | Contains aliases, exports |
-| `keychain-entry` | n8n-gateway-bearer | Yes | `security delete-generic-password` |
-| `launchd-plist` | com.openclaw.audit-cron.plist | Yes | Must unload before removing |
-| `docker-volume` | templates_n8n_data | Yes | Must stop containers first |
-| `docker-container` | templates-n8n-1 | Yes | Must stop before removing |
-| `docker-image` | n8nio/n8n:2.13.0 | Conditional | May be shared |
-| `colima-vm` | default profile | Conditional | `colima delete` |
+| Type | Example | Category | Removable? | Notes |
+|------|---------|----------|-----------|-------|
+| `brew-package` | colima, docker, jq | tooling | Conditional | Only if no other dependents |
+| `directory` | /opt/n8n, ~/.openclaw | tooling | Yes | Recursive removal |
+| `file` | /opt/n8n/scripts/hardening-audit.sh | tooling | Yes | Checksum tracked |
+| `shell-config-line` | source line in ~/.bash_profile | tooling | Yes | Single line, grep-removable |
+| `shell-rc-file` | ~/.openclaw/shellrc | tooling | Yes | Contains aliases, exports |
+| `keychain-entry` | n8n-gateway-bearer | tooling | Yes | `security delete-generic-password` |
+| `launchd-plist` | com.openclaw.audit-cron.plist | tooling | Yes | Must unload before removing |
+| `docker-volume` | templates_n8n_data | tooling | Yes | Must stop containers first |
+| `docker-container` | templates-n8n-1 | tooling | Yes | Must stop before removing |
+| `docker-image` | n8nio/n8n:2.13.0 | tooling | Conditional | May be shared |
+| `colima-vm` | default profile | tooling | Conditional | `colima delete` |
+| `system-account` | _n8n service account | hardening | Yes | `sysadminctl -deleteUser`; warn: orphans data |
+| `system-config-file` | /etc/ssh/sshd_config.d/hardening.conf | hardening | Yes | Warn: re-enables password auth |
+| `system-config-line` | /etc/shells bash line, /etc/pf.conf anchor | hardening | Yes | Warn: weakens firewall |
+| `managed-preference` | /Library/Managed Preferences/org.chromium.Chromium.plist | hardening | Yes | Warn: loosens browser policy |
+| `spotlight-exclusion` | mdutil -i off /opt/n8n | hardening | Yes | Reverse: `mdutil -i on` |
 
 ### Rabbit Holes (Identified, Deferred)
 
@@ -291,9 +372,12 @@ Every artifact placed on the system falls into one of these types:
 - The operator has admin access (some removals require sudo).
 - Homebrew is the package manager (per constitution).
 - The operator's login shell is bash or zsh (the two shells
-  supported by macOS).
+  supported by macOS). Other shells (ksh, fish) are not supported
+  but detected and warned about.
 - `jq` is available for manifest JSON manipulation (installed
   by bootstrap).
+- At least 8GB of free disk space is available for the full
+  install (Colima VM, Docker images, Homebrew packages).
 - The repo clone directory is not tracked by the manifest (the
   operator manages their own git clones).
 
