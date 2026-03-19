@@ -11,8 +11,9 @@
 set -euo pipefail
 
 # --- Constants ---
-readonly MANIFEST_DIR="${HOME}/.openclaw"
-readonly MANIFEST_FILE="${MANIFEST_DIR}/manifest.json"
+# Overridable for test sandboxing (tests pre-set MANIFEST_DIR before sourcing)
+MANIFEST_DIR="${MANIFEST_DIR:-${HOME}/.openclaw}"
+MANIFEST_FILE="${MANIFEST_FILE:-${MANIFEST_DIR}/manifest.json}"
 # Lock is mkdir-based at ${MANIFEST_DIR}/.lock (see manifest_lock)
 readonly MANIFEST_SCHEMA_VERSION="1.0.0"
 

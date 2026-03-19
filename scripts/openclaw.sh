@@ -589,7 +589,7 @@ cmd_uninstall() {
 
     # Read artifacts in reverse installation order (R-006)
     local artifacts_json
-    artifacts_json="$(jq '[.artifacts[] | select(.status == "installed" or .status == "pending")] | reverse' "${MANIFEST_FILE}")"
+    artifacts_json="$(jq '[.artifacts[] | select(.status == "installed" or .status == "pending" or .status == "skipped")] | reverse' "${MANIFEST_FILE}")"
     local total
     total="$(echo "$artifacts_json" | jq 'length')"
 
