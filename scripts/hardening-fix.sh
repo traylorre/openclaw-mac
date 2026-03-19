@@ -34,6 +34,15 @@ if [[ ! -t 1 ]]; then
     RED='' GREEN='' YELLOW='' CYAN='' NC=''
 fi
 
+# --- Source Manifest Library (conditional) ---
+# Manifest tracking requires lib/manifest.sh (available when run from repo).
+# When run from deployed location (/opt/n8n/scripts/), tracking is silently disabled.
+MANIFEST_AVAILABLE=false
+if [[ -f "${SCRIPT_DIR}/lib/manifest.sh" ]]; then
+    # shellcheck source=lib/manifest.sh
+    source "${SCRIPT_DIR}/lib/manifest.sh"
+fi
+
 # --- Counters ---
 TOTAL=0
 FIXED_COUNT=0
@@ -915,6 +924,18 @@ fix_spotlight() {
     elif [[ $paths_fixed -gt 0 ]] || $ok; then
         report_fix "$id" "Excluded sensitive directories from Spotlight" "FIXED" \
             "${paths_fixed} path(s) updated"
+        # Track Spotlight exclusions in manifest
+        if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+            for path in "$HOME/.n8n" "$HOME/.colima"; do
+                if [[ -d "$path" ]]; then
+                    local safe_id
+                    safe_id="hardening-spotlight-${path##*/}"
+                    manifest_add "${safe_id}" "spotlight-exclusion" "hardening" \
+                        "$path" "N/A" "null" "hardening-fix.sh" false true \
+                        "Spotlight indexing disabled"
+                fi
+            done
+        fi
     else
         report_fix "$id" "No sensitive directories found to exclude" "SKIPPED"
     fi
@@ -947,6 +968,12 @@ fix_spotlight_exclusions() {
             report_fix "$id" "Excluded /opt/n8n from Spotlight indexing" "DRY-RUN"
         else
             report_fix "$id" "Excluded /opt/n8n from Spotlight indexing" "FIXED"
+            # Track Spotlight exclusion in manifest
+            if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+                manifest_add "hardening-spotlight-opt-n8n" "spotlight-exclusion" "hardening" \
+                    "/opt/n8n" "N/A" "null" "hardening-fix.sh" false true \
+                    "Spotlight indexing disabled for /opt/n8n"
+            fi
         fi
         return 0
     else
@@ -1159,6 +1186,14 @@ BROWSER_POLICY_EOF
                 continue
             fi
             report_fix "$id" "[${name}] Deployed managed security policies" "FIXED" "$plist_file"
+            # Track managed preference plist in manifest
+            if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+                local cksum
+                cksum="$(manifest_checksum "$plist_file")"
+                manifest_add "hardening-browser-policy-${browser}" "managed-preference" "hardening" \
+                    "$plist_file" "N/A" "${cksum}" "hardening-fix.sh" false true \
+                    "${name} managed security policy"
+            fi
         else
             report_fix "$id" "[${name}] Failed to deploy policy plist" "FAILED" "$LAST_FIX_ERROR"
         fi
@@ -1211,6 +1246,14 @@ fix_ssh_key_only() {
     fi
     if echo 'PasswordAuthentication no' | sudo tee -a "$conf_file" > /dev/null; then
         report_fix "$id" "Disabled SSH password authentication" "FIXED" "$conf_file"
+        # Track SSH hardening config in manifest
+        if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+            local cksum
+            cksum="$(manifest_checksum "$conf_file")"
+            manifest_add "hardening-ssh-config" "system-config-file" "hardening" \
+                "$conf_file" "N/A" "${cksum}" "hardening-fix.sh" false true \
+                "SSH hardening: PasswordAuthentication no"
+        fi
         return 0
     else
         report_fix "$id" "Failed to update SSH configuration" "FAILED" "$LAST_FIX_ERROR"
@@ -1239,6 +1282,18 @@ fix_ssh_root() {
     fi
     if echo 'PermitRootLogin no' | sudo tee -a "$conf_file" > /dev/null; then
         report_fix "$id" "Disabled SSH root login" "FIXED" "$conf_file"
+        # Update SSH hardening config checksum or add if not tracked yet
+        if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+            local cksum
+            cksum="$(manifest_checksum "$conf_file")"
+            if manifest_has "hardening-ssh-config"; then
+                manifest_update "hardening-ssh-config" "checksum" "${cksum}"
+            else
+                manifest_add "hardening-ssh-config" "system-config-file" "hardening" \
+                    "$conf_file" "N/A" "${cksum}" "hardening-fix.sh" false true \
+                    "SSH hardening: PermitRootLogin no"
+            fi
+        fi
         return 0
     else
         report_fix "$id" "Failed to update SSH configuration" "FAILED" "$LAST_FIX_ERROR"
@@ -1588,6 +1643,12 @@ fix_service_account() {
             report_fix "$id" "Created _n8n service account" "DRY-RUN"
         else
             report_fix "$id" "Created _n8n service account" "FIXED"
+            # Track service account in manifest
+            if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+                manifest_add "hardening-service-account-n8n" "system-account" "hardening" \
+                    "_n8n" "N/A" "null" "hardening-fix.sh" false true \
+                    "n8n service account (shell: /usr/bin/false, home: /opt/n8n)"
+            fi
         fi
         return 0
     else
@@ -2025,6 +2086,15 @@ main() {
 
     check_platform
     check_dependencies
+
+    # Initialize manifest tracking (skip in dry-run mode)
+    if [[ "$DRY_RUN" != true ]] && [[ "$MANIFEST_AVAILABLE" != true ]] \
+        && [[ -f "${SCRIPT_DIR}/lib/manifest.sh" ]] && command -v jq &>/dev/null; then
+        manifest_lock
+        manifest_init
+        MANIFEST_AVAILABLE=true
+    fi
+
     _locate_audit_script
 
     # Locate audit JSON

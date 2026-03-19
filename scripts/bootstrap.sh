@@ -5,6 +5,12 @@
 set -euo pipefail
 
 readonly VERSION="0.1.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Source Manifest Library ---
+# shellcheck source=lib/manifest.sh
+source "${SCRIPT_DIR}/lib/manifest.sh"
+MANIFEST_AVAILABLE=false
 
 # --- Color Setup ---
 RED='\033[0;31m'
@@ -109,10 +115,37 @@ check_homebrew() {
 check_tools() {
     printf "\n${BOLD}[3/8] Required Tools${NC}\n"
 
+    # jq FIRST — required for manifest operations (FR-023, C2 fix)
+    local jq_was_preexisting=false
+    if command -v jq &>/dev/null; then
+        jq_was_preexisting=true
+        report OK "jq: $(jq --version 2>/dev/null)"
+    elif [[ "$CHECK_ONLY" == true ]]; then
+        report FAIL "jq not installed"
+    else
+        brew install jq 2>/dev/null && report FIXED "jq installed" || report FAIL "jq install failed"
+    fi
+
+    # Initialize manifest now that jq is available
+    if [[ "$CHECK_ONLY" != true ]] && command -v jq &>/dev/null; then
+        manifest_setup_traps
+        manifest_lock
+        manifest_init
+        manifest_sudo_keepalive
+        MANIFEST_AVAILABLE=true
+        # Retroactively track jq
+        local jq_ver
+        jq_ver="$(manifest_brew_version jq)"
+        manifest_add "brew-jq" "brew-package" "tooling" "jq" "${jq_ver}" \
+            "null" "bootstrap.sh" "${jq_was_preexisting}" true ""
+    fi
+
     # Bash 5.x
     local bash_ver
     bash_ver=$(bash --version 2>/dev/null | head -1) || true
+    local bash_pre=false
     if echo "$bash_ver" | grep -q 'version [5-9]'; then
+        bash_pre=true
         report OK "bash 5.x: ${bash_ver##*version }"
     elif [[ "$CHECK_ONLY" == true ]]; then
         report FAIL "bash 5.x not found (macOS ships with bash 3.x)"
@@ -125,14 +158,18 @@ check_tools() {
             report FIXED "Added ${HOMEBREW_PREFIX}/bin/bash to /etc/shells"
         fi
     fi
-
-    # jq
-    if command -v jq &>/dev/null; then
-        report OK "jq: $(jq --version 2>/dev/null)"
-    elif [[ "$CHECK_ONLY" == true ]]; then
-        report FAIL "jq not installed"
-    else
-        brew install jq 2>/dev/null && report FIXED "jq installed" || report FAIL "jq install failed"
+    # Track bash in manifest
+    if [[ "$MANIFEST_AVAILABLE" == true ]] && command -v bash &>/dev/null; then
+        local bash_brew_ver
+        bash_brew_ver="$(manifest_brew_version bash)"
+        manifest_add "brew-bash" "brew-package" "tooling" "bash" "${bash_brew_ver}" \
+            "null" "bootstrap.sh" "${bash_pre}" true ""
+        # Track /etc/shells line if we added it
+        if grep -q "${HOMEBREW_PREFIX}/bin/bash" /etc/shells 2>/dev/null; then
+            manifest_add "system-config-line-etc-shells" "system-config-line" "hardening" \
+                "/etc/shells" "N/A" "null" "bootstrap.sh" false true \
+                "Homebrew bash added to /etc/shells"
+        fi
     fi
 
     # SC linter (optional, for development)
@@ -188,6 +225,16 @@ check_directories() {
         sudo chmod 755 /opt/n8n /opt/n8n/scripts /opt/n8n/logs /opt/n8n/logs/audit
         sudo chmod 700 /opt/n8n/etc /opt/n8n/data
     fi
+
+    # Track directories in manifest
+    if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+        for dir in "${dirs[@]}"; do
+            if [[ -d "$dir" ]]; then
+                manifest_add "dir-${dir//\//-}" "directory" "tooling" "${dir}" "N/A" \
+                    "null" "bootstrap.sh" false true ""
+            fi
+        done
+    fi
 }
 
 # --- Deploy Scripts ---
@@ -223,6 +270,13 @@ deploy_scripts() {
             sudo chmod 755 "$dst"
             report FIXED "Deployed ${script} → ${dst}"
         fi
+        # Track deployed script in manifest
+        if [[ "$MANIFEST_AVAILABLE" == true ]] && [[ -f "$dst" ]]; then
+            local cksum
+            cksum="$(manifest_checksum "$dst")"
+            manifest_add "file-${script}" "file" "tooling" "${dst}" "N/A" \
+                "${cksum}" "bootstrap.sh" false true ""
+        fi
     done
 
     # Deploy launchd plists
@@ -248,6 +302,13 @@ deploy_scripts() {
             sudo chown root:wheel "$dst"
             sudo chmod 644 "$dst"
             report FIXED "Installed $(basename "$plist") → ${dst}"
+        fi
+        # Track launchd plist in manifest
+        if [[ "$MANIFEST_AVAILABLE" == true ]] && [[ -f "$dst" ]]; then
+            local cksum
+            cksum="$(manifest_checksum "$dst")"
+            manifest_add "launchd-$(basename "$plist" .plist)" "launchd-plist" "tooling" \
+                "${dst}" "N/A" "${cksum}" "bootstrap.sh" false true ""
         fi
     done
 }
@@ -283,6 +344,13 @@ LOG_DIR="/opt/n8n/logs/audit"
 CONF
         sudo chmod 600 "$conf"
         report FIXED "Created default notify.conf"
+    fi
+    # Track notify.conf in manifest
+    if [[ "$MANIFEST_AVAILABLE" == true ]] && [[ -f "$conf" ]]; then
+        local cksum
+        cksum="$(manifest_checksum "$conf")"
+        manifest_add "file-notify-conf" "file" "tooling" "${conf}" "N/A" \
+            "${cksum}" "bootstrap.sh" false true ""
     fi
 }
 
@@ -376,7 +444,9 @@ validate_commands() {
         report INFO "Hardware: Intel (${hw_arch})"
     fi
 
+    local colima_pre=false
     if command -v colima &>/dev/null; then
+        colima_pre=true
         local colima_ver
         colima_ver=$(colima version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) || colima_ver="unknown"
         report OK "colima: ${colima_ver}"
@@ -391,8 +461,14 @@ validate_commands() {
             report FAIL "colima install failed: ${brew_err##*$'\n'}"
         fi
     fi
+    if [[ "$MANIFEST_AVAILABLE" == true ]] && command -v colima &>/dev/null; then
+        manifest_add "brew-colima" "brew-package" "tooling" "colima" \
+            "$(manifest_brew_version colima)" "null" "bootstrap.sh" "${colima_pre}" true ""
+    fi
 
+    local docker_pre=false
     if command -v docker &>/dev/null; then
+        docker_pre=true
         report OK "docker: $(docker --version 2>/dev/null)"
     elif [[ "$CHECK_ONLY" == true ]]; then
         report FAIL "docker not installed"
@@ -405,8 +481,14 @@ validate_commands() {
             report FAIL "docker install failed: ${brew_err##*$'\n'}"
         fi
     fi
+    if [[ "$MANIFEST_AVAILABLE" == true ]] && command -v docker &>/dev/null; then
+        manifest_add "brew-docker" "brew-package" "tooling" "docker" \
+            "$(manifest_brew_version docker)" "null" "bootstrap.sh" "${docker_pre}" true ""
+    fi
 
+    local compose_pre=false
     if docker compose version &>/dev/null; then
+        compose_pre=true
         report OK "docker-compose: $(docker compose version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
     elif [[ "$CHECK_ONLY" == true ]]; then
         report FAIL "docker-compose not installed"
@@ -418,6 +500,10 @@ validate_commands() {
         else
             report FAIL "docker-compose install failed: ${brew_err##*$'\n'}"
         fi
+    fi
+    if [[ "$MANIFEST_AVAILABLE" == true ]] && docker compose version &>/dev/null; then
+        manifest_add "brew-docker-compose" "brew-package" "tooling" "docker-compose" \
+            "$(manifest_brew_version docker-compose)" "null" "bootstrap.sh" "${compose_pre}" true ""
     fi
 
     # Chromium (optional, for OpenClaw browser control)
@@ -450,6 +536,15 @@ main() {
         printf "Mode: ${GREEN}install${NC} (will install dependencies and create directories)\n"
     fi
 
+    # Pre-flight: disk space check
+    if [[ "$CHECK_ONLY" != true ]]; then
+        local avail_gb
+        avail_gb=$(df -g / | awk 'NR==2 {print $4}') || avail_gb=999
+        if [[ "$avail_gb" -lt 8 ]]; then
+            printf "  ${YELLOW}!${NC}  Low disk space: %dGB available (8GB recommended)\n" "$avail_gb"
+        fi
+    fi
+
     check_macos
     check_homebrew
     check_tools
@@ -467,6 +562,14 @@ main() {
     if [[ $ERRORS -gt 0 ]]; then
         printf "\n${YELLOW}Next: Fix the errors above, then re-run bootstrap.sh${NC}\n"
         exit 1
+    fi
+
+    # Setup shell config isolation (FR-008, FR-009)
+    if [[ "$MANIFEST_AVAILABLE" == true ]]; then
+        # T024: Migrate pre-NoMOOP lines from rc file before setting up new config
+        shellrc_migrate
+        shellrc_setup "bootstrap.sh"
+        report OK "Shell config: ~/.openclaw/shellrc created, source line added"
     fi
 
     if [[ "$CHECK_ONLY" != true ]]; then

@@ -4,6 +4,8 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
 
+- Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults) (009-nomoop)
+- Filesystem — `~/.openclaw/manifest.json` (JSON, managed with jq) (009-nomoop)
 - Bash 5.x (POSIX-compatible subset per constitution) + Homebrew (`brew install colima docker`), (008-colima-lifecycle)
 - N/A (no persistent state beyond Colima VM itself) (008-colima-lifecycle)
 
@@ -39,10 +41,9 @@ Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
 
+- 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
+- 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
 - 008-colima-lifecycle: Added Bash 5.x (POSIX-compatible subset per constitution) + Homebrew (`brew install colima docker`),
-
-- 007-n8n-gateway: Added n8n workflow JSON (declarative), Bash 5.x (setup scripts) + n8n v2.13.0 (Docker), Colima, Docker CLI
-- 006-multi-browser-support: Added Bash 5.x (POSIX-compatible subset per constitution) + `defaults`, `lsof`, `pgrep`, `sqlite3`
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
