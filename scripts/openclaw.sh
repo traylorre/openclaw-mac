@@ -450,7 +450,11 @@ _uninstall_dispatch() {
         shell-config-line)
             local pattern
             pattern="$(_get_removal_pattern "$id" "$type")"
-            [[ -n "$pattern" ]] && remove_shell_config_line "$path" "$pattern" || return 1
+            if [[ -n "$pattern" ]]; then
+                remove_shell_config_line "$path" "$pattern"
+            else
+                return 1
+            fi
             ;;
         shell-rc-file)        remove_shell_rc_file "$path" ;;
         keychain-entry)       remove_keychain_entry "$path" ;;
@@ -464,7 +468,11 @@ _uninstall_dispatch() {
         system-config-line)
             local pattern
             pattern="$(_get_removal_pattern "$id" "$type")"
-            [[ -n "$pattern" ]] && remove_system_config_line "$path" "$pattern" || return 1
+            if [[ -n "$pattern" ]]; then
+                remove_system_config_line "$path" "$pattern"
+            else
+                return 1
+            fi
             ;;
         managed-preference)   remove_managed_preference "$path" ;;
         spotlight-exclusion)  remove_spotlight_exclusion "$path" ;;
@@ -769,11 +777,12 @@ cmd_uninstall() {
 
 cmd_install() {
     local hardening_only=false
+    local -a passthrough_args=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --hardening-only) hardening_only=true; shift ;;
-            *)                echo "Unknown install option: $1" >&2; exit 2 ;;
+            *)                passthrough_args+=("$1"); shift ;;
         esac
     done
 
@@ -785,7 +794,7 @@ cmd_install() {
         manifest_init
         # Run hardening-fix.sh from the repo scripts directory
         if [[ -x "${SCRIPT_DIR}/hardening-fix.sh" ]]; then
-            bash "${SCRIPT_DIR}/hardening-fix.sh" "$@"
+            bash "${SCRIPT_DIR}/hardening-fix.sh" "${passthrough_args[@]+"${passthrough_args[@]}"}"
         else
             printf "  ${RED}✗${NC}  hardening-fix.sh not found at %s\n" "${SCRIPT_DIR}/hardening-fix.sh"
             exit 2

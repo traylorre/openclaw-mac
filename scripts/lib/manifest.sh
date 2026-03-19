@@ -13,7 +13,7 @@ set -euo pipefail
 # --- Constants ---
 readonly MANIFEST_DIR="${HOME}/.openclaw"
 readonly MANIFEST_FILE="${MANIFEST_DIR}/manifest.json"
-readonly MANIFEST_LOCK="/tmp/openclaw-manifest.lock"
+# Lock is mkdir-based at ${MANIFEST_DIR}/.lock (see manifest_lock)
 readonly MANIFEST_SCHEMA_VERSION="1.0.0"
 
 # --- Color Setup (inherited from consumer or set here) ---
@@ -34,7 +34,7 @@ fi
 
 # --- Internal State ---
 _MANIFEST_SUDO_PID=""
-_MANIFEST_LOCK_FD=""
+_MANIFEST_LOCK_DIR=""
 
 # ============================================================
 # Signal Handling (FR-022)
@@ -49,9 +49,10 @@ _manifest_cleanup() {
     manifest_sudo_keepalive_stop
     # Clean up tmp file from interrupted atomic write
     rm -f "${MANIFEST_FILE}.tmp" 2>/dev/null || true
-    # Release lock fd if held
-    if [[ -n "${_MANIFEST_LOCK_FD:-}" ]]; then
-        eval "exec ${_MANIFEST_LOCK_FD}>&-" 2>/dev/null || true
+    # Release lock directory if we hold it
+    if [[ -n "${_MANIFEST_LOCK_DIR:-}" ]]; then
+        rm -rf "${_MANIFEST_LOCK_DIR}" 2>/dev/null || true
+        _MANIFEST_LOCK_DIR=""
     fi
 }
 
@@ -60,13 +61,35 @@ _manifest_cleanup() {
 # ============================================================
 
 manifest_lock() {
-    # Acquire exclusive lock; fail fast if another process holds it
-    _MANIFEST_LOCK_FD=9
-    eval "exec ${_MANIFEST_LOCK_FD}>${MANIFEST_LOCK}"
-    if ! flock -n "${_MANIFEST_LOCK_FD}"; then
-        printf "  ${RED}✗${NC}  Another openclaw process is running. Wait or check /tmp/openclaw-manifest.lock\n" >&2
-        exit 1
+    # Acquire exclusive lock using mkdir (atomic, works on macOS — flock is Linux-only)
+    mkdir -p "${MANIFEST_DIR}" 2>/dev/null || true
+    chmod 700 "${MANIFEST_DIR}" 2>/dev/null || true
+    local lock_dir="${MANIFEST_DIR}/.lock"
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+        # Check if the lock is stale (holder process died)
+        local lock_pid_file="${lock_dir}/pid"
+        if [[ -f "$lock_pid_file" ]]; then
+            local lock_pid
+            lock_pid="$(cat "$lock_pid_file" 2>/dev/null)" || lock_pid=""
+            if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
+                # Stale lock — process is dead, remove and retry
+                rm -rf "$lock_dir" 2>/dev/null
+                if ! mkdir "$lock_dir" 2>/dev/null; then
+                    printf "  ${RED}✗${NC}  Another openclaw process is running.\n" >&2
+                    exit 1
+                fi
+            else
+                printf "  ${RED}✗${NC}  Another openclaw process is running (PID: %s).\n" "${lock_pid:-unknown}" >&2
+                exit 1
+            fi
+        else
+            printf "  ${RED}✗${NC}  Another openclaw process is running.\n" >&2
+            exit 1
+        fi
     fi
+    # Write our PID for stale lock detection
+    echo $$ > "${lock_dir}/pid"
+    _MANIFEST_LOCK_DIR="$lock_dir"
 }
 
 # ============================================================
@@ -74,9 +97,11 @@ manifest_lock() {
 # ============================================================
 
 manifest_sudo_keepalive() {
-    # Start background loop to refresh sudo credentials every 4 minutes
+    # Start background loop to refresh sudo credentials every 4 minutes.
+    # Self-terminates when parent process exits (prevents zombie on SIGKILL).
+    local parent_pid=$$
     if sudo -v 2>/dev/null; then
-        (while true; do sudo -n -v 2>/dev/null; sleep 240; done) &
+        (while kill -0 "$parent_pid" 2>/dev/null; do sudo -n -v 2>/dev/null; sleep 240; done) &
         _MANIFEST_SUDO_PID=$!
     fi
 }
@@ -157,34 +182,27 @@ manifest_add() {
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-    local checksum_val="null"
-    if [[ -n "${checksum}" && "${checksum}" != "null" ]]; then
-        checksum_val="\"${checksum}\""
-    fi
-
-    local notes_val="null"
-    if [[ -n "${notes}" ]]; then
-        notes_val="\"${notes}\""
-    fi
-
+    # Use --arg for safe string escaping; handle null via jq filter
     jq \
         --arg id "${id}" \
         --arg type "${type}" \
         --arg cat "${category}" \
         --arg path "${path}" \
         --arg ver "${version}" \
-        --argjson cksum "${checksum_val}" \
+        --arg cksum "${checksum}" \
         --arg ts "${ts}" \
         --arg by "${installed_by}" \
         --argjson pre "${pre_existing}" \
         --argjson rem "${removable}" \
         --arg stat "${status}" \
-        --argjson notes "${notes_val}" \
+        --arg notes "${notes}" \
         '.updated_at = $ts | .artifacts += [{
             id: $id, type: $type, category: $cat, path: $path,
-            version: $ver, checksum: $cksum, installed_at: $ts,
-            installed_by: $by, pre_existing: $pre, removable: $rem,
-            status: $stat, notes: $notes
+            version: $ver,
+            checksum: (if $cksum == "" or $cksum == "null" then null else $cksum end),
+            installed_at: $ts, installed_by: $by, pre_existing: $pre,
+            removable: $rem, status: $stat,
+            notes: (if $notes == "" then null else $notes end)
         }]' "${MANIFEST_FILE}" | _manifest_atomic_write
 }
 
@@ -221,12 +239,13 @@ manifest_begin_step() {
         --arg by "${installed_by}" \
         --argjson pre "${pre_existing}" \
         --argjson rem "${removable}" \
-        --argjson notes "$(if [[ -n "${notes}" ]]; then echo "\"${notes}\""; else echo "null"; fi)" \
+        --arg notes "${notes}" \
         '.updated_at = $ts | .artifacts += [{
             id: $id, type: $type, category: $cat, path: $path,
             version: $ver, checksum: null, installed_at: $ts,
             installed_by: $by, pre_existing: $pre, removable: $rem,
-            status: "pending", notes: $notes
+            status: "pending",
+            notes: (if $notes == "" then null else $notes end)
         }]' "${MANIFEST_FILE}" | _manifest_atomic_write
 
     return 0
@@ -238,19 +257,14 @@ manifest_complete_step() {
     local id="$1"
     local checksum="${2:-}"
 
-    local checksum_val="null"
-    if [[ -n "${checksum}" && "${checksum}" != "null" ]]; then
-        checksum_val="\"${checksum}\""
-    fi
-
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
     jq \
         --arg id "${id}" \
-        --argjson cksum "${checksum_val}" \
+        --arg cksum "${checksum}" \
         --arg ts "${ts}" \
-        '(.artifacts[] | select(.id == $id)) |= (.status = "installed" | .checksum = $cksum | .installed_at = $ts) | .updated_at = $ts' \
+        '(.artifacts[] | select(.id == $id)) |= (.status = "installed" | .checksum = (if $cksum == "" or $cksum == "null" then null else $cksum end) | .installed_at = $ts) | .updated_at = $ts' \
         "${MANIFEST_FILE}" | _manifest_atomic_write
 }
 
@@ -285,16 +299,23 @@ manifest_get() {
 
 manifest_update() {
     # Usage: manifest_update <id> <field> <value>
-    # Updates a single field of an existing entry
+    # Updates a single field of an existing entry.
+    # Detects boolean/numeric/null values and uses --argjson to preserve type.
     local id="$1" field="$2" value="$3"
 
     local ts
     ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
+    # Use --argjson for JSON literals (true, false, null, numbers)
+    local value_flag="--arg"
+    if [[ "$value" =~ ^(true|false|null|[0-9]+\.?[0-9]*)$ ]]; then
+        value_flag="--argjson"
+    fi
+
     jq \
         --arg id "${id}" \
         --arg f "${field}" \
-        --arg v "${value}" \
+        "$value_flag" v "${value}" \
         --arg ts "${ts}" \
         '(.artifacts[] | select(.id == $id))[$f] = $v | .updated_at = $ts' \
         "${MANIFEST_FILE}" | _manifest_atomic_write
@@ -306,10 +327,15 @@ manifest_update() {
 
 manifest_checksum() {
     # Usage: manifest_checksum <file_path>
-    # Returns SHA-256 hex string, or empty string if file doesn't exist
+    # Returns SHA-256 hex string, or empty string if file doesn't exist.
+    # Uses sudo fallback for root-owned files (e.g., /etc/ssh/sshd_config.d/).
     local file_path="$1"
     if [[ -f "${file_path}" ]]; then
-        shasum -a 256 "${file_path}" | awk '{print $1}'
+        if [[ -r "${file_path}" ]]; then
+            shasum -a 256 "${file_path}" | awk '{print $1}'
+        else
+            sudo shasum -a 256 "${file_path}" 2>/dev/null | awk '{print $1}'
+        fi
     else
         echo ""
     fi
@@ -458,43 +484,62 @@ shellrc_migrate() {
     # Scans operator's shell rc file for pre-NoMOOP openclaw lines,
     # moves them to ~/.openclaw/shellrc, and removes originals.
     # Called during bootstrap.sh for operators upgrading from older installs.
+    #
+    # SAFETY: processes line-by-line to avoid grep -vF removing comments
+    # or zeroing the file when all lines match.
     local rc_file
     rc_file="$(manifest_detect_shell)"
     local shellrc="${MANIFEST_DIR}/shellrc"
-    local source_line='[ -f ~/.openclaw/shellrc ] && source ~/.openclaw/shellrc'
     local migrated=0
 
-    # Patterns that indicate pre-NoMOOP openclaw lines in the rc file
-    # (but NOT the source line itself — that's the new format)
+    [[ -f "$rc_file" ]] || return 0
+
     local -a patterns=(
         "alias openclaw="
         "alias n8n-token="
         "n8n-gateway-bearer"
     )
 
-    for pattern in "${patterns[@]}"; do
-        # Skip if this is part of the source line or a comment
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            # Don't migrate the source line itself
-            [[ "$line" == *"openclaw/shellrc"* ]] && continue
-            # Don't migrate comments
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            # Append to shellrc if not already there
+    local tmp="${rc_file}.migrate.tmp"
+    local changed=false
+    rm -f "$tmp" 2>/dev/null
+
+    # Process line by line: migrate matching executable lines, keep everything else
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        local should_migrate=false
+
+        # Never migrate empty lines, comments, or the source line
+        if [[ -z "$line" ]] || [[ "$line" =~ ^[[:space:]]*# ]] || [[ "$line" == *"openclaw/shellrc"* ]]; then
+            printf '%s\n' "$line" >> "$tmp"
+            continue
+        fi
+
+        # Check if this executable line matches any migration pattern
+        for pattern in "${patterns[@]}"; do
+            if [[ "$line" == *"$pattern"* ]]; then
+                should_migrate=true
+                break
+            fi
+        done
+
+        if [[ "$should_migrate" == true ]]; then
+            # Move to shellrc if not already there
             if ! grep -qF "$line" "$shellrc" 2>/dev/null; then
                 printf '%s\n' "$line" >> "$shellrc"
                 migrated=$((migrated + 1))
             fi
-        done < <(grep -F "$pattern" "$rc_file" 2>/dev/null || true)
-
-        # Remove matching lines from rc file (except source line and comments)
-        if grep -qF "$pattern" "$rc_file" 2>/dev/null; then
-            local tmp="${rc_file}.tmp"
-            grep -vF "$pattern" "$rc_file" > "$tmp" 2>/dev/null || true
-            # Re-add any lines that are the source line or comments
-            mv "$tmp" "$rc_file"
+            changed=true
+            # Don't write to tmp — this line is removed from rc file
+        else
+            printf '%s\n' "$line" >> "$tmp"
         fi
-    done
+    done < "$rc_file"
+
+    if [[ "$changed" == true ]]; then
+        mv "$tmp" "$rc_file"
+    else
+        rm -f "$tmp"
+    fi
 
     if [[ "$migrated" -gt 0 ]]; then
         printf "  ${CYAN}+${NC}  Migrated %d line(s) from %s to ~/.openclaw/shellrc\n" "$migrated" "$rc_file"
@@ -530,6 +575,8 @@ _manifest_backup_file() {
         cp -p "$src" "$dest"
     else
         sudo cp -p "$src" "$dest"
+        # Fix ownership so user can manage their own backups
+        sudo chown "$(id -u):$(id -g)" "$dest"
     fi
 }
 
@@ -575,9 +622,9 @@ remove_file() {
         fi
     fi
     if [[ -w "$(dirname "$path")" ]]; then
-        rm -f "$path" && return 0 || return 2
+        if rm -f "$path"; then return 0; else return 2; fi
     else
-        sudo rm -f "$path" && return 0 || return 2
+        if sudo rm -f "$path"; then return 0; else return 2; fi
     fi
 }
 
@@ -586,15 +633,16 @@ remove_directory() {
     local path="$1"
     [[ -d "$path" ]] || return 1
     if [[ -w "$(dirname "$path")" ]]; then
-        rm -rf "$path" && return 0 || return 2
+        if rm -rf "$path"; then return 0; else return 2; fi
     else
-        sudo rm -rf "$path" && return 0 || return 2
+        if sudo rm -rf "$path"; then return 0; else return 2; fi
     fi
 }
 
 remove_shell_config_line() {
     # Usage: remove_shell_config_line <rc_file> <line_pattern>
-    # Uses grep -vF (fixed-string inverse) to avoid regex escaping issues
+    # Uses grep -vF (fixed-string inverse) to avoid regex escaping issues.
+    # Handles edge case where ALL lines match (grep -vF returns 1 with empty output).
     local rc_file="$1"
     local pattern="$2"
     [[ -f "$rc_file" ]] || return 1
@@ -602,9 +650,9 @@ remove_shell_config_line() {
         return 1  # line not found
     fi
     local tmp="${rc_file}.tmp"
-    if grep -vF "$pattern" "$rc_file" > "$tmp" 2>/dev/null; then
-        mv "$tmp" "$rc_file" && return 0
-    fi
+    # grep -vF exits 1 when no lines survive — that's success (all matching lines removed)
+    grep -vF "$pattern" "$rc_file" > "$tmp" 2>/dev/null || true
+    mv "$tmp" "$rc_file" && return 0
     rm -f "$tmp" 2>/dev/null
     return 2
 }
@@ -613,7 +661,7 @@ remove_shell_rc_file() {
     # Usage: remove_shell_rc_file <path>
     local path="$1"
     [[ -f "$path" ]] || return 1
-    rm -f "$path" && return 0 || return 2
+    if rm -f "$path"; then return 0; else return 2; fi
 }
 
 remove_keychain_entry() {
@@ -741,10 +789,13 @@ remove_system_config_line() {
     fi
     local tmp
     tmp="$(mktemp)"
-    # grep as root (file may be root-owned), pipe through sudo tee for tmp
-    if sudo cat "$config_file" | grep -vF "$pattern" > "$tmp" 2>/dev/null; then
-        # cp preserves original ownership/permissions, then clean up tmp
-        sudo cp "$tmp" "$config_file" 2>/dev/null && rm -f "$tmp" && return 0
+    # Read as root (file may be root-owned), filter, write to user-writable tmp
+    # grep -vF exits 1 when no lines survive — that's success (line removed)
+    sudo cat "$config_file" | grep -vF "$pattern" > "$tmp" 2>/dev/null || true
+    # cp preserves original ownership/permissions, then clean up tmp
+    if sudo cp "$tmp" "$config_file" 2>/dev/null; then
+        rm -f "$tmp"
+        return 0
     fi
     rm -f "$tmp" 2>/dev/null
     return 2

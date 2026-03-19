@@ -123,7 +123,12 @@ check_tools() {
     elif [[ "$CHECK_ONLY" == true ]]; then
         report FAIL "jq not installed"
     else
-        brew install jq 2>/dev/null && report FIXED "jq installed" || report FAIL "jq install failed"
+        local brew_err
+        if brew_err=$(brew install jq 2>&1); then
+            report FIXED "jq installed"
+        else
+            report FAIL "jq install failed: ${brew_err##*$'\n'}"
+        fi
     fi
 
     # Initialize manifest now that jq is available
@@ -151,7 +156,12 @@ check_tools() {
         report FAIL "bash 5.x not found (macOS ships with bash 3.x)"
     else
         report INFO "Installing bash via Homebrew..."
-        brew install bash 2>/dev/null && report FIXED "bash 5.x installed" || report FAIL "bash install failed"
+        local brew_err
+        if brew_err=$(brew install bash 2>&1); then
+            report FIXED "bash 5.x installed"
+        else
+            report FAIL "bash install failed: ${brew_err##*$'\n'}"
+        fi
         # Add to /etc/shells if not present
         if ! grep -q "${HOMEBREW_PREFIX}/bin/bash" /etc/shells 2>/dev/null; then
             echo "${HOMEBREW_PREFIX}/bin/bash" | sudo tee -a /etc/shells >/dev/null
