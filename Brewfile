@@ -1,0 +1,6 @@
+brew "bash"
+brew "jq"
+brew "colima"
+brew "docker"
+brew "docker-compose"
+brew "shellcheck"
