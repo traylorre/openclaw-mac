@@ -198,6 +198,15 @@ cmd_manifest_verify() {
             shell-config-line|system-config-line)
                 if [[ ! -f "$path" ]]; then
                     verify_status="MISSING"
+                else
+                    # Check that the actual line is present in the file, not just the file
+                    local expected_line
+                    expected_line="$(_get_removal_pattern "$id" "$type")"
+                    if [[ -n "$expected_line" ]]; then
+                        if ! grep -qF "$expected_line" "$path" 2>/dev/null; then
+                            verify_status="MISSING"
+                        fi
+                    fi
                 fi
                 ;;
             system-account)
@@ -269,6 +278,7 @@ cmd_manifest_rebuild() {
     printf "${BOLD}OpenClaw Manifest Rebuild${NC}\n"
     printf "Scanning known artifact locations...\n\n"
 
+    manifest_setup_traps
     manifest_lock
     manifest_init
 
@@ -790,6 +800,7 @@ cmd_install() {
         printf "${BOLD}OpenClaw Install (hardening only)${NC}\n"
         printf "Dispatching to hardening-fix.sh with manifest tracking...\n\n"
         # Initialize manifest if needed
+        manifest_setup_traps
         manifest_lock
         manifest_init
         # Run hardening-fix.sh from the repo scripts directory

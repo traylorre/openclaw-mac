@@ -2090,6 +2090,7 @@ main() {
     # Initialize manifest tracking (skip in dry-run mode)
     if [[ "$DRY_RUN" != true ]] && [[ "$MANIFEST_AVAILABLE" != true ]] \
         && [[ -f "${SCRIPT_DIR}/lib/manifest.sh" ]] && command -v jq &>/dev/null; then
+        manifest_setup_traps
         manifest_lock
         manifest_init
         MANIFEST_AVAILABLE=true

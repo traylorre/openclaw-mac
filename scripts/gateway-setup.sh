@@ -342,10 +342,11 @@ main() {
         printf "Mode: ${GREEN}setup${NC}\n"
     fi
 
-    # Initialize manifest tracking (if not check-only and manifest exists)
-    if ! $CHECK_ONLY && command -v jq &>/dev/null && [[ -f "${HOME}/.openclaw/manifest.json" ]]; then
+    # Initialize manifest tracking (if not check-only and jq available)
+    if ! $CHECK_ONLY && command -v jq &>/dev/null; then
         manifest_setup_traps
         manifest_lock
+        manifest_init
         MANIFEST_AVAILABLE=true
     fi
 

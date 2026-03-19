@@ -61,33 +61,48 @@ _manifest_cleanup() {
 # ============================================================
 
 manifest_lock() {
-    # Acquire exclusive lock using mkdir (atomic, works on macOS — flock is Linux-only)
+    # Acquire exclusive lock using mkdir (atomic, works on macOS — flock is Linux-only).
+    # Stale lock recovery: checks PID liveness, then directory age (>1 hour).
     mkdir -p "${MANIFEST_DIR}" 2>/dev/null || true
     chmod 700 "${MANIFEST_DIR}" 2>/dev/null || true
     local lock_dir="${MANIFEST_DIR}/.lock"
     if ! mkdir "$lock_dir" 2>/dev/null; then
-        # Check if the lock is stale (holder process died)
         local lock_pid_file="${lock_dir}/pid"
+        local stale=false
+
         if [[ -f "$lock_pid_file" ]]; then
             local lock_pid
             lock_pid="$(cat "$lock_pid_file" 2>/dev/null)" || lock_pid=""
             if [[ -n "$lock_pid" ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-                # Stale lock — process is dead, remove and retry
-                rm -rf "$lock_dir" 2>/dev/null
-                if ! mkdir "$lock_dir" 2>/dev/null; then
-                    printf "  ${RED}✗${NC}  Another openclaw process is running.\n" >&2
-                    exit 1
-                fi
-            else
-                printf "  ${RED}✗${NC}  Another openclaw process is running (PID: %s).\n" "${lock_pid:-unknown}" >&2
+                stale=true  # PID is dead
+            fi
+        else
+            # No PID file — process crashed between mkdir and PID write.
+            # Check directory age: if older than 1 hour, assume stale.
+            local lock_age
+            lock_age="$(( $(date +%s) - $(stat -f %m "$lock_dir" 2>/dev/null || echo 0) ))"
+            if [[ "$lock_age" -gt 3600 ]]; then
+                stale=true
+            fi
+        fi
+
+        if [[ "$stale" == true ]]; then
+            rm -rf "$lock_dir" 2>/dev/null
+            if ! mkdir "$lock_dir" 2>/dev/null; then
+                printf "  ${RED}✗${NC}  Another openclaw process is running.\n" >&2
                 exit 1
             fi
         else
-            printf "  ${RED}✗${NC}  Another openclaw process is running.\n" >&2
+            local msg="Another openclaw process is running"
+            if [[ -f "$lock_pid_file" ]]; then
+                msg+=" (PID: $(cat "$lock_pid_file" 2>/dev/null))"
+            fi
+            printf "  ${RED}✗${NC}  %s.\n" "$msg" >&2
+            printf "  ${RED}✗${NC}  If this is stale, run: rm -rf %s\n" "$lock_dir" >&2
             exit 1
         fi
     fi
-    # Write our PID for stale lock detection
+    # Write PID immediately for stale detection
     echo $$ > "${lock_dir}/pid"
     _MANIFEST_LOCK_DIR="$lock_dir"
 }
@@ -101,7 +116,7 @@ manifest_sudo_keepalive() {
     # Self-terminates when parent process exits (prevents zombie on SIGKILL).
     local parent_pid=$$
     if sudo -v 2>/dev/null; then
-        (while kill -0 "$parent_pid" 2>/dev/null; do sudo -n -v 2>/dev/null; sleep 240; done) &
+        (while kill -0 "$parent_pid" 2>/dev/null; do sudo -n -v 2>/dev/null; sleep 180; done) &
         _MANIFEST_SUDO_PID=$!
     fi
 }
@@ -120,9 +135,15 @@ manifest_sudo_keepalive_stop() {
 
 _manifest_atomic_write() {
     # Usage: echo "$json" | _manifest_atomic_write
-    # Reads JSON from stdin, writes atomically to MANIFEST_FILE
+    # Reads JSON from stdin, validates, then atomically overwrites MANIFEST_FILE.
+    # Refuses to overwrite good manifest with invalid JSON (disk full, pipe broken).
     local tmp="${MANIFEST_FILE}.tmp"
     cat > "${tmp}"
+    if ! jq empty "${tmp}" 2>/dev/null; then
+        printf "  ${RED}✗${NC}  Manifest write produced invalid JSON — aborting to protect existing data.\n" >&2
+        rm -f "${tmp}"
+        return 1
+    fi
     mv "${tmp}" "${MANIFEST_FILE}"
 }
 
