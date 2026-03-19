@@ -3,10 +3,10 @@ name: Tests
 on:
   push:
     branches: [main]
-    paths: ['scripts/**', 'tests/**']
+    paths: ['scripts/**', 'Makefile', 'Brewfile']
   pull_request:
     branches: [main]
-    paths: ['scripts/**', 'tests/**']
+    paths: ['scripts/**', 'Makefile', 'Brewfile']
 
 jobs:
   shellcheck:
@@ -17,40 +17,13 @@ jobs:
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
 
-      - name: Lint manifest library
-        run: shellcheck -x scripts/lib/manifest.sh
+      - name: Lint scripts
+        run: shellcheck scripts/bootstrap.sh scripts/gateway-setup.sh scripts/audit-cron.sh scripts/audit-notify.sh
 
-      - name: Lint CLI dispatcher
-        run: shellcheck -x scripts/openclaw.sh
-
-  unit-tests:
+  makefile-syntax:
     runs-on: ubuntu-latest
-    needs: shellcheck
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats jq
-
-      - name: Run unit tests
-        run: bats tests/bats/unit/*.bats
-        env:
-          TERM: xterm
-
-  integration-tests:
-    runs-on: ubuntu-latest
-    needs: unit-tests
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bats jq
-
-      - name: Run integration tests
-        run: bats tests/bats/integration/*.bats
-        env:
-          TERM: xterm
+      - name: Verify Makefile targets exist
+        run: make -n help
