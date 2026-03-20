@@ -111,11 +111,16 @@ creates the directory structure the scripts expect, and validates
 that everything is ready.
 
 ```bash
-sudo bash scripts/bootstrap.sh
+make install
 ```
 
-Your Mac will ask for your password. This is your Mac login password,
-not an Apple ID password. You will not see the characters as you type.
+Your Mac will ask for your password when the script needs elevated
+access. This is your Mac login password, not an Apple ID password.
+You will not see the characters as you type.
+
+> **Note:** Do not run this with `sudo`. The bootstrap script handles
+> elevated privileges internally where needed. Running the entire script
+> as root can cause problems with Homebrew.
 
 You should see output similar to this:
 
@@ -179,7 +184,7 @@ The audit reads your Mac's current security settings and reports what
 is configured correctly and what is not. It does not change anything.
 
 ```bash
-sudo bash scripts/hardening-audit.sh
+make audit
 ```
 
 You should see output similar to this (your results will vary based
@@ -232,21 +237,32 @@ SKIP results for n8n, Docker, and Chromium are expected if those tools
 are not installed. They will be checked automatically when you install
 them later.
 
+> **Note:** If any checks report FAIL, `make audit` will show
+> `make: *** [audit] Error 1` at the end. This is expected — the
+> audit script returns a non-zero exit code when problems are found.
+> The audit ran successfully; the "error" means there are items to fix.
+
 ---
 
-## Step 6: Apply Fixes (Dry Run)
+## Step 6: Save Audit Results
 
-Before making any changes, preview what the fix script would do.
-First, save the audit results to a file:
+The fix script needs audit results in JSON format. Save them:
 
 ```bash
-sudo bash scripts/hardening-audit.sh --json | tee openclaw-audit.json > /dev/null
+make audit-save
 ```
 
-Then run the fix script in dry-run mode:
+This runs the audit and saves the JSON results to the audit log
+directory. The fix script will pick them up automatically.
+
+---
+
+## Step 7: Preview Fixes (Dry Run)
+
+Before making any changes, preview what the fix script would do:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --dry-run --auto --audit-file openclaw-audit.json
+sudo bash scripts/hardening-fix.sh --dry-run --auto
 ```
 
 This shows every command that would run without actually executing it.
@@ -255,24 +271,23 @@ command. Nothing is changed on your Mac during this step.
 
 ---
 
-## Step 7: Apply Fixes
+## Step 8: Apply Fixes
 
-When you are ready, apply the fixes. This uses the same audit file
-you generated in Step 6:
+When you are ready, apply the fixes:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --auto --audit-file openclaw-audit.json
+make fix-auto
 ```
 
-Your Mac may ask for your password again if more than a few minutes
-have passed since Step 6. You should see output similar to this:
+Your Mac may ask for your password again. You should see output similar
+to this:
 
 ```text
 ================================================================
   OpenClaw Mac Hardening Fix
   Version: 0.1.0 | Date: 2026-03-16
   Mode: auto | Dry-run: false
-  Audit file: /tmp/openclaw-audit.json
+  Audit file: /opt/n8n/logs/audit/audit-20260316.json
   Checks to process: 27
 ================================================================
 
@@ -300,18 +315,23 @@ applied.
 > you need to undo a specific change later, see
 > [Undo a Specific Change](#undo-a-specific-change) at the bottom of
 > this guide.
+>
+> **Want interactive mode?** Run `make fix` instead of `make fix-auto`
+> to approve each change individually before it is applied.
 
 ---
 
-## Step 8: Verify
+## Step 9: Verify
 
-Run the audit again to confirm the fixes took effect:
+Run the audit again to confirm the fixes took effect, then verify all
+artifacts are in place:
 
 ```bash
-sudo bash scripts/hardening-audit.sh
+make audit
+make verify
 ```
 
-You should see your PASS count increase and your FAIL count decrease
+Your PASS count should increase and your FAIL count should decrease
 compared to Step 5. A typical result after applying fixes:
 
 ```text
@@ -324,6 +344,22 @@ The remaining FAIL is expected if n8n is not yet deployed
 (`/opt/n8n/data` is owned by root until the n8n service account is
 created). The WARN items are optional hardening steps you can address
 over time.
+
+`make verify` checks that all expected files, directories, and services
+are in place:
+
+```text
+OpenClaw Verify
+===============
+  OK  Brew packages
+  OK  /opt/n8n/scripts/hardening-audit.sh
+  OK  /opt/n8n/scripts/hardening-fix.sh
+  ...
+  OK  /opt/n8n/ exists
+  DOWN  Colima not running
+  DOWN  n8n container not running
+  MISSING  Shell aliases (run: make shellrc)
+```
 
 ---
 
@@ -356,12 +392,21 @@ transfer), see [Undo a Specific Change](#undo-a-specific-change).
 
 After hardening, consider these optional improvements:
 
+- **Set up shell aliases** for quick access to audit and fix commands:
+
+  ```bash
+  make shellrc
+  ```
+
+  This creates aliases (`openclaw-audit`, `openclaw-fix`, `n8n-token`)
+  in `~/.openclaw/shellrc` and sources them from your shell profile.
+
 - **Set up the n8n gateway** (Fledge Milestone 1). One command
   handles everything: starts Colima, launches n8n in Docker, and
   imports the gateway workflows:
 
   ```bash
-  bash scripts/gateway-setup.sh
+  make setup-gateway
   ```
 
   The script prints manual steps at the end for creating your n8n
@@ -381,7 +426,7 @@ After hardening, consider these optional improvements:
 
   To stop the gateway: `docker compose -f scripts/templates/docker-compose.yml down`
   To stop Colima: `colima stop`
-  To restart everything: `bash scripts/gateway-setup.sh`
+  To restart everything: `make setup-gateway`
 
 - **Install detection tools** like LuLu (outbound firewall) or
   BlockBlock (persistence monitor) to address WARN items
@@ -437,11 +482,25 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 
 ### Bootstrap shows errors for /opt/n8n directories
 
-Run bootstrap with sudo:
+Make sure you are running from the repository root:
 
 ```bash
-sudo bash scripts/bootstrap.sh
+cd openclaw-mac
+make install
 ```
+
+If the problem persists, check that your user has admin privileges.
+
+### "No audit JSON files found"
+
+The fix script needs audit results in JSON format. Run Step 6 to save
+them:
+
+```bash
+make audit-save
+```
+
+Then retry the fix command.
 
 ### Audit shows FAIL but fix says SKIPPED
 
@@ -449,18 +508,18 @@ Some checks are classified as CONFIRMATION and require interactive
 approval. Run the fix script in interactive mode:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --interactive --audit-file openclaw-audit.json
+make fix
 ```
 
 ### Audit results differ when run with and without sudo
 
 Some checks read system-level settings that require elevated
-privileges. Always run the audit with `sudo` to get complete results.
+privileges. `make audit` runs with sudo automatically.
 
 ### A fix did not take effect after reboot
 
 A small number of macOS settings (such as FileVault) require a reboot
-to activate. Re-run the audit after restarting.
+to activate. Re-run `make audit` after restarting.
 
 ---
 
@@ -499,6 +558,43 @@ sudo bash /opt/n8n/logs/audit/pre-fix-restore-20260316-143022.sh --all
 ```
 
 Replace the filename with the one shown by the `ls` command above.
+
+---
+
+## Uninstall
+
+To remove all OpenClaw artifacts (containers, Colima VM, scripts,
+shell aliases):
+
+```bash
+make uninstall
+```
+
+This does **not** reverse hardening changes. To undo hardening, use
+the restore script from your last fix run (see
+[Undo a Specific Change](#undo-a-specific-change)).
+
+---
+
+## Quick Reference
+
+All available commands:
+
+```bash
+make help
+```
+
+| Command | What it does |
+|---------|-------------|
+| `make install` | Install tools, create directories, deploy scripts |
+| `make setup-gateway` | Start Colima, deploy n8n container, configure secrets |
+| `make audit` | Run security audit (requires sudo) |
+| `make audit-save` | Save audit results as JSON for the fix script (requires sudo) |
+| `make fix` | Apply hardening fixes interactively (requires sudo) |
+| `make fix-auto` | Apply safe hardening fixes without prompts (requires sudo) |
+| `make shellrc` | Set up openclaw aliases in ~/.openclaw/shellrc |
+| `make verify` | Check that all expected artifacts are present |
+| `make uninstall` | Remove all openclaw artifacts |
 
 ---
 

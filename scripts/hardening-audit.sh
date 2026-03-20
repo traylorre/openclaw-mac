@@ -1939,7 +1939,7 @@ check_browser_dangerflags() {
     # Check running browser processes for dangerous flags
     local dangerous_flags="--disable-web-security|--allow-running-insecure-content|--disable-site-isolation-trials|--disable-features=IsolateOrigins|--remote-debugging-address=0\.0\.0\.0"
     local bad_flags
-    bad_flags=$(ps aux 2>/dev/null | grep -F "$process_name" | grep -v grep | grep -oE "$dangerous_flags" | sort -u) || true
+    bad_flags=$(ps aux 2>/dev/null | grep -F "$process_name" | grep -v grep | grep -oE -e "$dangerous_flags" | sort -u) || true
 
     if [[ -z "$bad_flags" ]]; then
         report_result "$id" "Browser Security" \

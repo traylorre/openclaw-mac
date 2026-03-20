@@ -1,121 +1,111 @@
 # Fledge: OpenClaw-Mac Roadmap
 
 Multi-agent automation platform on hardened macOS. From hello world
-to autonomous agents in 6 milestones. Each milestone is a demo-able
-increment tagged in GitHub.
+to production agent pipelines in 6 milestones.
 
-## Milestone 1: Gateway Live (`v0.1.0-gateway`)
+## Milestone 1: Gateway Live (`v0.1.0-gateway`) — DONE
 
 **Goal**: n8n orchestration backbone running, callable from OpenClaw.
 
-- [ ] n8n running in Docker on Mac Mini
-- [ ] Hello-world webhook callable from CLI
-- [ ] Bearer auth gate on all webhook endpoints
-- [ ] Gateway Switch node routing by `intent` field
-- [ ] Verify hardening audit passes with n8n container running
+- [x] n8n running in Docker on Mac Mini
+- [x] Hello-world webhook callable from CLI
+- [x] Bearer auth gate on all webhook endpoints
+- [x] Gateway Switch node routing by `intent` field
+- [x] Verify hardening audit passes with n8n container running
 
-**Demo**: Gateway routes intents to sub-agent workflows. Single webhook
-URL, n8n handles all routing.
+**Demo**: Gateway routes intents to sub-agent workflows.
 
 ---
 
-## Milestone 2: Trust Audit Agent (`v0.2.0-trust-audit`)
+## Milestone 2: Security Baseline (`v0.2.0-baseline`)
 
-**Goal**: Autonomous compliance auditing against established standards.
+**Goal**: Establish the security posture of the deployment and
+document what self-attestation can and cannot verify.
 
-- [ ] Sub-agent runs `hardening-audit.sh`, parses JSON output
-- [ ] Maps findings to CIS Benchmarks / NIST SP 800-179 references
-- [ ] Maps findings to OWASP Top 10 for Agentic Applications (ASI01-ASI10)
-- [ ] Generates structured compliance report (markdown + JSON)
-- [ ] Documents where controls exist but fail to operate as intended (NIST 800-53A: control effectiveness vs existence)
+- [ ] Run mSCP compliance script for OS-level checks (~30 CIS/NIST-mapped controls)
+- [ ] Run `hardening-audit.sh --json` for full 84-check audit
+- [ ] Publish trust gap analysis: [docs/TRUST-GAPS.md](docs/TRUST-GAPS.md)
 
-**Demo**: An autonomous agent audits its own infrastructure against
-OWASP and NIST standards, and reports where "passing" controls
-aren't actually protecting you.
+**Demo**: Audit passes. Trust gaps documented. Foundation laid for
+future TEA integration.
 
 ---
 
 ## Milestone 3: Lead Prospector (`v0.3.0-lead-prospector`)
 
-**Goal**: First sub-agent with real-world authority (API keys, data writes).
+**Goal**: Working lead generation pipeline for a real client.
+OpenClaw + Apify + n8n, delivering enriched leads.
 
-- [ ] Lead Prospector sub-agent: webhook → Apify (LinkedIn/Google Maps) → Claude enrichment → Airtable/Notion
-- [ ] Mem0 + Qdrant memory running (open-source mode, Ollama embeddings)
-- [ ] Guardian script integrated with OpenClaw memory flush
-- [ ] ICP scoring pipeline with configurable verticals
-- [ ] Document exactly what authority the agent has and how scope is verified
+- [ ] Apify actor for LinkedIn/Google Maps scraping
+- [ ] n8n workflow: webhook trigger → Apify → Claude enrichment → output
+- [ ] ICP scoring with configurable verticals
+- [ ] Output to Airtable or Notion
+- [ ] Document agent authority: what credentials it holds, what it can reach
 
-**Demo**: Scored leads for a target vertical, delivered to
-Airtable/Notion with enrichment data. Clear accounting of what
-credentials the agent holds and what it can reach.
+**Demo**: Scored leads for a target vertical, delivered to client's
+preferred tool.
 
 ---
 
-## Milestone 4: Automation & Productivity (`v0.4.0-automation`)
+## Milestone 4: LangGraph Agent (`v0.4.0-langgraph`)
 
-**Goal**: Daily intelligence and content pipeline.
+**Goal**: Reimplement the pipeline in Python/LangGraph. Demonstrate
+multi-agent orchestration with production patterns.
 
-- [ ] 7am daily digest: overdue tasks, top news for target verticals, memory recall from Qdrant
-- [ ] Weekly competitive landscape scan (GitHub stars/releases, LinkedIn activity of target companies)
-- [ ] Delivery via Telegram or email
-- [ ] Content Repurposer: turn work outputs into LinkedIn posts, readme sections
-- [ ] Repo Improver: static analysis diff, readme staleness, dependency drift on push
-- [ ] API Cost Monitor: track LLM spend daily, alert on budget threshold
+- [ ] Python CLI wrapping the audit + lead gen pipeline
+- [ ] LangGraph multi-agent workflow: Planner → Executor → Reviewer
+- [ ] Tool use: Apify, audit script, Claude as LangGraph tools
+- [ ] RAG over HARDENING.md for security-aware remediation
+- [ ] Production patterns: retry, circuit breaker, structured output
+- [ ] pytest test suite
 
-**Demo**: Automated briefings, content pipeline, and repo maintenance
-with zero manual intervention.
+**Demo**: Same pipeline, built with LangGraph. Shows progression
+from no-code orchestration to code-first agent systems.
 
 ---
 
 ## Milestone 5: Hybrid Memory (`v0.5.0-hybrid-memory`)
 
-**Goal**: Graph + vector memory layer for deeper retrieval.
+**Goal**: Vector + graph memory for deeper retrieval across agents.
 
-- [ ] Add Cognee or Zep/Graphiti alongside Qdrant
-- [ ] Evaluate retrieval quality on real queries from milestones 2-4
+- [ ] Qdrant vector store with Ollama embeddings
+- [ ] Mem0 memory middleware
+- [ ] Evaluate retrieval quality on real queries from M3-M4
 - [ ] Compare vector-only vs. hybrid on multi-hop questions
-- [ ] Document before/after results
 
-**Demo**: Side-by-side retrieval comparison showing where graph
-traversal finds answers that flat vector search misses.
+**Demo**: Agents recall context across sessions. Side-by-side
+retrieval comparison showing where graph beats flat vector.
 
 ---
 
 ## Milestone 6: Deployment Observations (`v0.6.0-observations`)
 
-**Goal**: Contribute practitioner findings to trust framework discussions.
+**Goal**: Compile practitioner findings from M1-M5 into a report
+suitable for NIST CAISI or working group input.
 
-- [ ] Compile deployment observations from milestones 1-5: where agent security controls failed in practice, where audits passed but protection didn't hold
-- [ ] Map observations against published frameworks (OWASP Agentic Top 10, NIST AI Agent Standards Initiative, CSA Agentic Trust Framework)
-- [ ] Identify gaps that deployment experience reveals but current frameworks don't address
-- [ ] Publish findings in a format suitable for working group contribution
+- [ ] Where CIS/NIST controls failed to cover agentic risks
+- [ ] Where Examine-passing controls failed under real use
+- [ ] OWASP ASI items that manifested vs. remained theoretical
+- [ ] Publish as blog post or working group contribution
 
-**Demo**: A practitioner report grounded in real deployment data,
-structured for contribution to ongoing trust framework work.
+**Demo**: Practitioner report grounded in deployment data.
 
 ---
 
-## Architecture Principles
-
-These milestones follow two objectives:
-
-1. **Engineering fundamentals**: Context protection and separation,
-   vector + graph memory, scalable sub-agents, security-first design
-2. **Real-world value**: Each milestone delivers something usable,
-   not just infrastructure. Compliance auditing, lead gen, briefings,
-   content automation, and practitioner observations that contribute
-   back to the security community.
-
-## Infrastructure Stack
+## Architecture
 
 ```text
-OpenClaw Gateway (native)
-  ├── n8n (Docker) — orchestration + webhook routing
-  ├── Qdrant v1.13.0 (Docker) — vector memory
-  ├── Ollama (Docker) — local embeddings (nomic-embed-text)
-  ├── Mem0 API (Docker) — memory middleware
-  └── hardening-audit.sh — trust verification layer
+M1-M3: n8n (no-code orchestration — learn agent patterns)
+M4+:   LangGraph (code-first Python — production agent systems)
+
+OpenClaw (native macOS)
+  ├── n8n (Docker) — webhook routing + workflow orchestration
+  ├── Apify — web scraping (LinkedIn, Google Maps)
+  ├── Claude API — enrichment + analysis
+  ├── Qdrant (Docker) — vector memory (M5)
+  ├── Mem0 (Docker) — memory middleware (M5)
+  └── hardening-audit.sh — security verification
 ```
 
-See [docs/HARDENING.md](docs/HARDENING.md) for the security baseline
-that underpins this stack.
+Security baseline: [docs/HARDENING.md](docs/HARDENING.md)
+Trust gap analysis: [docs/TRUST-GAPS.md](docs/TRUST-GAPS.md)

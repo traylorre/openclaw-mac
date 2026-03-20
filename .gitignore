@@ -42,10 +42,12 @@ scripts/templates/secrets/
 .claude/memory/
 .claude/projects/*/memory/
 
+# Context carryover files (session state, never committed)
+**/CONTEXT-CARRYOVER-*.md
+
 # Carryover runtime artifacts (002-context-auto-rotation)
 .claude/carryover-pending
 .claude/carryover-pending.claimed
 .claude/carryover-clear-needed
 .claude/sessionstart-canary.last
 *.loaded
-
