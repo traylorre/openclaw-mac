@@ -1923,9 +1923,14 @@ verify_fixes() {
         before_warns=$(jq '[.results[] | select(.status == "WARN")] | length' "$AUDIT_FILE" 2>/dev/null) || before_warns="?"
         after_warns=$(jq '[.results[] | select(.status == "WARN")] | length' "$post_fix_file" 2>/dev/null) || after_warns="?"
         if ! $JSON_OUTPUT; then
-            echo ""
-            printf "  Verification: FAIL %s -> %s | WARN %s -> %s\n" \
-                "$before_fails" "$after_fails" "$before_warns" "$after_warns"
+            if [[ "$before_fails" != "$after_fails" || "$before_warns" != "$after_warns" ]]; then
+                echo ""
+                printf "  Verification: FAIL %s → %s | WARN %s → %s\n" \
+                    "$before_fails" "$after_fails" "$before_warns" "$after_warns"
+            else
+                echo ""
+                echo "  Verified — no change in FAIL/WARN counts."
+            fi
         fi
     else
         if ! $JSON_OUTPUT; then
