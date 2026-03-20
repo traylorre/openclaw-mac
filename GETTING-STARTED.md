@@ -29,12 +29,12 @@ If anything looks wrong, read the detailed steps below.
 | Do | Undo | What changes |
 |----|------|-------------|
 | `make install` | `make uninstall` | Creates `/opt/n8n/`, deploys scripts, installs Homebrew packages (bash, jq, shellcheck). Brew packages are kept on uninstall — remove with `brew bundle cleanup --file=Brewfile --force` |
-| `make fix` | `make fix-undo` | Modifies macOS security settings (firewall, Siri, AirDrop, etc.). Creates a restore script so changes can be undone individually or all at once |
+| `make fix` or `make fix-interactive` | `make fix-undo` | Modifies macOS security settings (firewall, Siri, AirDrop, etc.). Creates a restore script so changes can be undone individually or all at once. `fix-interactive` prompts before each change |
 | `make setup-gateway` | `make teardown-gateway` | Starts Colima VM, creates Docker containers/volumes, stores bearer token in Keychain |
 | `make shellrc` | `make shellrc-undo` | Creates shell aliases in `~/.openclaw/shellrc`, adds source line to shell profile. Re-run if you move the repo |
 
 Read-only commands (no undo needed): `make audit`, `make fix-dry-run`,
-`make fix-interactive`, `make verify`, `make help`
+`make verify`, `make help`
 
 For a full list of all audit checks: see
 [scripts/CHK-REGISTRY.md](scripts/CHK-REGISTRY.md).
