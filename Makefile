@@ -7,7 +7,7 @@ COMPOSE := $(SCRIPTS)/templates/docker-compose.yml
 PREFIX := /opt/n8n
 OPENCLAW_DIR := $(HOME)/.openclaw
 
-.PHONY: install setup-gateway teardown-gateway audit fix fix-interactive fix-dry-run fix-undo verify uninstall shellrc shellrc-remove help
+.PHONY: install setup-gateway teardown-gateway audit fix fix-interactive fix-dry-run fix-undo verify uninstall shellrc shellrc-undo help
 
 help: ## Show available targets
 	@grep -E '^[a-z_-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -24,19 +24,19 @@ teardown-gateway: ## Stop and remove n8n container and Colima VM
 	-@colima stop 2>/dev/null && echo "Stopped Colima" || echo "Colima not running"
 
 audit: ## Run security audit, display results, and save JSON (requires sudo)
-	-@sudo bash $(SCRIPTS)/hardening-audit.sh
+	@sudo bash $(SCRIPTS)/hardening-audit.sh || true
 	@sudo bash $(SCRIPTS)/hardening-audit.sh --json | sudo tee $(PREFIX)/logs/audit/audit-$$(date +%Y%m%d-%H%M%S).json > /dev/null
 	@echo ""
 	@echo "Audit results saved. Run 'make fix' to apply fixes."
 
 fix: ## Apply safe hardening fixes without prompts (requires sudo)
-	-@sudo bash $(SCRIPTS)/hardening-fix.sh --auto
+	@sudo bash $(SCRIPTS)/hardening-fix.sh --auto || true
 
 fix-interactive: ## Apply hardening fixes one at a time with approval (requires sudo)
-	-@sudo bash $(SCRIPTS)/hardening-fix.sh --interactive
+	@sudo bash $(SCRIPTS)/hardening-fix.sh --interactive || true
 
 fix-dry-run: ## Preview fixes without applying them (requires sudo)
-	-@sudo bash $(SCRIPTS)/hardening-fix.sh --dry-run --auto
+	@sudo bash $(SCRIPTS)/hardening-fix.sh --dry-run --auto || true
 
 fix-undo: ## Undo the most recent fix run using its restore script
 	@LATEST=$$(ls -t $(PREFIX)/logs/audit/pre-fix-restore-*.sh 2>/dev/null | head -1); \
@@ -61,7 +61,7 @@ fix-undo: ## Undo the most recent fix run using its restore script
 shellrc: ## Set up openclaw aliases in ~/.openclaw/shellrc
 	@mkdir -p $(OPENCLAW_DIR)
 	@REPO_ROOT="$$(cd "$$(dirname "$(MAKEFILE_LIST)")" && pwd)"; \
-	printf '# OpenClaw Shell Configuration\n# Source: %s/Makefile shellrc target\n# To remove: make shellrc-remove\n\nalias openclaw-audit='\''sudo bash %s/scripts/hardening-audit.sh'\''\nalias openclaw-fix='\''sudo bash %s/scripts/hardening-fix.sh --interactive'\''\nalias n8n-token='\''security find-generic-password -a "openclaw" -s "n8n-gateway-bearer" -w'\''\n' \
+	printf '# OpenClaw Shell Configuration\n# Source: %s/Makefile shellrc target\n# To undo: make shellrc-undo\n\nalias openclaw-audit='\''sudo bash %s/scripts/hardening-audit.sh'\''\nalias openclaw-fix='\''sudo bash %s/scripts/hardening-fix.sh --interactive'\''\nalias n8n-token='\''security find-generic-password -a "openclaw" -s "n8n-gateway-bearer" -w'\''\n' \
 		"$$REPO_ROOT" "$$REPO_ROOT" "$$REPO_ROOT" > $(OPENCLAW_DIR)/shellrc
 	@RC_FILE="$$( [[ "$$(basename "$$SHELL")" == "bash" ]] && echo "$$HOME/.bash_profile" || echo "$$HOME/.zshrc" )"; \
 	grep -qF 'openclaw/shellrc' "$$RC_FILE" 2>/dev/null || \
@@ -69,7 +69,7 @@ shellrc: ## Set up openclaw aliases in ~/.openclaw/shellrc
 	echo "Aliases installed. Run: source $$RC_FILE"
 	@echo "Note: Aliases use absolute paths to this repo. If you move the repo, re-run 'make shellrc'."
 
-shellrc-remove: ## Remove openclaw shell aliases
+shellrc-undo: ## Remove openclaw shell aliases
 	@rm -f $(OPENCLAW_DIR)/shellrc
 	@sed -i '' '/openclaw\/shellrc/d' ~/.zshrc ~/.bash_profile 2>/dev/null || true
 	@echo "Shell aliases removed. Restart your terminal or run: exec $$SHELL"
