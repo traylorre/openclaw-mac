@@ -959,6 +959,11 @@ fix_spotlight_exclusions() {
 fix_log_dir() {
     local id="CHK-LOG-DIR"
     local log_dir="/opt/n8n/logs/audit"
+    # Skip if directory already exists and is writable
+    if sudo test -d "$log_dir" && sudo test -w "$log_dir"; then
+        report_fix "$id" "Audit log directory already exists" "SKIPPED"
+        return 0
+    fi
     if $DRY_RUN; then
         run_fix_cmd "Create audit log directory" true
         report_fix "$id" "Created audit log directory" "DRY-RUN"
