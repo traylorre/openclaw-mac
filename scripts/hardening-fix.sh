@@ -39,6 +39,7 @@ TOTAL=0
 FIXED_COUNT=0
 SKIPPED_COUNT=0
 FAILED_COUNT=0
+NOFIX_COUNT=0
 
 # --- Options ---
 MODE=""  # auto | interactive
@@ -522,16 +523,16 @@ report_fix() {
     fi
 
     # Terminal output
-    local color=""
+    local color="" display_status="$status"
     case "$status" in
         FIXED)      color="$GREEN" ;;
         SKIPPED)    color="$YELLOW" ;;
-        FAILED)     color="$RED" ;;
+        FAILED)     color="$RED"; display_status="ERROR" ;;
         DRY-RUN)    color="$CYAN" ;;
         INSTRUCTED) color="$GREEN" ;;
     esac
 
-    printf "  ${color}%-10s${NC}  %-14s  %s" "$status" "$id" "$description"
+    printf "  ${color}%-10s${NC}  %-14s  %s" "$display_status" "$id" "$description"
     if [[ -n "$detail" ]]; then
         printf " — %s" "$detail"
     fi
@@ -1867,11 +1868,9 @@ extract_failed_checks() {
 process_check() {
     local check_id="$1"
 
-    # Skip checks that have no registered fix
+    # Skip checks that have no registered fix (suppress from terminal, count for summary)
     if [[ -z "${FIX_REGISTRY[$check_id]+x}" ]]; then
-        if ! $JSON_OUTPUT; then
-            printf "  ${CYAN}%-10s${NC}  %-14s  %s\n" "NO-FIX" "$check_id" "No auto-fix registered for this check"
-        fi
+        NOFIX_COUNT=$((NOFIX_COUNT + 1))
         return 0
     fi
 
@@ -2123,10 +2122,15 @@ main() {
     else
         echo ""
         echo "================================================================"
-        printf "  Results: ${GREEN}%d FIXED${NC} | ${YELLOW}%d SKIPPED${NC} | ${RED}%d FAILED${NC}" \
-            "$FIXED_COUNT" "$SKIPPED_COUNT" "$FAILED_COUNT"
+        printf "  Results: ${GREEN}%d FIXED${NC} | ${YELLOW}%d SKIPPED${NC}" \
+            "$FIXED_COUNT" "$SKIPPED_COUNT"
+        if [[ $FAILED_COUNT -gt 0 ]]; then
+            printf " | ${RED}%d ERROR${NC}" "$FAILED_COUNT"
+        fi
         echo ""
-        printf "  Total checks processed: %d\n" "$TOTAL"
+        if [[ $NOFIX_COUNT -gt 0 ]]; then
+            printf "  %d checks have no auto-fix — see 'make audit' for details.\n" "$NOFIX_COUNT"
+        fi
         echo "================================================================"
 
         # Post-fix verification
