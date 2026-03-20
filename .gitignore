@@ -51,4 +51,3 @@ scripts/templates/secrets/
 .claude/carryover-clear-needed
 .claude/sessionstart-canary.last
 *.loaded
-
