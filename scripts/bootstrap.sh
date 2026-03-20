@@ -492,10 +492,9 @@ main() {
     if [[ "$CHECK_ONLY" != true ]]; then
         printf "\n${GREEN}Bootstrap complete. Next steps:${NC}\n"
         echo "  1. Run audit:    make audit"
-        echo "  2. Save results: make audit-save"
-        echo "  3. Apply fixes:  make fix-auto"
-        echo "  4. Verify:       make verify"
-        echo "  5. All commands: make help"
+        echo "  2. Apply fixes:  make fix"
+        echo "  3. Verify:       make verify"
+        echo "  4. All commands: make help"
         echo ""
         echo "  Optional:"
         echo "  - Deploy n8n:    make setup-gateway"
