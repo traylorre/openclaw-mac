@@ -1842,12 +1842,11 @@ find_latest_audit() {
     fi
     local latest=""
     if [[ -d "$AUDIT_LOG_DIR" ]]; then
-        latest=$(find "$AUDIT_LOG_DIR" -name "audit-*.json" -type f 2>/dev/null \
-            | sort -r | head -1) || true
+        latest=$(ls -t "$AUDIT_LOG_DIR"/audit-*.json 2>/dev/null | head -1) || true
     fi
     if [[ -z "$latest" ]]; then
         echo "Error: No audit JSON files found in ${AUDIT_LOG_DIR}." >&2
-        echo "Run the audit first: hardening-audit.sh --json > ${AUDIT_LOG_DIR}/audit-\$(date +%Y%m%d).json" >&2
+        echo "Run 'make audit' first." >&2
         exit 2
     fi
     echo "$latest"
