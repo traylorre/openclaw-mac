@@ -1,8 +1,8 @@
-# Hardening Your Mac Mini (Apple Silicon)
+# Hardening Your Mac
 
-This guide walks you through securing a Mac Mini with Apple Silicon
-(M1, M2, M3, M4) using the OpenClaw hardening toolkit. Every command
-is copy-pasteable. The process takes about 15 minutes.
+This guide walks you through securing a Mac using the OpenClaw
+hardening toolkit. Works on both Apple Silicon and Intel Macs. Every
+command is copy-pasteable. The process takes about 15 minutes.
 
 **What the scripts do:**
 
@@ -26,7 +26,7 @@ time.
 
 ## Before You Begin
 
-- A Mac Mini with Apple Silicon (M1 or later)
+- A Mac (Apple Silicon M1+ or Intel 2009+)
 - The admin account you created during Mac setup
 - An internet connection
 - Optional: a Time Machine backup (recommended before any system changes)
@@ -58,14 +58,23 @@ Paste this command and press Enter:
 This may take a few minutes. Follow the on-screen prompts when they
 appear.
 
-When it finishes, it will print **"Next steps"** with commands to add
-Homebrew to your PATH. Copy and paste those commands exactly as shown.
-They will look similar to this:
+**Apple Silicon (M1+):** When Homebrew finishes, it will print
+**"Next steps"** with commands to add Homebrew to your PATH. Copy and
+paste those commands exactly as shown. They will look similar to this:
 
 ```bash
 echo >> ~/.zprofile
 echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
 eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+**Intel:** Homebrew installs to `/usr/local` and is usually available
+immediately — no PATH setup needed. If you see `command not found`,
+add it manually:
+
+```bash
+echo 'eval "$(/usr/local/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/usr/local/bin/brew shellenv)"
 ```
 
 Verify it worked:
@@ -129,8 +138,8 @@ OpenClaw Bootstrap v0.1.0
 Mode: install (will install dependencies and create directories)
 
 [1/8] Platform Check
-  ✓  macOS 15.2 detected
-  ℹ  Architecture: arm64
+  ✓  macOS detected
+  ℹ  Architecture: arm64 (or x86_64 on Intel)
 
 [2/8] Homebrew
   ✓  Homebrew installed: Homebrew 4.x.x
@@ -141,35 +150,14 @@ Mode: install (will install dependencies and create directories)
   —  shellcheck not installed (optional)
   —  msmtp not installed (optional)
   ✓  sqlite3: available
-
-[4/8] Directory Structure
-  +  Created /opt/n8n/
-  +  Created /opt/n8n/scripts/
-  ...
-
-[5/8] Deploy Scripts
-  +  Deployed hardening-audit.sh → /opt/n8n/scripts/hardening-audit.sh
-  ...
-
-[6/8] Configuration
-  +  Created default notify.conf
-
-[7/8] Sample Audit JSON
-  +  Generated sample audit JSON
-
-[8/8] Command Validation
-  ✓  csrutil available
-  ✓  fdesetup available
-  ...
-  —  docker not installed (container checks will SKIP)
+...
 
 ════════════════════════════════════════
   16 OK  |  11 FIXED  |  0 ERRORS
 ════════════════════════════════════════
 ```
 
-Your output will have more lines than shown above (the `...` lines
-are abbreviated). Here is what the symbols mean:
+Here is what the symbols mean:
 
 - `✓` or **OK** — already in place, no action taken
 - `+` or **FIXED** — the bootstrap installed or created this for you
@@ -180,8 +168,8 @@ are abbreviated). Here is what the symbols mean:
 
 ## Step 5: Run the Security Audit
 
-The audit reads your Mac's current security settings and reports what
-is configured correctly and what is not. It does not change anything.
+The audit reads your Mac's current security settings, displays the
+results, and saves them for the fix script.
 
 ```bash
 make audit
@@ -193,35 +181,21 @@ on your Mac's current configuration):
 ```text
 ================================================================
   OpenClaw Mac Hardening Audit
-  Version: 0.1.0 | Date: 2026-03-16
-  Deployment: unknown | macOS: 15.2
 ================================================================
 
 [Section: System Integrity Protection]
   PASS  SIP is enabled                               → §2.3
 
-[Section: Disk Encryption]
-  PASS  FileVault is enabled                         → §2.1
-
 [Section: Firewall]
   FAIL  Application firewall is disabled             → §2.2
   WARN  Stealth mode is not enabled                  → §2.2
-
-[Section: Gatekeeper]
-  PASS  Gatekeeper is enabled                        → §2.4
-  ...
-
-[Section: Guest Account]
-  FAIL  Guest account is enabled                     → §2.7
-  ...
-
-[Section: n8n Platform]
-  SKIP  n8n not detected                             → §5.1
   ...
 
 ================================================================
   Results: 17 PASS | 5 FAIL | 22 WARN | 19 SKIP
 ================================================================
+
+Audit results saved. Run 'make fix' to apply fixes.
 ```
 
 **What the statuses mean:**
@@ -237,27 +211,18 @@ SKIP results for n8n, Docker, and Chromium are expected if those tools
 are not installed. They will be checked automatically when you install
 them later.
 
----
-
-## Step 6: Save Audit Results
-
-The fix script needs audit results in JSON format. Save them:
-
-```bash
-make audit-save
-```
-
-This runs the audit and saves the JSON results to the audit log
-directory. The fix script will pick them up automatically.
+> **Intel Macs:** You may see a WARN for "No firmware password set
+> (Intel)." This is normal. See [Next Steps](#next-steps) for how to
+> set one.
 
 ---
 
-## Step 7: Preview Fixes (Dry Run)
+## Step 6: Preview Fixes (Optional)
 
 Before making any changes, preview what the fix script would do:
 
 ```bash
-sudo bash scripts/hardening-fix.sh --dry-run --auto
+make fix-dry-run
 ```
 
 This shows every command that would run without actually executing it.
@@ -266,12 +231,12 @@ command. Nothing is changed on your Mac during this step.
 
 ---
 
-## Step 8: Apply Fixes
+## Step 7: Apply Fixes
 
 When you are ready, apply the fixes:
 
 ```bash
-make fix-auto
+make fix
 ```
 
 Your Mac may ask for your password again. You should see output similar
@@ -280,9 +245,7 @@ to this:
 ```text
 ================================================================
   OpenClaw Mac Hardening Fix
-  Version: 0.1.0 | Date: 2026-03-16
   Mode: auto | Dry-run: false
-  Audit file: /opt/n8n/logs/audit/audit-20260316.json
   Checks to process: 27
 ================================================================
 
@@ -298,7 +261,6 @@ to this:
 ================================================================
 
   Restore script: /opt/n8n/logs/audit/pre-fix-restore-20260316-123456.sh
-  Usage: bash /opt/n8n/logs/audit/pre-fix-restore-20260316-123456.sh --list | --all | CHK-ID
 ```
 
 **SKIPPED** items are either checks with no automatic fix (you would
@@ -311,12 +273,12 @@ applied.
 > [Undo a Specific Change](#undo-a-specific-change) at the bottom of
 > this guide.
 >
-> **Want interactive mode?** Run `make fix` instead of `make fix-auto`
-> to approve each change individually before it is applied.
+> **Want interactive mode?** Run `make fix-interactive` instead of
+> `make fix` to approve each change individually before it is applied.
 
 ---
 
-## Step 9: Verify
+## Step 8: Verify
 
 Run the audit again to confirm the fixes took effect, then verify all
 artifacts are in place:
@@ -395,6 +357,10 @@ After hardening, consider these optional improvements:
 
   This creates aliases (`openclaw-audit`, `openclaw-fix`, `n8n-token`)
   in `~/.openclaw/shellrc` and sources them from your shell profile.
+  To remove them later: `make shellrc-remove`.
+
+  > If you move the repo to a different directory, re-run `make shellrc`
+  > to update the alias paths.
 
 - **Set up the n8n gateway** (Fledge Milestone 1). One command
   handles everything: starts Colima, launches n8n in Docker, and
@@ -419,8 +385,7 @@ After hardening, consider these optional improvements:
     -d '{"intent": "hello"}'
   ```
 
-  To stop the gateway: `docker compose -f scripts/templates/docker-compose.yml down`
-  To stop Colima: `colima stop`
+  To stop the gateway: `make teardown-gateway`
   To restart everything: `make setup-gateway`
 
 - **Install detection tools** like LuLu (outbound firewall) or
@@ -443,10 +408,10 @@ After hardening, consider these optional improvements:
   # Or: brew install --cask microsoft-edge
   ```
 
-  Then verify the browser security checks pass:
+  Then re-run the audit to verify browser security checks:
 
   ```bash
-  sudo bash scripts/hardening-audit.sh --section "Browser Security"
+  make audit
   ```
 
   See [docs/HARDENING.md §2.11](docs/HARDENING.md#211-browser-security-chromium-auto-fix)
@@ -460,6 +425,11 @@ After hardening, consider these optional improvements:
   bash scripts/browser-cleanup.sh
   ```
 
+- **Set a firmware password** (Intel only) — requires booting into
+  Recovery Mode (restart, hold Cmd + R). See
+  [docs/HARDENING.md §2.9](docs/HARDENING.md) for instructions.
+  This prevents unauthorized booting from external media.
+
 - **Configure encrypted DNS** to address the DNS WARN
 - **Set up Time Machine** or another backup solution
 
@@ -469,10 +439,16 @@ After hardening, consider these optional improvements:
 
 ### "command not found: brew"
 
-Close Terminal and reopen it. If that does not work, run:
+**Apple Silicon:** Close Terminal and reopen it, or run:
 
 ```bash
 eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+**Intel:** Homebrew installs to `/usr/local/bin/`. Try:
+
+```bash
+eval "$(/usr/local/bin/brew shellenv)"
 ```
 
 ### Bootstrap shows errors for /opt/n8n directories
@@ -488,14 +464,14 @@ If the problem persists, check that your user has admin privileges.
 
 ### "No audit JSON files found"
 
-The fix script needs audit results in JSON format. Run Step 6 to save
-them:
+The fix script needs audit results in JSON format. Run the audit first:
 
 ```bash
-make audit-save
+make audit
 ```
 
-Then retry the fix command.
+This both displays results and saves the JSON. Then retry the fix
+command.
 
 ### Audit shows FAIL but fix says SKIPPED
 
@@ -503,7 +479,7 @@ Some checks are classified as CONFIRMATION and require interactive
 approval. Run the fix script in interactive mode:
 
 ```bash
-make fix
+make fix-interactive
 ```
 
 ### Audit results differ when run with and without sudo
@@ -554,6 +530,12 @@ sudo bash /opt/n8n/logs/audit/pre-fix-restore-20260316-143022.sh --all
 
 Replace the filename with the one shown by the `ls` command above.
 
+> **Quick undo:** Run `make fix-undo` to undo the most recent fix run
+> interactively.
+>
+> **After uninstall:** If you ran `make uninstall`, restore scripts are
+> preserved in `~/.openclaw/restore-scripts/`. Use those instead.
+
 ---
 
 ## Uninstall
@@ -565,31 +547,36 @@ shell aliases):
 make uninstall
 ```
 
-This does **not** reverse hardening changes. To undo hardening, use
-the restore script from your last fix run (see
-[Undo a Specific Change](#undo-a-specific-change)).
+This does **not** reverse hardening changes. To undo hardening first,
+run `make fix-undo`. Restore scripts are automatically preserved in
+`~/.openclaw/restore-scripts/` before deletion.
 
 ---
 
 ## Quick Reference
 
-All available commands:
+All available commands: `make help`
 
-```bash
-make help
-```
+### Operations and their inverses
 
-| Command | What it does |
-|---------|-------------|
-| `make install` | Install tools, create directories, deploy scripts |
-| `make setup-gateway` | Start Colima, deploy n8n container, configure secrets |
-| `make audit` | Run security audit (requires sudo) |
-| `make audit-save` | Save audit results as JSON for the fix script (requires sudo) |
-| `make fix` | Apply hardening fixes interactively (requires sudo) |
-| `make fix-auto` | Apply safe hardening fixes without prompts (requires sudo) |
-| `make shellrc` | Set up openclaw aliases in ~/.openclaw/shellrc |
-| `make verify` | Check that all expected artifacts are present |
-| `make uninstall` | Remove all openclaw artifacts |
+Every command that modifies your system has a corresponding undo:
+
+| Do | Undo | What changes |
+|----|------|-------------|
+| `make install` | `make uninstall` | Creates `/opt/n8n/` tree, deploys scripts, installs Homebrew packages (bash, jq, shellcheck). Homebrew packages are left in place on uninstall — remove manually with `brew bundle cleanup --file=Brewfile --force` |
+| `make setup-gateway` | `make teardown-gateway` | Starts Colima VM, creates Docker containers/volumes, stores bearer token in Keychain |
+| `make fix` | `make fix-undo` | Modifies macOS security settings (firewall, Siri, AirDrop, etc.). Each run creates a restore script so changes can be undone individually or all at once |
+| `make shellrc` | `make shellrc-remove` | Creates `~/.openclaw/shellrc` with aliases, adds source line to your shell profile |
+
+### Other commands
+
+| Command | What it does | Modifies system? |
+|---------|-------------|-----------------|
+| `make audit` | Run security audit, display results, and save JSON | Saves log files only |
+| `make fix-interactive` | Apply fixes one at a time with approval prompts | Yes (same as `make fix`, but asks before each change) |
+| `make fix-dry-run` | Preview fixes without applying them | No |
+| `make verify` | Check that all expected artifacts are present | No |
+| `make help` | Show all available targets | No |
 
 ---
 

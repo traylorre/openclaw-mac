@@ -5,10 +5,9 @@ orchestration with Apify integrations.
 
 ## Getting Started
 
-Follow the step-by-step guide for your hardware:
+Follow the step-by-step guide (works on both Apple Silicon and Intel):
 
-- **[Apple Silicon Mac Mini](GETTING-STARTED.md)** (M1, M2, M3, M4)
-- **[Intel Mac](GETTING-STARTED-INTEL.md)** (MacBook, Mac Mini, iMac, Mac Pro)
+- **[Getting Started](GETTING-STARTED.md)**
 
 ## Development Setup
 
