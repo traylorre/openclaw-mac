@@ -1069,8 +1069,7 @@ check_outbound_filter() {
         report_result "$id" "Outbound Filtering" "Little Snitch is running" "PASS" "3.3"
         return
     fi
-    report_result "$id" "Outbound Filtering" "No outbound filtering detected" "WARN" "3.3" \
-        "Install LuLu (free) or configure pf rules per §3.3"
+    report_result "$id" "Outbound Filtering" "No outbound filtering detected" "WARN" "3.3"
 }
 
 check_bluetooth() {
