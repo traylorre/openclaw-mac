@@ -30,12 +30,15 @@ audit: ## Run security audit, display results, and save JSON (requires sudo)
 	@echo "Audit results saved. Run 'make fix' to apply fixes."
 
 fix: ## Apply safe hardening fixes without prompts (requires sudo)
+	@sudo bash $(SCRIPTS)/hardening-audit.sh --json | sudo tee $(PREFIX)/logs/audit/audit-$$(date +%Y%m%d-%H%M%S).json > /dev/null
 	@sudo bash $(SCRIPTS)/hardening-fix.sh --auto || true
 
 fix-interactive: ## Apply hardening fixes one at a time with approval (requires sudo)
+	@sudo bash $(SCRIPTS)/hardening-audit.sh --json | sudo tee $(PREFIX)/logs/audit/audit-$$(date +%Y%m%d-%H%M%S).json > /dev/null
 	@sudo bash $(SCRIPTS)/hardening-fix.sh --interactive || true
 
 fix-dry-run: ## Preview fixes without applying them (requires sudo)
+	@sudo bash $(SCRIPTS)/hardening-audit.sh --json | sudo tee $(PREFIX)/logs/audit/audit-$$(date +%Y%m%d-%H%M%S).json > /dev/null
 	@sudo bash $(SCRIPTS)/hardening-fix.sh --dry-run --auto || true
 
 fix-undo: ## Undo the most recent fix run using its restore script
