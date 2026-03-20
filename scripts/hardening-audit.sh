@@ -26,11 +26,12 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
+DIM='\033[2m'
 NC='\033[0m' # No Color
 
 # Auto-disable colors when stdout is not a terminal
 if [[ ! -t 1 ]]; then
-    RED='' GREEN='' YELLOW='' CYAN='' NC=''
+    RED='' GREEN='' YELLOW='' CYAN='' DIM='' NC=''
 fi
 
 # --- Counters ---
@@ -55,6 +56,12 @@ JSON_RESULTS="[]"
 
 # --- Current section for grouped output ---
 CURRENT_SECTION=""
+
+# --- Summary collectors for end-of-audit report ---
+declare -a FAIL_SUMMARIES=()
+declare -a WARN_ACTIONABLE=()
+declare -a WARN_OPTIONAL=()
+
 
 # --- User Scope ---
 # When run with sudo, user-scoped defaults reads must target the
@@ -207,6 +214,20 @@ report_result() {
     esac
 
     printf "  ${color}%-4s${NC}  %-44s → §%s\n" "$status" "$description" "$guide_ref"
+
+    # Show inline remediation hint for WARN/FAIL
+    if [[ -n "$remediation" && ("$status" == "WARN" || "$status" == "FAIL") ]]; then
+        printf "        ${CYAN}↳ %s${NC}\n" "$remediation"
+    fi
+
+    # Collect for end-of-audit summary
+    if [[ "$status" == "FAIL" && -n "$remediation" ]]; then
+        FAIL_SUMMARIES+=("$description|$remediation")
+    elif [[ "$status" == "WARN" && -n "$remediation" ]]; then
+        WARN_ACTIONABLE+=("$description|$remediation")
+    elif [[ "$status" == "WARN" ]]; then
+        WARN_OPTIONAL+=("$description")
+    fi
 }
 
 # --- Check Runner ---
@@ -375,8 +396,7 @@ check_password_policy() {
 
     if [[ -z "$policy_xml" || "$policy_xml" == *"No account policies"* ]]; then
         report_result "$id" "Login Security" \
-            "No password policy configured (no minimum length or lockout)" "WARN" "2.6" \
-            "Set policy: see §2.6.1 in hardening guide"
+            "No password policy configured (no minimum length or lockout)" "WARN" "2.6"
         return
     fi
 
@@ -395,16 +415,13 @@ check_password_policy() {
             "Password policy active (minimum length + account lockout)" "PASS" "2.6"
     elif $has_length; then
         report_result "$id" "Login Security" \
-            "Password policy has minimum length but no account lockout" "WARN" "2.6" \
-            "Add account lockout: see §2.6.1"
+            "Password policy has minimum length but no account lockout" "WARN" "2.6"
     elif $has_lockout; then
         report_result "$id" "Login Security" \
-            "Password policy has account lockout but no minimum length" "WARN" "2.6" \
-            "Add minimum length: see §2.6.1"
+            "Password policy has account lockout but no minimum length" "WARN" "2.6"
     else
         report_result "$id" "Login Security" \
-            "Password policy exists but lacks length and lockout rules" "WARN" "2.6" \
-            "See §2.6.1 for recommended policy"
+            "Password policy exists but lacks length and lockout rules" "WARN" "2.6"
     fi
 }
 
@@ -498,8 +515,7 @@ check_startup_security() {
         if echo "$output" | grep -q "Yes"; then
             report_result "$id" "Startup Security" "Firmware password is set" "PASS" "2.9"
         else
-            report_result "$id" "Startup Security" "No firmware password set (Intel)" "WARN" "2.9" \
-                "Set firmware password via Recovery Mode > Startup Security Utility"
+            report_result "$id" "Startup Security" "No firmware password set (Intel)" "WARN" "2.9"
         fi
     fi
 }
@@ -563,8 +579,7 @@ check_profiles() {
     else
         local count
         count=$(echo "$output" | grep -c "profileIdentifier" 2>/dev/null) || count=0
-        report_result "$id" "Configuration Profiles" "${count} profile(s) installed" "WARN" "2.10" \
-            "Review: profiles list — remove unauthorized profiles with: sudo profiles remove -identifier <id>"
+        report_result "$id" "Configuration Profiles" "${count} profile(s) installed" "WARN" "2.10"
     fi
 }
 
@@ -598,8 +613,7 @@ check_colima_running() {
     if ! command -v colima &>/dev/null; then
         if docker info &>/dev/null; then
             report_result "$id" "Container Runtime" \
-                "Docker available but Colima not installed (non-standard runtime)" "WARN" "4.1" \
-                "Install Colima (recommended per hardening guide): brew install colima"
+                "Docker available but Colima not installed (non-standard runtime)" "WARN" "4.1"
         else
             report_result "$id" "Container Runtime" \
                 "Colima not installed" "SKIP" "4.1" \
@@ -610,8 +624,7 @@ check_colima_running() {
 
     if ! colima status &>/dev/null; then
         report_result "$id" "Container Runtime" \
-            "Colima is installed but not running" "WARN" "4.1" \
-            "Start Colima: colima start"
+            "Colima is installed but not running" "WARN" "4.1"
         return
     fi
 
@@ -749,8 +762,7 @@ check_colima_mounts() {
     local mounts
     mounts=$(docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
     if echo "$mounts" | grep -qE '"/Users/|"/home/|"/root"'; then
-        report_result "$id" "Container Security" "Home directory mounted in container" "WARN" "4.3" \
-            "Remove home directory mount — use named volumes instead"
+        report_result "$id" "Container Security" "Home directory mounted in container" "WARN" "4.3"
     else
         report_result "$id" "Container Security" "No home directory mounts" "PASS" "4.3"
     fi
@@ -975,8 +987,7 @@ check_n8n_webhook() {
     elif [[ "$http_code" == "404" || "$http_code" == "401" || "$http_code" == "403" ]]; then
         report_result "$id" "n8n Platform" "Webhook test endpoint not openly accessible" "PASS" "5.5"
     else
-        report_result "$id" "n8n Platform" "Webhook test path returned HTTP ${http_code}" "WARN" "5.5" \
-            "Use production webhook URLs, not test URLs — see §5.5"
+        report_result "$id" "n8n Platform" "Webhook test path returned HTTP ${http_code}" "WARN" "5.5"
     fi
 }
 
@@ -1119,8 +1130,7 @@ check_listeners_baseline() {
     else
         local count
         count=$(echo "$bad_listeners" | wc -l | tr -d ' ')
-        report_result "$id" "Listening Services" "${count} service(s) on 0.0.0.0" "WARN" "3.6" \
-            "Review: sudo lsof -iTCP -sTCP:LISTEN -P -n — bind services to 127.0.0.1"
+        report_result "$id" "Listening Services" "${count} service(s) on 0.0.0.0" "WARN" "3.6"
     fi
 }
 
@@ -1324,8 +1334,7 @@ check_config_profiles() {
     else
         local count
         count=$(echo "$profiles" | grep -c "attribute" 2>/dev/null) || count=0
-        report_result "$id" "Data Security" "${count} configuration profile(s) installed" "WARN" "7.10" \
-            "Review: profiles list — verify all profiles are expected"
+        report_result "$id" "Data Security" "${count} configuration profile(s) installed" "WARN" "7.10"
     fi
 }
 
@@ -1338,8 +1347,7 @@ check_santa() {
         mode=$(santactl status 2>/dev/null | grep -i "mode" | head -1) || true
         report_result "$id" "IDS Tools" "Santa installed (${mode:-status unknown})" "PASS" "8.1"
     else
-        report_result "$id" "IDS Tools" "Santa not installed" "WARN" "8.1" \
-            "Install: brew install santa — see §8.1"
+        report_result "$id" "IDS Tools" "Santa not installed" "WARN" "8.1"
     fi
 }
 
@@ -1348,11 +1356,9 @@ check_blockblock() {
     if pgrep -x BlockBlock &>/dev/null || pgrep -x "BlockBlock Helper" &>/dev/null; then
         report_result "$id" "IDS Tools" "BlockBlock is running" "PASS" "8.1"
     elif [[ -d "/Applications/BlockBlock Helper.app" ]] || [[ -d "/Library/Objective-See/BlockBlock" ]]; then
-        report_result "$id" "IDS Tools" "BlockBlock installed but not running" "WARN" "8.1" \
-            "Start BlockBlock from Applications"
+        report_result "$id" "IDS Tools" "BlockBlock installed but not running" "WARN" "8.1"
     else
-        report_result "$id" "IDS Tools" "BlockBlock not installed" "WARN" "8.1" \
-            "Install from objective-see.org — see §8.1"
+        report_result "$id" "IDS Tools" "BlockBlock not installed" "WARN" "8.1"
     fi
 }
 
@@ -1361,11 +1367,9 @@ check_lulu() {
     if pgrep -x LuLu &>/dev/null || pgrep -f "com.objective-see.lulu" &>/dev/null; then
         report_result "$id" "IDS Tools" "LuLu is running" "PASS" "8.1"
     elif [[ -d "/Applications/LuLu.app" ]] || [[ -d "/Library/Objective-See/LuLu" ]]; then
-        report_result "$id" "IDS Tools" "LuLu installed but not running" "WARN" "8.1" \
-            "Start LuLu from Applications or brew install --cask lulu"
+        report_result "$id" "IDS Tools" "LuLu installed but not running" "WARN" "8.1"
     else
-        report_result "$id" "IDS Tools" "LuLu not installed" "WARN" "8.1" \
-            "Install: brew install --cask lulu — see §8.1"
+        report_result "$id" "IDS Tools" "LuLu not installed" "WARN" "8.1"
     fi
 }
 
@@ -1374,8 +1378,7 @@ check_clamav() {
     if command -v clamscan &>/dev/null; then
         report_result "$id" "IDS Tools" "ClamAV is installed" "PASS" "8.1"
     else
-        report_result "$id" "IDS Tools" "ClamAV not installed" "WARN" "8.1" \
-            "Install: brew install clamav — see §8.1"
+        report_result "$id" "IDS Tools" "ClamAV not installed" "WARN" "8.1"
     fi
 }
 
@@ -1425,8 +1428,7 @@ check_persistence_baseline() {
     if [[ -f "$baseline_dir/launchdaemons.txt" ]]; then
         report_result "$id" "Persistence" "Persistence baseline exists" "PASS" "8.2"
     else
-        report_result "$id" "Persistence" "No persistence baseline found" "WARN" "8.2" \
-            "Create baseline after hardening — see §8.2"
+        report_result "$id" "Persistence" "No persistence baseline found" "WARN" "8.2"
     fi
 }
 
@@ -1439,8 +1441,7 @@ check_workflow_baseline() {
     if [[ -f "$baseline_dir/workflow-manifest.sha256" ]]; then
         report_result "$id" "Workflow Integrity" "Workflow baseline exists" "PASS" "8.3"
     else
-        report_result "$id" "Workflow Integrity" "No workflow baseline found" "WARN" "8.3" \
-            "Export workflows and create baseline — see §8.3"
+        report_result "$id" "Workflow Integrity" "No workflow baseline found" "WARN" "8.3"
     fi
 }
 
@@ -1454,8 +1455,7 @@ check_listener_baseline() {
     else
         local count
         count=$(echo "$listeners" | wc -l | tr -d ' ')
-        report_result "$id" "Network" "${count} TCP listener(s) — review for unexpected services" "WARN" "8.2" \
-            "Compare against expected services for your deployment path"
+        report_result "$id" "Network" "${count} TCP listener(s) — review for unexpected services" "WARN" "8.2"
     fi
 }
 
@@ -1468,8 +1468,7 @@ check_cert_baseline() {
     if [[ -f "$baseline_dir/cert-trust-store.txt" ]]; then
         report_result "$id" "Certificates" "Certificate trust store baseline exists" "PASS" "8.7"
     else
-        report_result "$id" "Certificates" "No certificate baseline found" "WARN" "8.7" \
-            "Create certificate trust store baseline — see §8.7"
+        report_result "$id" "Certificates" "No certificate baseline found" "WARN" "8.7"
     fi
 }
 
@@ -1508,8 +1507,7 @@ check_canary() {
     if $canary_found; then
         report_result "$id" "Canary" "Canary files are in place" "PASS" "8.5"
     else
-        report_result "$id" "Canary" "No canary files detected" "WARN" "8.5" \
-            "Deploy canary files for independent compromise detection — see §8.5"
+        report_result "$id" "Canary" "No canary files detected" "WARN" "8.5"
     fi
 }
 
@@ -1579,11 +1577,9 @@ check_find_my_mac() {
     if [[ "$fmm_enabled" == "1" ]]; then
         report_result "$id" "Physical" "Find My Mac is enabled" "PASS" "9.5"
     elif [[ -z "$fmm_enabled" ]]; then
-        report_result "$id" "Physical" "Find My Mac status could not be determined" "WARN" "9.5" \
-            "Enable: System Settings > Apple ID > iCloud > Find My Mac"
+        report_result "$id" "Physical" "Find My Mac status could not be determined" "WARN" "9.5"
     else
-        report_result "$id" "Physical" "Find My Mac is not enabled" "WARN" "9.5" \
-            "Enable: System Settings > Apple ID > iCloud > Find My Mac"
+        report_result "$id" "Physical" "Find My Mac is not enabled" "WARN" "9.5"
     fi
 }
 
@@ -1600,16 +1596,14 @@ check_usb() {
             has_secure_enclave=$(sysctl -n hw.optional.arm64 2>/dev/null | grep -q "1" && echo "yes" || echo "")
         fi
         if [[ -n "$has_secure_enclave" ]]; then
-            report_result "$id" "Physical" "USB accessory security policy not configured" "WARN" "9.5" \
-                "Configure: System Settings > Privacy & Security > Allow accessories to connect"
+            report_result "$id" "Physical" "USB accessory security policy not configured" "WARN" "9.5"
         else
             report_result "$id" "Physical" "USB accessory security not available (requires T2 or Apple Silicon)" "SKIP" "9.5"
         fi
     elif [[ "$policy" -le 2 ]]; then
         report_result "$id" "Physical" "USB accessory security is configured (policy: $policy)" "PASS" "9.5"
     else
-        report_result "$id" "Physical" "USB accessory security is set to permissive (policy: $policy)" "WARN" "9.5" \
-            "Restrict to 'Ask for new accessories' — see §9.5"
+        report_result "$id" "Physical" "USB accessory security is set to permissive (policy: $policy)" "WARN" "9.5"
     fi
 }
 
@@ -1634,8 +1628,7 @@ check_notification_config() {
     if [[ -f "$conf" ]]; then
         report_result "$id" "Infrastructure" "Notification configuration exists" "PASS" "10.2"
     else
-        report_result "$id" "Infrastructure" "Notification configuration not found" "WARN" "10.2" \
-            "Create notification config at $conf — see §10.2"
+        report_result "$id" "Infrastructure" "Notification configuration not found" "WARN" "10.2"
     fi
 }
 
@@ -2005,8 +1998,7 @@ check_script_integrity() {
 
     if [[ ! -f "$hash_file" ]]; then
         report_result "$id" "Operational" \
-            "No script integrity baseline found" "WARN" "10.1" \
-            "Create baseline: shasum -a 256 scripts/hardening-audit.sh scripts/hardening-fix.sh > $hash_file"
+            "No script integrity baseline found" "WARN" "10.1"
         return
     fi
 
@@ -2251,10 +2243,46 @@ main() {
             printf " | ${CYAN}%d SKIP${NC}" "$SKIP_COUNT"
         fi
         echo ""
-        if [[ $FAIL_COUNT -gt 0 ]]; then
-            printf "  Action required: Fix %d FAIL item(s) (see referenced sections)\n" "$FAIL_COUNT"
+
+        if [[ $FAIL_COUNT -eq 0 && $WARN_COUNT -eq 0 ]]; then
+            printf "  ${GREEN}All checks passed.${NC}\n"
+        elif [[ $FAIL_COUNT -eq 0 ]]; then
+            printf "  ${GREEN}No critical issues.${NC} %d optional improvement(s) below.\n" "$WARN_COUNT"
+        else
+            printf "  ${RED}Action required:${NC} Fix %d FAIL item(s).\n" "$FAIL_COUNT"
         fi
         echo "================================================================"
+
+        # --- End-of-audit summary ---
+        if [[ ${#FAIL_SUMMARIES[@]} -gt 0 ]]; then
+            echo ""
+            printf "  ${RED}Fix these (%d):${NC}\n" "${#FAIL_SUMMARIES[@]}"
+            for entry in "${FAIL_SUMMARIES[@]}"; do
+                local desc="${entry%%|*}"
+                local fix="${entry#*|}"
+                printf "    • %s\n" "$desc"
+                printf "      ${DIM}%s${NC}\n" "$fix"
+            done
+        fi
+
+        if [[ ${#WARN_ACTIONABLE[@]} -gt 0 ]]; then
+            echo ""
+            printf "  ${YELLOW}Recommended (%d):${NC}\n" "${#WARN_ACTIONABLE[@]}"
+            for entry in "${WARN_ACTIONABLE[@]}"; do
+                local desc="${entry%%|*}"
+                local fix="${entry#*|}"
+                printf "    • %s\n" "$desc"
+                printf "      ${DIM}%s${NC}\n" "$fix"
+            done
+        fi
+
+        if [[ ${#WARN_OPTIONAL[@]} -gt 0 ]]; then
+            echo ""
+            printf "  Optional (%d):\n" "${#WARN_OPTIONAL[@]}"
+            for entry in "${WARN_OPTIONAL[@]}"; do
+                printf "    • %s\n" "$entry"
+            done
+        fi
     fi
 
     # --- Drift Comparison ---
