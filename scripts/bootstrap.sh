@@ -301,7 +301,7 @@ CONF
 generate_sample_json() {
     printf "\n${BOLD}[7/8] Sample Audit JSON${NC}\n"
 
-    local sample="/opt/n8n/logs/audit/audit-sample.json"
+    local sample="/opt/n8n/logs/audit/sample-audit.json"
     if [[ -f "$sample" ]]; then
         report OK "Sample audit JSON exists"
     elif [[ "$CHECK_ONLY" == true ]]; then
@@ -491,14 +491,16 @@ main() {
 
     if [[ "$CHECK_ONLY" != true ]]; then
         printf "\n${GREEN}Bootstrap complete. Next steps:${NC}\n"
-        echo "  1. Test notify:  /opt/n8n/scripts/audit-notify.sh --log-dir /opt/n8n/logs/audit"
-        echo "  2. Test fix:     /opt/n8n/scripts/hardening-fix.sh --dry-run --auto --audit-file /opt/n8n/logs/audit/audit-sample.json"
-        echo "  3. Run audit:    sudo /opt/n8n/scripts/hardening-audit.sh"
-        echo "  4. Run fix:      sudo /opt/n8n/scripts/hardening-fix.sh --auto"
-        echo "  5. Enable cron:  sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist"
+        echo "  1. Run audit:    make audit"
+        echo "  2. Save results: make audit-save"
+        echo "  3. Apply fixes:  make fix-auto"
+        echo "  4. Verify:       make verify"
+        echo "  5. All commands: make help"
         echo ""
-        echo "  Note: sudo auto-detects Homebrew bash 5.x — no manual PATH needed."
-        echo "  Add --debug to any script for bash trace output."
+        echo "  Optional:"
+        echo "  - Deploy n8n:    make setup-gateway"
+        echo "  - Shell aliases: make shellrc"
+        echo "  - Enable cron:   sudo launchctl bootstrap system /Library/LaunchDaemons/com.openclaw.audit-cron.plist"
     fi
 }
 

@@ -7,7 +7,7 @@ COMPOSE := $(SCRIPTS)/templates/docker-compose.yml
 PREFIX := /opt/n8n
 OPENCLAW_DIR := $(HOME)/.openclaw
 
-.PHONY: install setup-gateway audit fix fix-auto verify uninstall shellrc help
+.PHONY: install setup-gateway audit audit-save fix fix-auto verify uninstall shellrc help
 
 help: ## Show available targets
 	@grep -E '^[a-z_-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -21,6 +21,10 @@ setup-gateway: ## Start Colima, deploy n8n container, configure secrets
 
 audit: ## Run security audit (requires sudo)
 	sudo bash $(SCRIPTS)/hardening-audit.sh
+
+audit-save: ## Save audit results as JSON for the fix script (requires sudo)
+	@sudo bash $(SCRIPTS)/hardening-audit.sh --json | sudo tee $(PREFIX)/logs/audit/audit-$$(date +%Y%m%d-%H%M%S).json > /dev/null
+	@echo "Audit saved to $(PREFIX)/logs/audit/"
 
 fix: ## Apply hardening fixes interactively (requires sudo)
 	sudo bash $(SCRIPTS)/hardening-fix.sh --interactive
@@ -45,7 +49,7 @@ verify: ## Check that all expected artifacts are present
 	@for f in hardening-audit.sh hardening-fix.sh audit-notify.sh audit-cron.sh; do \
 		[ -f "$(PREFIX)/scripts/$$f" ] && printf "  OK  %s\n" "$(PREFIX)/scripts/$$f" || printf "  MISSING  %s\n" "$(PREFIX)/scripts/$$f"; \
 	done
-	@[ -f "$(PREFIX)/etc/notify.conf" ] && echo "  OK  $(PREFIX)/etc/notify.conf" || echo "  MISSING  notify.conf"
+	@sudo test -f "$(PREFIX)/etc/notify.conf" && echo "  OK  $(PREFIX)/etc/notify.conf" || echo "  MISSING  notify.conf"
 	@[ -d "$(PREFIX)" ] && echo "  OK  $(PREFIX)/ exists" || echo "  MISSING  $(PREFIX)/"
 	@colima status 2>/dev/null && echo "  OK  Colima running" || echo "  DOWN  Colima not running"
 	@docker ps 2>/dev/null | grep -q n8n && echo "  OK  n8n container running" || echo "  DOWN  n8n container not running"
