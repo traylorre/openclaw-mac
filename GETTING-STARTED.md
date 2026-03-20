@@ -237,11 +237,6 @@ SKIP results for n8n, Docker, and Chromium are expected if those tools
 are not installed. They will be checked automatically when you install
 them later.
 
-> **Note:** If any checks report FAIL, `make audit` will show
-> `make: *** [audit] Error 1` at the end. This is expected — the
-> audit script returns a non-zero exit code when problems are found.
-> The audit ran successfully; the "error" means there are items to fix.
-
 ---
 
 ## Step 6: Save Audit Results

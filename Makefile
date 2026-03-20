@@ -20,17 +20,17 @@ setup-gateway: ## Start Colima, deploy n8n container, configure secrets
 	bash $(SCRIPTS)/gateway-setup.sh
 
 audit: ## Run security audit (requires sudo)
-	sudo bash $(SCRIPTS)/hardening-audit.sh
+	-@sudo bash $(SCRIPTS)/hardening-audit.sh
 
 audit-save: ## Save audit results as JSON for the fix script (requires sudo)
 	@sudo bash $(SCRIPTS)/hardening-audit.sh --json | sudo tee $(PREFIX)/logs/audit/audit-$$(date +%Y%m%d-%H%M%S).json > /dev/null
 	@echo "Audit saved to $(PREFIX)/logs/audit/"
 
 fix: ## Apply hardening fixes interactively (requires sudo)
-	sudo bash $(SCRIPTS)/hardening-fix.sh --interactive
+	-@sudo bash $(SCRIPTS)/hardening-fix.sh --interactive
 
 fix-auto: ## Apply safe hardening fixes without prompts (requires sudo)
-	sudo bash $(SCRIPTS)/hardening-fix.sh --auto
+	-@sudo bash $(SCRIPTS)/hardening-fix.sh --auto
 
 shellrc: ## Set up openclaw aliases in ~/.openclaw/shellrc
 	@mkdir -p $(OPENCLAW_DIR)
