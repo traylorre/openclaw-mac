@@ -148,7 +148,9 @@ print_section_header() {
 }
 
 # --- Result Reporting ---
-# Usage: report_result ID SECTION DESCRIPTION STATUS GUIDE_REF [REMEDIATION]
+# Usage: report_result ID SECTION DESCRIPTION STATUS GUIDE_REF [REMEDIATION] [BROWSER] [PRIORITY]
+# PRIORITY: "recommended" = actionable WARN shown in Recommended summary
+#           "" (default)  = informational WARN shown in Optional summary
 report_result() {
     local id="$1"
     local section="$2"
@@ -157,6 +159,7 @@ report_result() {
     local guide_ref="$5"
     local remediation="${6:-}"
     local browser="${7:-}"  # optional: browser display name for CHK-BROWSER-* checks
+    local priority="${8:-}" # optional: "recommended" for actionable WARNs
 
     # Filter by section if requested
     if [[ -n "$FILTER_SECTION" && "$section" != "$FILTER_SECTION" ]]; then
@@ -223,10 +226,10 @@ report_result() {
     # Collect for end-of-audit summary
     if [[ "$status" == "FAIL" && -n "$remediation" ]]; then
         FAIL_SUMMARIES+=("$description|$remediation")
-    elif [[ "$status" == "WARN" && -n "$remediation" ]]; then
-        WARN_ACTIONABLE+=("$description|$remediation")
+    elif [[ "$status" == "WARN" && "$priority" == "recommended" ]]; then
+        WARN_ACTIONABLE+=("$description|${remediation:-See §${guide_ref}}")
     elif [[ "$status" == "WARN" ]]; then
-        WARN_OPTIONAL+=("$description")
+        WARN_OPTIONAL+=("$description|${remediation:-}")
     fi
 }
 
@@ -396,7 +399,8 @@ check_password_policy() {
 
     if [[ -z "$policy_xml" || "$policy_xml" == *"No account policies"* ]]; then
         report_result "$id" "Login Security" \
-            "No password policy configured (no minimum length or lockout)" "WARN" "2.6"
+            "No password policy configured (no minimum length or lockout)" "WARN" "2.6" \
+            "Requires MDM or manual pwpolicy configuration"
         return
     fi
 
@@ -415,13 +419,16 @@ check_password_policy() {
             "Password policy active (minimum length + account lockout)" "PASS" "2.6"
     elif $has_length; then
         report_result "$id" "Login Security" \
-            "Password policy has minimum length but no account lockout" "WARN" "2.6"
+            "Password policy has minimum length but no account lockout" "WARN" "2.6" \
+            "Add lockout via MDM or pwpolicy"
     elif $has_lockout; then
         report_result "$id" "Login Security" \
-            "Password policy has account lockout but no minimum length" "WARN" "2.6"
+            "Password policy has account lockout but no minimum length" "WARN" "2.6" \
+            "Add minimum length via MDM or pwpolicy"
     else
         report_result "$id" "Login Security" \
-            "Password policy exists but lacks length and lockout rules" "WARN" "2.6"
+            "Password policy exists but lacks length and lockout rules" "WARN" "2.6" \
+            "Requires MDM or manual pwpolicy configuration"
     fi
 }
 
@@ -515,7 +522,8 @@ check_startup_security() {
         if echo "$output" | grep -q "Yes"; then
             report_result "$id" "Startup Security" "Firmware password is set" "PASS" "2.9"
         else
-            report_result "$id" "Startup Security" "No firmware password set (Intel)" "WARN" "2.9"
+            report_result "$id" "Startup Security" "No firmware password set (Intel)" "WARN" "2.9" \
+                "Requires Recovery Mode boot — see §2.9"
         fi
     fi
 }
@@ -579,7 +587,8 @@ check_profiles() {
     else
         local count
         count=$(echo "$output" | grep -c "profileIdentifier" 2>/dev/null) || count=0
-        report_result "$id" "Configuration Profiles" "${count} profile(s) installed" "WARN" "2.10"
+        report_result "$id" "Configuration Profiles" "${count} profile(s) installed" "WARN" "2.10" \
+            "Normal for unmanaged Macs — MDM profiles only"
     fi
 }
 
@@ -613,7 +622,8 @@ check_colima_running() {
     if ! command -v colima &>/dev/null; then
         if docker info &>/dev/null; then
             report_result "$id" "Container Runtime" \
-                "Docker available but Colima not installed (non-standard runtime)" "WARN" "4.1"
+                "Docker available but Colima not installed (non-standard runtime)" "WARN" "4.1" \
+                "Install: brew install colima"
         else
             report_result "$id" "Container Runtime" \
                 "Colima not installed" "SKIP" "4.1" \
@@ -624,7 +634,8 @@ check_colima_running() {
 
     if ! colima status &>/dev/null; then
         report_result "$id" "Container Runtime" \
-            "Colima is installed but not running" "WARN" "4.1"
+            "Colima is installed but not running" "WARN" "4.1" \
+            "Start with: make setup-gateway"
         return
     fi
 
@@ -762,7 +773,8 @@ check_colima_mounts() {
     local mounts
     mounts=$(docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
     if echo "$mounts" | grep -qE '"/Users/|"/home/|"/root"'; then
-        report_result "$id" "Container Security" "Home directory mounted in container" "WARN" "4.3"
+        report_result "$id" "Container Security" "Home directory mounted in container" "WARN" "4.3" \
+            "Consider using named Docker volumes instead"
     else
         report_result "$id" "Container Security" "No home directory mounts" "PASS" "4.3"
     fi
@@ -987,7 +999,8 @@ check_n8n_webhook() {
     elif [[ "$http_code" == "404" || "$http_code" == "401" || "$http_code" == "403" ]]; then
         report_result "$id" "n8n Platform" "Webhook test endpoint not openly accessible" "PASS" "5.5"
     else
-        report_result "$id" "n8n Platform" "Webhook test path returned HTTP ${http_code}" "WARN" "5.5"
+        report_result "$id" "n8n Platform" "Webhook test path returned HTTP ${http_code}" "WARN" "5.5" \
+            "Expected if n8n is running — use production URLs in deployment"
     fi
 }
 
@@ -1045,7 +1058,7 @@ check_dns_encrypted() {
             ;;
         *)
             report_result "$id" "DNS" "DNS server: ${dns_servers:-unknown}" "WARN" "3.2" \
-                "Configure encrypted DNS via Quad9 DoH profile"
+                "Configure encrypted DNS via Quad9 DoH profile" "" "recommended"
             ;;
     esac
 }
@@ -1069,7 +1082,8 @@ check_outbound_filter() {
         report_result "$id" "Outbound Filtering" "Little Snitch is running" "PASS" "3.3"
         return
     fi
-    report_result "$id" "Outbound Filtering" "No outbound filtering detected" "WARN" "3.3"
+    report_result "$id" "Outbound Filtering" "No outbound filtering detected" "WARN" "3.3" \
+        "Install LuLu or configure pf rules — see §3.3"
 }
 
 check_bluetooth() {
@@ -1129,7 +1143,8 @@ check_listeners_baseline() {
     else
         local count
         count=$(echo "$bad_listeners" | wc -l | tr -d ' ')
-        report_result "$id" "Listening Services" "${count} service(s) on 0.0.0.0" "WARN" "3.6"
+        report_result "$id" "Listening Services" "${count} service(s) on 0.0.0.0" "WARN" "3.6" \
+            "Review with: sudo lsof -iTCP -sTCP:LISTEN -P -n"
     fi
 }
 
@@ -1333,7 +1348,8 @@ check_config_profiles() {
     else
         local count
         count=$(echo "$profiles" | grep -c "attribute" 2>/dev/null) || count=0
-        report_result "$id" "Data Security" "${count} configuration profile(s) installed" "WARN" "7.10"
+        report_result "$id" "Data Security" "${count} configuration profile(s) installed" "WARN" "7.10" \
+            "Normal for unmanaged Macs"
     fi
 }
 
@@ -1346,7 +1362,8 @@ check_santa() {
         mode=$(santactl status 2>/dev/null | grep -i "mode" | head -1) || true
         report_result "$id" "IDS Tools" "Santa installed (${mode:-status unknown})" "PASS" "8.1"
     else
-        report_result "$id" "IDS Tools" "Santa not installed" "WARN" "8.1"
+        report_result "$id" "IDS Tools" "Santa not installed" "WARN" "8.1" \
+            "Binary allowlisting tool: brew install santa"
     fi
 }
 
@@ -1355,9 +1372,11 @@ check_blockblock() {
     if pgrep -x BlockBlock &>/dev/null || pgrep -x "BlockBlock Helper" &>/dev/null; then
         report_result "$id" "IDS Tools" "BlockBlock is running" "PASS" "8.1"
     elif [[ -d "/Applications/BlockBlock Helper.app" ]] || [[ -d "/Library/Objective-See/BlockBlock" ]]; then
-        report_result "$id" "IDS Tools" "BlockBlock installed but not running" "WARN" "8.1"
+        report_result "$id" "IDS Tools" "BlockBlock installed but not running" "WARN" "8.1" \
+            "Start from Applications"
     else
-        report_result "$id" "IDS Tools" "BlockBlock not installed" "WARN" "8.1"
+        report_result "$id" "IDS Tools" "BlockBlock not installed" "WARN" "8.1" \
+            "Persistence monitor: objective-see.org"
     fi
 }
 
@@ -1366,9 +1385,11 @@ check_lulu() {
     if pgrep -x LuLu &>/dev/null || pgrep -f "com.objective-see.lulu" &>/dev/null; then
         report_result "$id" "IDS Tools" "LuLu is running" "PASS" "8.1"
     elif [[ -d "/Applications/LuLu.app" ]] || [[ -d "/Library/Objective-See/LuLu" ]]; then
-        report_result "$id" "IDS Tools" "LuLu installed but not running" "WARN" "8.1"
+        report_result "$id" "IDS Tools" "LuLu installed but not running" "WARN" "8.1" \
+            "Start from Applications"
     else
-        report_result "$id" "IDS Tools" "LuLu not installed" "WARN" "8.1"
+        report_result "$id" "IDS Tools" "LuLu not installed" "WARN" "8.1" \
+            "Outbound firewall: brew install --cask lulu"
     fi
 }
 
@@ -1377,7 +1398,8 @@ check_clamav() {
     if command -v clamscan &>/dev/null; then
         report_result "$id" "IDS Tools" "ClamAV is installed" "PASS" "8.1"
     else
-        report_result "$id" "IDS Tools" "ClamAV not installed" "WARN" "8.1"
+        report_result "$id" "IDS Tools" "ClamAV not installed" "WARN" "8.1" \
+            "Antivirus scanner: brew install clamav"
     fi
 }
 
@@ -1427,7 +1449,8 @@ check_persistence_baseline() {
     if [[ -f "$baseline_dir/launchdaemons.txt" ]]; then
         report_result "$id" "Persistence" "Persistence baseline exists" "PASS" "8.2"
     else
-        report_result "$id" "Persistence" "No persistence baseline found" "WARN" "8.2"
+        report_result "$id" "Persistence" "No persistence baseline found" "WARN" "8.2" \
+            "Create after setup is complete — see §8.2"
     fi
 }
 
@@ -1440,7 +1463,8 @@ check_workflow_baseline() {
     if [[ -f "$baseline_dir/workflow-manifest.sha256" ]]; then
         report_result "$id" "Workflow Integrity" "Workflow baseline exists" "PASS" "8.3"
     else
-        report_result "$id" "Workflow Integrity" "No workflow baseline found" "WARN" "8.3"
+        report_result "$id" "Workflow Integrity" "No workflow baseline found" "WARN" "8.3" \
+            "Export n8n workflows and create baseline — see §8.3"
     fi
 }
 
@@ -1454,7 +1478,8 @@ check_listener_baseline() {
     else
         local count
         count=$(echo "$listeners" | wc -l | tr -d ' ')
-        report_result "$id" "Network" "${count} TCP listener(s) — review for unexpected services" "WARN" "8.2"
+        report_result "$id" "Network" "${count} TCP listener(s) — review for unexpected services" "WARN" "8.2" \
+            "Review with: sudo lsof -iTCP -sTCP:LISTEN -P -n"
     fi
 }
 
@@ -1467,7 +1492,8 @@ check_cert_baseline() {
     if [[ -f "$baseline_dir/cert-trust-store.txt" ]]; then
         report_result "$id" "Certificates" "Certificate trust store baseline exists" "PASS" "8.7"
     else
-        report_result "$id" "Certificates" "No certificate baseline found" "WARN" "8.7"
+        report_result "$id" "Certificates" "No certificate baseline found" "WARN" "8.7" \
+            "Create trust store baseline — see §8.7"
     fi
 }
 
@@ -1476,7 +1502,7 @@ check_icloud_keychain() {
     # iCloud Keychain detection is limited from CLI; check for iCloud-related config
     if run_as_user defaults read MobileMeAccounts 2>/dev/null | grep -q "KEYCHAIN_SYNC"; then
         report_result "$id" "Cloud Services" "iCloud Keychain sync may be enabled" "WARN" "8.6" \
-            "Disable: System Settings > Apple ID > iCloud > Keychain > OFF"
+            "Disable: System Settings > Apple ID > iCloud > Keychain > OFF" "" "recommended"
     else
         report_result "$id" "Cloud Services" "iCloud Keychain sync not detected" "PASS" "8.6"
     fi
@@ -1506,7 +1532,8 @@ check_canary() {
     if $canary_found; then
         report_result "$id" "Canary" "Canary files are in place" "PASS" "8.5"
     else
-        report_result "$id" "Canary" "No canary files detected" "WARN" "8.5"
+        report_result "$id" "Canary" "No canary files detected" "WARN" "8.5" \
+            "Advanced: deploy tripwire files — see §8.5"
     fi
 }
 
@@ -1531,7 +1558,7 @@ check_backup_configured() {
         report_result "$id" "Backup" "Backup configuration detected" "PASS" "9.3"
     else
         report_result "$id" "Backup" "No backup configuration detected" "WARN" "9.3" \
-            "Configure Time Machine or automated backup — see §9.3"
+            "Configure Time Machine or automated backup — see §9.3" "" "recommended"
     fi
 }
 
@@ -1576,9 +1603,11 @@ check_find_my_mac() {
     if [[ "$fmm_enabled" == "1" ]]; then
         report_result "$id" "Physical" "Find My Mac is enabled" "PASS" "9.5"
     elif [[ -z "$fmm_enabled" ]]; then
-        report_result "$id" "Physical" "Find My Mac status could not be determined" "WARN" "9.5"
+        report_result "$id" "Physical" "Find My Mac status could not be determined" "WARN" "9.5" \
+            "Enable: System Settings > Apple ID > iCloud > Find My Mac"
     else
-        report_result "$id" "Physical" "Find My Mac is not enabled" "WARN" "9.5"
+        report_result "$id" "Physical" "Find My Mac is not enabled" "WARN" "9.5" \
+            "Enable: System Settings > Apple ID > iCloud > Find My Mac"
     fi
 }
 
@@ -1595,14 +1624,16 @@ check_usb() {
             has_secure_enclave=$(sysctl -n hw.optional.arm64 2>/dev/null | grep -q "1" && echo "yes" || echo "")
         fi
         if [[ -n "$has_secure_enclave" ]]; then
-            report_result "$id" "Physical" "USB accessory security policy not configured" "WARN" "9.5"
+            report_result "$id" "Physical" "USB accessory security policy not configured" "WARN" "9.5" \
+                "System Settings > Privacy & Security > Allow accessories"
         else
             report_result "$id" "Physical" "USB accessory security not available (requires T2 or Apple Silicon)" "SKIP" "9.5"
         fi
     elif [[ "$policy" -le 2 ]]; then
         report_result "$id" "Physical" "USB accessory security is configured (policy: $policy)" "PASS" "9.5"
     else
-        report_result "$id" "Physical" "USB accessory security is set to permissive (policy: $policy)" "WARN" "9.5"
+        report_result "$id" "Physical" "USB accessory security is set to permissive (policy: $policy)" "WARN" "9.5" \
+            "Restrict to 'Ask for new accessories' in System Settings"
     fi
 }
 
@@ -1627,7 +1658,8 @@ check_notification_config() {
     if [[ -f "$conf" ]]; then
         report_result "$id" "Infrastructure" "Notification configuration exists" "PASS" "10.2"
     else
-        report_result "$id" "Infrastructure" "Notification configuration not found" "WARN" "10.2"
+        report_result "$id" "Infrastructure" "Notification configuration not found" "WARN" "10.2" \
+            "Run make install to create default config"
     fi
 }
 
@@ -1642,7 +1674,7 @@ check_log_dir() {
             report_result "$id" "Infrastructure" "Audit log directory exists with recent logs" "PASS" "10.4"
         else
             report_result "$id" "Infrastructure" "Audit log directory exists but no recent logs (>14 days)" "WARN" "10.4" \
-                "Verify scheduled audit is running — see §10.1"
+                "Verify scheduled audit is running — see §10.1" "" "recommended"
         fi
     elif [[ -d "$log_dir" ]]; then
         report_result "$id" "Infrastructure" "Audit log directory exists but is not writable" "FAIL" "10.4" \
@@ -1915,7 +1947,7 @@ check_browser_version() {
     if [[ "$major_version" -lt "$min_acceptable" ]]; then
         report_result "$id" "Browser Security" \
             "[${name}] Version $major_version may be outdated (expected ≥${min_acceptable})" "WARN" "2.11" \
-            "Update: brew upgrade --cask ${cask}" "$name"
+            "Update: brew upgrade --cask ${cask}" "$name" "recommended"
     else
         report_result "$id" "Browser Security" \
             "[${name}] Version $major_version ($version_str)" "PASS" "2.11" "" "$name"
@@ -1997,7 +2029,8 @@ check_script_integrity() {
 
     if [[ ! -f "$hash_file" ]]; then
         report_result "$id" "Operational" \
-            "No script integrity baseline found" "WARN" "10.1"
+            "No script integrity baseline found" "WARN" "10.1" \
+            "Checksums detect tampering — create after setup"
         return
     fi
 
@@ -2260,7 +2293,7 @@ main() {
                 local desc="${entry%%|*}"
                 local fix="${entry#*|}"
                 printf "    • %s\n" "$desc"
-                printf "      ${DIM}%s${NC}\n" "$fix"
+                printf "      ${CYAN}%s${NC}\n" "$fix"
             done
         fi
 
@@ -2271,7 +2304,7 @@ main() {
                 local desc="${entry%%|*}"
                 local fix="${entry#*|}"
                 printf "    • %s\n" "$desc"
-                printf "      ${DIM}%s${NC}\n" "$fix"
+                printf "      ${CYAN}%s${NC}\n" "$fix"
             done
         fi
 
@@ -2279,7 +2312,12 @@ main() {
             echo ""
             printf "  Optional (%d):\n" "${#WARN_OPTIONAL[@]}"
             for entry in "${WARN_OPTIONAL[@]}"; do
-                printf "    • %s\n" "$entry"
+                local desc="${entry%%|*}"
+                local fix="${entry#*|}"
+                printf "    • %s\n" "$desc"
+                if [[ -n "$fix" ]]; then
+                    printf "      ${CYAN}%s${NC}\n" "$fix"
+                fi
             done
         fi
     fi
