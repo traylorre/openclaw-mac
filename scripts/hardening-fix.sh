@@ -40,6 +40,7 @@ FIXED_COUNT=0
 SKIPPED_COUNT=0
 FAILED_COUNT=0
 NOFIX_COUNT=0
+PROMPTED_COUNT=0
 
 # --- Options ---
 MODE=""  # auto | interactive
@@ -602,6 +603,7 @@ prompt_confirm() {
     fi
 
     if [[ "$MODE" == "interactive" ]]; then
+        PROMPTED_COUNT=$((PROMPTED_COUNT + 1))
         if ! $JSON_OUTPUT; then
             printf "\n  ${YELLOW}[CONFIRMATION]${NC} %s: %s\n" "$id" "$desc"
             printf "  Apply this fix? [y/N] "
@@ -2141,8 +2143,8 @@ main() {
         if [[ $NOFIX_COUNT -gt 0 ]]; then
             printf "  %d checks have no auto-fix — see 'make audit' for details.\n" "$NOFIX_COUNT"
         fi
-        if [[ "$MODE" == "interactive" && $FIXED_COUNT -eq 0 && $FAILED_COUNT -eq 0 ]]; then
-            echo "  No interactive prompts needed — all confirmation checks already pass."
+        if [[ "$MODE" == "interactive" && $PROMPTED_COUNT -eq 0 ]]; then
+            echo "  No interactive prompts — all confirmation checks already pass."
         fi
         echo "================================================================"
 
