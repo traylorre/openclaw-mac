@@ -74,7 +74,7 @@ shellrc: ## Set up openclaw aliases in ~/.openclaw/shellrc
 
 shellrc-undo: ## Remove openclaw shell aliases
 	@rm -f $(OPENCLAW_DIR)/shellrc
-	@sed -i '' '/openclaw\/shellrc/d' ~/.zshrc ~/.bash_profile 2>/dev/null || true
+	@for f in ~/.zshrc ~/.bash_profile; do [ -f "$$f" ] && sed -i '' '/openclaw\/shellrc/d' "$$f" 2>/dev/null; done; true
 	@echo "Shell aliases removed. Restart your terminal or run: exec $$SHELL"
 
 verify: ## Check that all expected artifacts are present
@@ -108,20 +108,20 @@ uninstall: ## Remove all openclaw artifacts (keeps hardening — use restore scr
 		sudo cp $(PREFIX)/logs/audit/pre-fix-restore-*.sh $(OPENCLAW_DIR)/restore-scripts/; \
 		echo "  Preserved restore scripts in $(OPENCLAW_DIR)/restore-scripts/"; \
 	fi
-	-docker compose -f $(COMPOSE) down -v 2>/dev/null
+	@docker compose -f $(COMPOSE) down -v 2>/dev/null || true
 	@echo "  Removed Docker containers and volumes"
-	-colima stop 2>/dev/null
-	-colima delete --force 2>/dev/null
+	@colima stop 2>/dev/null || true
+	@colima delete --force 2>/dev/null || true
 	@echo "  Removed Colima VM"
-	-sudo launchctl bootout system/com.openclaw.audit-cron 2>/dev/null
-	-sudo rm -f /Library/LaunchDaemons/com.openclaw.audit-cron.plist
+	@sudo launchctl bootout system/com.openclaw.audit-cron 2>/dev/null || true
+	@sudo rm -f /Library/LaunchDaemons/com.openclaw.audit-cron.plist
 	@echo "  Removed launchd plist"
-	-security delete-generic-password -s n8n-gateway-bearer 2>/dev/null
+	@security delete-generic-password -s n8n-gateway-bearer >/dev/null 2>&1 || true
 	@echo "  Removed keychain entry"
-	-sudo rm -rf $(PREFIX)
+	@sudo rm -rf $(PREFIX)
 	@echo "  Removed $(PREFIX)/"
-	-rm -f $(OPENCLAW_DIR)/shellrc
-	-sed -i '' '/openclaw\/shellrc/d' ~/.zshrc ~/.bash_profile 2>/dev/null
+	@rm -f $(OPENCLAW_DIR)/shellrc
+	@for f in ~/.zshrc ~/.bash_profile; do [ -f "$$f" ] && sed -i '' '/openclaw\/shellrc/d' "$$f" 2>/dev/null; done; true
 	@echo "  Removed shell aliases"
 	@echo ""
 	@echo "Done. Brew packages left in place (remove manually: brew bundle cleanup --file=Brewfile --force)"
