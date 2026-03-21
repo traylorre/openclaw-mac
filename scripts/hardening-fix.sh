@@ -2141,6 +2141,9 @@ main() {
         if [[ $NOFIX_COUNT -gt 0 ]]; then
             printf "  %d checks have no auto-fix — see 'make audit' for details.\n" "$NOFIX_COUNT"
         fi
+        if [[ "$MODE" == "interactive" && $FIXED_COUNT -eq 0 && $FAILED_COUNT -eq 0 ]]; then
+            echo "  No interactive prompts needed — all confirmation checks already pass."
+        fi
         echo "================================================================"
 
         # Post-fix verification
