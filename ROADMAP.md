@@ -1,7 +1,7 @@
 # Fledge: OpenClaw-Mac Roadmap
 
 Multi-agent automation platform on hardened macOS. From hello world
-to production agent pipelines in 6 milestones.
+to production agent pipelines in 5 milestones.
 
 ## Milestone 1: Gateway Live (`v0.1.0-gateway`) — DONE
 
@@ -31,46 +31,31 @@ future TEA integration.
 
 ---
 
-## Milestone 3: Lead Prospector (`v0.3.0-lead-prospector`)
+## Milestone 3: LinkedIn Automation (`v0.3.0-linkedin`)
 
-**Goal**: Working lead generation pipeline for a real client.
-OpenClaw + Apify + n8n, delivering enriched leads.
+**Goal**: Working LinkedIn presence pipeline for code19.ai.
+Hybrid approach: LinkedIn API for posting/engagement, Playwright CDP
+for feed discovery, human-operated connection requests.
 
-- [ ] Apify actor for LinkedIn/Google Maps scraping
-- [ ] n8n workflow: webhook trigger → Apify → Claude enrichment → output
-- [ ] ICP scoring with configurable verticals
-- [ ] Output to Airtable or Notion
+- [ ] Telegram bot connected to n8n via webhook/polling
+- [ ] Claude API content generation with human approval flow
+- [ ] LinkedIn Share API integration (OAuth, posting, commenting, liking)
+- [ ] Playwright CDP for feed browsing and post URN collection
+- [ ] Google Sheets activity logging and content calendar
 - [ ] Document agent authority: what credentials it holds, what it can reach
 
-**Demo**: Scored leads for a target vertical, delivered to client's
-preferred tool.
+**Demo**: Operator sends topic via Telegram, Claude drafts content,
+human approves, system posts to LinkedIn and engages with community.
 
 ---
 
-## Milestone 4: LangGraph Agent (`v0.4.0-langgraph`)
-
-**Goal**: Reimplement the pipeline in Python/LangGraph. Demonstrate
-multi-agent orchestration with production patterns.
-
-- [ ] Python CLI wrapping the audit + lead gen pipeline
-- [ ] LangGraph multi-agent workflow: Planner → Executor → Reviewer
-- [ ] Tool use: Apify, audit script, Claude as LangGraph tools
-- [ ] RAG over HARDENING.md for security-aware remediation
-- [ ] Production patterns: retry, circuit breaker, structured output
-- [ ] pytest test suite
-
-**Demo**: Same pipeline, built with LangGraph. Shows progression
-from no-code orchestration to code-first agent systems.
-
----
-
-## Milestone 5: Hybrid Memory (`v0.5.0-hybrid-memory`)
+## Milestone 4: Hybrid Memory (`v0.4.0-hybrid-memory`)
 
 **Goal**: Vector + graph memory for deeper retrieval across agents.
 
 - [ ] Qdrant vector store with Ollama embeddings
 - [ ] Mem0 memory middleware
-- [ ] Evaluate retrieval quality on real queries from M3-M4
+- [ ] Evaluate retrieval quality on real queries from M3
 - [ ] Compare vector-only vs. hybrid on multi-hop questions
 
 **Demo**: Agents recall context across sessions. Side-by-side
@@ -78,9 +63,9 @@ retrieval comparison showing where graph beats flat vector.
 
 ---
 
-## Milestone 6: Deployment Observations (`v0.6.0-observations`)
+## Milestone 5: Deployment Observations (`v0.5.0-observations`)
 
-**Goal**: Compile practitioner findings from M1-M5 into a report
+**Goal**: Compile practitioner findings from M1-M4 into a report
 suitable for NIST CAISI or working group input.
 
 - [ ] Where CIS/NIST controls failed to cover agentic risks
@@ -96,14 +81,16 @@ suitable for NIST CAISI or working group input.
 
 ```text
 M1-M3: n8n (no-code orchestration — learn agent patterns)
-M4+:   LangGraph (code-first Python — production agent systems)
 
 OpenClaw (native macOS)
   ├── n8n (Docker) — webhook routing + workflow orchestration
-  ├── Apify — web scraping (LinkedIn, Google Maps)
-  ├── Claude API — enrichment + analysis
-  ├── Qdrant (Docker) — vector memory (M5)
-  ├── Mem0 (Docker) — memory middleware (M5)
+  ├── Telegram Bot — operator chat interface
+  ├── LinkedIn API — posting, commenting, liking
+  ├── Playwright — CDP browser control for feed discovery
+  ├── Claude API — content generation + enrichment
+  ├── Google Sheets — activity logging + prospect tracking
+  ├── Qdrant (Docker) — vector memory (M4)
+  ├── Mem0 (Docker) — memory middleware (M4)
   └── hardening-audit.sh — security verification
 ```
 
