@@ -1,4 +1,7 @@
-# macOS Hardening Guide for n8n + Apify Deployment
+# macOS Hardening Guide
+
+> **Quick setup?** See [GETTING-STARTED.md](../GETTING-STARTED.md) for
+> a copy-paste walkthrough. This document is the detailed reference.
 
 <!-- markdownlint-disable MD013 -->
 
