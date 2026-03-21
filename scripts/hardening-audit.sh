@@ -1945,9 +1945,13 @@ check_browser_version() {
     local min_acceptable=$(( estimated_current - 2 ))
 
     if [[ "$major_version" -lt "$min_acceptable" ]]; then
+        local update_hint="Update: brew upgrade --cask ${cask}"
+        if ! run_as_user brew list --cask "$cask" &>/dev/null 2>&1; then
+            update_hint="Update from ${name} menu > About or re-download from vendor"
+        fi
         report_result "$id" "Browser Security" \
             "[${name}] Version $major_version may be outdated (expected ≥${min_acceptable})" "WARN" "2.11" \
-            "Update: brew upgrade --cask ${cask}" "$name" "recommended"
+            "$update_hint" "$name" "recommended"
     else
         report_result "$id" "Browser Security" \
             "[${name}] Version $major_version ($version_str)" "PASS" "2.11" "" "$name"
