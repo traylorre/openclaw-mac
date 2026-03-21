@@ -1,13 +1,14 @@
 # Fledge: OpenClaw-Mac Roadmap
 
-Multi-agent automation platform on hardened macOS. From hello world
-to production agent pipelines in 5 milestones.
+Hardened macOS deployment for OpenClaw — the self-hosted AI agent.
+From security baseline to production LinkedIn automation in 5
+milestones.
 
 ## Milestone 1: Gateway Live (`v0.1.0-gateway`) — DONE
 
-**Goal**: n8n orchestration backbone running, callable from OpenClaw.
+**Goal**: n8n orchestration backbone running, callable from CLI.
 
-- [x] n8n running in Docker on Mac Mini
+- [x] n8n running in Docker on Mac Mini via Colima
 - [x] Hello-world webhook callable from CLI
 - [x] Bearer auth gate on all webhook endpoints
 - [x] Gateway Switch node routing by `intent` field
@@ -33,33 +34,57 @@ future TEA integration.
 
 ## Milestone 3: LinkedIn Automation (`v0.3.0-linkedin`)
 
-**Goal**: Working LinkedIn presence pipeline for code19.ai.
-Hybrid approach: LinkedIn API for posting/engagement, Playwright CDP
-for feed discovery, human-operated connection requests.
+**Goal**: Deploy OpenClaw on hardened macOS and configure it for
+LinkedIn presence management. Hybrid approach: LinkedIn API for
+posting/engagement, Playwright CDP for feed discovery, human-operated
+connection requests.
 
-- [ ] Telegram bot connected to n8n via webhook/polling
-- [ ] Claude API content generation with human approval flow
-- [ ] LinkedIn Share API integration (OAuth, posting, commenting, liking)
-- [ ] Playwright CDP for feed browsing and post URN collection
-- [ ] Google Sheets activity logging and content calendar
-- [ ] Document agent authority: what credentials it holds, what it can reach
+### Deploy and configure
 
-**Demo**: Operator sends topic via Telegram, Claude drafts content,
-human approves, system posts to LinkedIn and engages with community.
+- [ ] Install OpenClaw natively (Bun/Node process, not Docker)
+- [ ] Configure multi-provider LLM: Gemini (primary), Anthropic (secondary), Ollama (embeddings/fallback)
+- [ ] Configure chat interface (Telegram or WhatsApp — built into OpenClaw)
+- [ ] Add LinkedIn Share API as n8n workflow (OAuth token held by n8n, not OpenClaw)
+- [ ] Add Playwright CDP as n8n workflow (feed browsing, post URN collection)
+- [ ] Wire n8n execution history as AI-queryable activity log via webhook
+
+### Security and trust boundaries
+
+- [ ] Add CHK-OPENCLAW-* audit checks (process binding, credential storage, workspace file integrity)
+- [ ] Add HMAC signature verification on n8n webhooks (prove caller is OpenClaw, not arbitrary localhost process)
+- [ ] Document agent authority: what credentials each trust domain holds
+- [ ] Collect trust boundary observations for TEA mapping (formalized in M5)
+- [ ] Document OAuth token lifecycle as agent credential management pattern
+- [ ] Checksum OpenClaw workspace files (SOUL.md, AGENTS.md, TOOLS.md) to detect tampering
+
+### Hardening observations
+
+- [ ] Which activities work normally with hardening in place
+- [ ] Which activities require workarounds (e.g., CDP Chrome flags)
+- [ ] Which activities are not possible under hardened deployment
+
+**Demo**: Operator messages OpenClaw via Telegram, LLM drafts
+content, human approves, n8n workflow posts to LinkedIn and engages
+with community. Agent never touches LinkedIn credentials directly.
 
 ---
 
 ## Milestone 4: Hybrid Memory (`v0.4.0-hybrid-memory`)
 
 **Goal**: Vector + graph memory for deeper retrieval across agents.
+Replaces n8n execution history logging from M3 with persistent,
+queryable memory.
 
-- [ ] Qdrant vector store with Ollama embeddings
-- [ ] Mem0 memory middleware
+- [ ] Qdrant v1.13.0 vector store (Docker via Colima)
+- [ ] Mem0 open-source mode with Ollama embeddings (no external API keys)
+- [ ] Single Qdrant instance, per-agent collections for isolation
+- [ ] Wire OpenClaw to Mem0 for cross-session context
 - [ ] Evaluate retrieval quality on real queries from M3
 - [ ] Compare vector-only vs. hybrid on multi-hop questions
 
-**Demo**: Agents recall context across sessions. Side-by-side
-retrieval comparison showing where graph beats flat vector.
+**Demo**: OpenClaw recalls past posts, engagement patterns, and
+prospect context across sessions. "What did we post about X last
+week?" works.
 
 ---
 
@@ -71,6 +96,10 @@ suitable for NIST CAISI or working group input.
 - [ ] Where CIS/NIST controls failed to cover agentic risks
 - [ ] Where Examine-passing controls failed under real use
 - [ ] OWASP ASI items that manifested vs. remained theoretical
+- [ ] Hardening-vs-functionality matrix from M3 observations
+- [ ] Formalize TEA trust boundary mapping from M3 observations (agent → orchestrator → platform)
+- [ ] Agent credential lifecycle findings (OAuth rotation, trust delegation)
+- [ ] Workspace file integrity findings (SOUL.md tampering as local prompt injection vector)
 - [ ] Publish as blog post or working group contribution
 
 **Demo**: Practitioner report grounded in deployment data.
@@ -80,19 +109,29 @@ suitable for NIST CAISI or working group input.
 ## Architecture
 
 ```text
-M1-M3: n8n (no-code orchestration — learn agent patterns)
+Operator (Telegram / WhatsApp)
+  └── OpenClaw (native Bun/Node process)
+        ├── LLM providers: Gemini (primary) / Anthropic / Ollama
+        ├── n8n (Docker) — multi-step workflow orchestration
+        │     ├── LinkedIn API — credentials held HERE, not by agent
+        │     └── Playwright — CDP feed discovery + URN capture
+        ├── Qdrant v1.13.0 (Docker) — vector memory (M4)
+        └── Mem0 (Docker) — memory middleware + Ollama embeddings (M4)
 
-OpenClaw (native macOS)
-  ├── n8n (Docker) — webhook routing + workflow orchestration
-  ├── Telegram Bot — operator chat interface
-  ├── LinkedIn API — posting, commenting, liking
-  ├── Playwright — CDP browser control for feed discovery
-  ├── Claude API — content generation + enrichment
-  ├── Google Sheets — activity logging + prospect tracking
-  ├── Qdrant (Docker) — vector memory (M4)
-  ├── Mem0 (Docker) — memory middleware (M4)
-  └── hardening-audit.sh — security verification
+Platform: openclaw-mac (this repo)
+  ├── Colima + Docker runtime
+  ├── macOS hardening (make audit, make fix)
+  └── n8n gateway (M1)
+
+Trust boundaries (TSP model):
+  Operator ──── agent (OpenClaw) ──── orchestrator (n8n) ──── platform
+  human         holds: LLM API keys   holds: LinkedIn OAuth   enforces: 84
+  approval      (Gemini/Anthropic/    cannot: act without     security
+  gate          Ollama as configured)  HMAC-signed webhook     checks
+                cannot: access         trigger from agent
+                LinkedIn creds
 ```
 
 Security baseline: [docs/HARDENING.md](docs/HARDENING.md)
 Trust gap analysis: [docs/TRUST-GAPS.md](docs/TRUST-GAPS.md)
+LinkedIn automation design: [docs/LINKEDIN-AUTOMATION-PROPOSAL.md](docs/LINKEDIN-AUTOMATION-PROPOSAL.md)
