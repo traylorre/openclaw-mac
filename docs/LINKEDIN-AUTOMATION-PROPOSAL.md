@@ -1,6 +1,6 @@
 # LinkedIn Automation Proposal
 
-**Prepared by**: OpenClaw
+**Prepared by**: OpenClaw-Mac Project
 **Date**: 2026-03-20
 **Status**: Draft for review
 
@@ -8,16 +8,19 @@
 
 ## Executive Summary
 
-This proposal outlines a hybrid approach to building a LinkedIn
-presence as an industry thought leader and community voice. Rather
-than relying entirely on browser automation (which carries account ban
-risk), we combine LinkedIn's official API for safe content operations
-with targeted browser automation only where the API has gaps.
+This proposal uses OpenClaw — an open-source, self-hosted AI agent —
+deployed on a security-hardened macOS host to manage a LinkedIn
+presence. Rather than relying entirely on browser automation (which
+carries account ban risk), we combine LinkedIn's official API for
+safe content operations with targeted browser automation only where
+the API has gaps.
 
-The result: a chat-controlled content pipeline where Claude AI drafts
-content, a human approves it, and the system posts and engages via
-LinkedIn's legitimate API. Connection requests remain human-operated
-to eliminate the highest-risk automation vector entirely.
+OpenClaw provides the chat interface (Telegram/WhatsApp) and LLM
+integration (configurable: Gemini, Anthropic, Ollama, or others).
+n8n provides workflow orchestration and holds LinkedIn credentials —
+the agent never touches them directly. A human approves all content
+before posting. Connection requests remain human-operated to
+eliminate the highest-risk automation vector entirely.
 
 ---
 
@@ -164,20 +167,19 @@ insufficient, and why the hybrid approach is necessary.
 The hybrid approach uses each tool for what it does best:
 
 ```text
-                        +--- LinkedIn API (safest available option)
-                        |    - Post content (text, images, articles)
-                        |    - Comment on posts (when you have the URN)
-                        |    - Like posts (when you have the URN)
-                        |
-  Chat --> n8n --> Claude +
-                        |
-                        +--- Playwright CDP (use sparingly for discovery)
-                             - Browse feed to discover relevant posts
-                             - Capture post URNs to feed back to the API
-                             - Observe community activity and trends
+Operator (Telegram / WhatsApp)
+  └── OpenClaw (native) — chat interface, LLM (Gemini/Anthropic/Ollama)
+        └── n8n (Docker) — workflow orchestration, holds credentials
+              ├── LinkedIn API — posting, commenting, liking
+              └── Playwright CDP — feed discovery, URN capture
 ```
 
 **Connection requests are handled by a human** (see Section 6).
+
+OpenClaw is the conversational interface — the operator messages it
+via Telegram/WhatsApp. When a complex action is needed (post to
+LinkedIn, browse the feed), OpenClaw triggers an n8n workflow via
+webhook. n8n holds the LinkedIn credentials; OpenClaw never sees them.
 
 ### Why This Is Better Than CDP-Only
 
@@ -295,9 +297,9 @@ A human can make these judgment calls naturally. Automation cannot.
 The recommended daily operation flow, designed to build the persona
 organically and safely:
 
-### Step 1: Post Great Content (API)
+### Step 1: Post Great Content (OpenClaw → n8n → LinkedIn API)
 
-Claude AI generates draft content about your industry. Topics include
+OpenClaw generates draft content about your industry via the configured LLM. Topics include
 analysis, technical breakdowns, industry news commentary, and thought
 leadership. A human reviews and approves each post via chat before the
 system publishes it through the LinkedIn API.
@@ -320,7 +322,7 @@ patterns.
 
 ### Step 4: Engage with Community (API)
 
-Using the post URNs collected in Step 3, Claude drafts thoughtful
+Using the post URNs collected in Step 3, OpenClaw drafts thoughtful
 comments and the system posts them via the LinkedIn API. Likes are also
 applied via the API. Actions are spread throughout the day with
 randomized timing.
@@ -345,95 +347,104 @@ it happens to also be the safest automation pattern.
 
 ---
 
-## 8. Keeping Claude's Content Sharp
+## 8. Keeping Content Sharp
 
-Claude AI can draft compelling general content, but a thought leader
+The LLM can draft compelling general content, but a thought leader
 persona needs specific, current knowledge about your industry that goes
 beyond what any AI model has in its training data. Generic or
 surface-level takes will damage credibility faster than not posting.
 
 ### How we address this
 
-**Content knowledge base:** Before generating posts, Claude receives
-context from a curated knowledge base that you maintain. This can be as
-simple as a shared document or folder containing:
+OpenClaw uses a file-based knowledge system. The agent's behavior,
+knowledge, and personality are defined in plain markdown files inside
+its workspace directory:
 
-- Recent developments and news in your space
-- Technical details and trends
-- Key people and organizations
-- Industry news links
-- Opinions and angles you want to promote
+- **SOUL.md** — Persona definition: "You are a [industry] thought
+  leader. Tone is analytical but accessible. Never use jargon without
+  explaining it."
+- **AGENTS.md** — Operating rules: posting frequency, content
+  boundaries, approval requirements, topics to avoid.
+- **USER.md** — Context about the operator: who they are, what they
+  care about, communication preferences.
+- **memory/*.md** — Accumulated knowledge: past posts, engagement
+  data, what worked, what didn't.
 
-**The human in the loop matters here.** Every post goes through human
-approval before publishing. The approver catches anything that sounds
-generic, gets a detail wrong, or misses the tone. Over time, Claude's
-prompts get tuned based on what gets approved vs. rejected.
+These files are version-controllable (Git) and editable with any text
+editor. Update them as you learn what content performs well.
+
+**Security note:** These files are injected into every prompt. If
+tampered with, agent behavior changes silently — this is a local
+prompt injection vector. The hardening audit checksums workspace files
+to detect unauthorized changes.
 
 **RSS and news feeds:** The system can pull from industry news sources
-to give Claude current context for each drafting session.
+to give OpenClaw current context for each drafting session.
 
 **What to expect:** Early content will need heavier editing. As the
-prompt engineering improves (based on feedback from approved/rejected
-posts), the approval rate will climb. Budget extra review time in the
-first 2-3 weeks.
+prompts get tuned (based on what gets approved vs. rejected), the
+approval rate will climb. Budget extra review time in the first 2-3
+weeks.
 
 ---
 
 ## 9. Architecture
 
-The system runs on a Mac Mini with existing infrastructure from OpenClaw.
+The system uses OpenClaw (self-hosted AI agent) on a hardened macOS
+host, with n8n for complex multi-step workflows.
 
 ```text
-Chat App <---> n8n (orchestration) <---> Claude API (content drafting)
-                     |                           |
-                     |                           v
-                     |                    LinkedIn API (posting,
-                     |                    commenting, liking)
-                     |
-                     +---> Playwright CDP (feed browsing,
-                          post URN collection)
-                                  |
-                                  v
-                            Google Sheets (activity log,
-                            prospect tracking, content calendar)
+Operator (Telegram / WhatsApp)
+  └── OpenClaw (native Bun/Node) — chat interface + agent runtime
+        ├── LLM (Gemini / Anthropic / Ollama) — content generation
+        └── n8n (Docker) — workflow orchestration, holds credentials
+              ├── LinkedIn API (posting, commenting, liking)
+              └── Playwright CDP (feed browsing, post URN collection)
 ```
 
 ### Components
 
 | Component | Purpose | Status |
 |---|---|---|
-| **n8n** | Workflow orchestration, routes chat commands to appropriate actions | Running |
-| **Chat Bot** | Human interface for approving content, issuing commands | New |
-| **Claude API** | Content generation, comment drafting, trend analysis | New |
-| **LinkedIn API** | Official posting, commenting, liking | New |
-| **Playwright** | Browser control for feed discovery | New |
-| **Google Sheets** | Activity logging, content calendar, prospect tracking | New |
+| **OpenClaw** | Chat interface (Telegram/WhatsApp), agent runtime, multi-provider LLM | New (deploy) |
+| **n8n** | Multi-step workflow orchestration (LinkedIn + Playwright pipelines) | Running (M1) |
+| **LinkedIn API** | Official posting, commenting, liking (custom n8n workflow) | New |
+| **Playwright** | Browser control for feed discovery (custom n8n workflow) | New |
 
 ### Chat Interface
 
-The system needs a chat app for the operator to communicate with the
-system. Two strong options:
+OpenClaw has built-in support for Telegram, WhatsApp, Discord, Slack,
+and 50+ other platforms. No custom bot development needed — configure
+the preferred chat platform during OpenClaw setup.
 
-**Telegram** — Free Bot API, no approval process, native n8n integration,
-rich message formatting (approve/reject buttons), no phone verification
-for the bot itself.
+**Question:** Which chat platform does your team prefer? Both Telegram
+and WhatsApp are supported out of the box.
 
-**WhatsApp** — WhatsApp Business API requires Meta business verification
-and has usage costs. However, if your team already communicates via
-WhatsApp, the familiarity may outweigh the setup friction.
+### Why Credentials Live in n8n, Not OpenClaw
 
-**Question:** Which chat platform does your team prefer? Telegram is
-faster to set up, but WhatsApp is supported if that is where your team
-already operates.
+OpenClaw's skill ecosystem has documented supply chain risks — 341
+malicious skills were found on ClawHub in January 2026. Any skill
+running inside OpenClaw can access credentials stored in its
+`.env.local` file. By isolating LinkedIn OAuth tokens in n8n's
+encrypted credential store and requiring HMAC-signed webhook calls,
+a compromised or malicious skill cannot exfiltrate LinkedIn
+credentials. The agent can request actions but cannot access the
+credentials that authorize them.
+
+### Activity Logging
+
+Activity is logged via n8n's built-in execution history — every
+workflow run records inputs, outputs, and timestamps. This provides
+a searchable activity log at no extra cost until persistent memory
+(Qdrant + Mem0) is added in a later phase.
 
 ### Network Security Note
 
-For the chat bot to receive messages, the Mac Mini either needs a
-publicly accessible URL (via Cloudflare Tunnel or similar), or the bot
-can use **polling mode** — pulling messages instead of receiving pushes.
-Polling requires no inbound ports, preserving the system's security
-posture. The trade-off is slightly higher latency (seconds, not
-milliseconds).
+For OpenClaw to receive chat messages, the host either needs a
+publicly accessible URL (via Cloudflare Tunnel or similar), or the
+chat integration can use **polling mode** — pulling messages instead
+of receiving pushes. Polling requires no inbound ports, preserving
+the system's security posture.
 
 ---
 
@@ -443,18 +454,22 @@ milliseconds).
 
 | Item | Cost | Notes |
 |---|---|---|
-| Claude API | ~$10-20/month | Content generation, comment drafting at proposed volumes |
+| LLM provider | $0-20/month | Gemini free tier likely covers LinkedIn volumes. Anthropic pay-as-you-go if needed. Ollama is free (local). |
 | LinkedIn API | Free | Self-serve "Share on LinkedIn" product |
-| Telegram Bot API | Free | Or WhatsApp Business: ~$0-15/month depending on volume |
-| Google Sheets API | Free | Within standard usage limits |
-| Playwright/Chrome | Free | Runs locally on the Mac Mini |
+| OpenClaw | Free | Open-source, self-hosted |
+| Telegram/WhatsApp | Free | Built into OpenClaw |
+| Playwright/Chrome | Free | Runs locally |
 | Mac Mini operation | Already running | Existing infrastructure |
-| **Total** | **~$10-35/month** | Primarily Claude API usage |
+| **Total** | **$0-20/month** | Depends on LLM provider choice |
 
-### One-time setup effort
+### Developer time (not included above)
 
-The system requires initial development and configuration. Phase 1
-(content pipeline) is the priority — see Section 13 for phasing.
+The system is cheap to run but requires development and maintenance:
+
+- **Phase 1 build:** ~2-3 weeks (OpenClaw deploy, LinkedIn OAuth, n8n workflows)
+- **Phase 2 build:** ~2-3 weeks (Playwright integration, DOM mapping)
+- **Content review:** ~15-30 min/day for human approval of drafts
+- **Ongoing maintenance:** LinkedIn DOM changes break Playwright periodically; OAuth renewal every 60 days
 
 ---
 
@@ -510,65 +525,137 @@ Before development begins:
 2. **LinkedIn developer app** — Create at
    <https://www.linkedin.com/developers/>, enable "Share on LinkedIn"
    product. This grants the `w_member_social` permission.
-3. **Chat account** — For the operator who will approve content and
-   manage the system. Telegram is recommended (see Section 9 for
-   discussion), but confirm your preference.
-4. **Google account** — For the Google Sheets output (activity log,
-   content calendar).
-5. **Content direction** — Key topics, tone of voice, any content
+3. **Chat platform preference** — Telegram or WhatsApp? OpenClaw
+   supports both natively. No custom bot development needed.
+4. **Content direction** — Key topics, tone of voice, any content
    boundaries or topics to avoid. What does the persona sound like?
    Provide 3-5 example posts or articles you admire for tone reference.
-6. **Target community** — Specific people, companies, hashtags, or
+5. **Target community** — Specific people, companies, hashtags, or
    groups in your space to follow and engage with.
-7. **Content knowledge base** — An initial set of links, facts, and
-   context about your industry that Claude should know. This grows over
+6. **Content knowledge base** — An initial set of links, facts, and
+   context about your industry that the LLM should know. This grows over
    time. Even a bullet-point doc is a good start.
 
 ---
 
 ## 13. Steps to Get Started
 
-### Phase 1: Content Pipeline
+### Phase 1: Deploy and Post
 
+- Deploy OpenClaw natively on hardened macOS host
+- Configure LLM provider (Gemini, Anthropic, Ollama, or combination)
+- Configure chat interface (Telegram or WhatsApp)
 - Set up LinkedIn developer app with Share on LinkedIn API access
-- Create chat bot (Telegram or WhatsApp based on preference)
-- Build n8n workflow: chat command -> Claude draft -> chat approval ->
-  LinkedIn API post
-- Set up Google Sheets activity logging
+- Build n8n workflow: OpenClaw triggers → LLM draft → approval →
+  LinkedIn API post (credentials in n8n, not OpenClaw)
 - Implement token expiry alerts (warn 7 days before the 60-day OAuth
   expiry)
 - Begin posting content (1-2 posts/day during warmup)
 
-**Effort estimate:** This is the core build. It involves OAuth
-integration, n8n workflow design, Claude prompt engineering, and
-Google Sheets setup. Expect iteration on the content prompts during
-the first weeks of operation.
+**Effort estimate:** OpenClaw runs natively as a Bun/Node process —
+no Docker needed for the agent itself. The main work is the LinkedIn
+API OAuth integration and n8n workflow design. Expect iteration on
+content prompts during the first weeks.
 
 ### Phase 2: Feed Discovery
 
-- Add Playwright for feed browsing and post URN collection
+- Add Playwright as n8n workflow for feed browsing and post URN
+  collection
 - Build n8n workflow for automated commenting via API using collected
   URNs
 - Human begins making connection requests to people who engage with
   content
 
-**Effort estimate:** Playwright integration requires building a
-lightweight browsing service and mapping LinkedIn's DOM to extract
-post URNs. LinkedIn updates their DOM periodically, so this component
-will need occasional maintenance.
+**Effort estimate:** Playwright integration requires mapping
+LinkedIn's DOM to extract post URNs. LinkedIn updates their DOM
+periodically, so this component will need occasional maintenance.
 
-### Phase 3: Optimization
+### Phase 3: Memory and Optimization
 
-- Tune Claude prompts based on content performance
+- Add Qdrant + Mem0 for persistent memory (replaces n8n execution
+  history)
+- OpenClaw recalls past posts, engagement, and prospect context
+- Tune prompts based on content performance
 - Expand engagement volume as the account establishes credibility
-- Evaluate Marketing Partner application for company page management
-  and analytics
-- Consider additional social platforms (X/Twitter, YouTube) for
-  presence expansion
 
 ---
 
-## 14. Risks and Limitations
+## 14. Trust Boundaries and Security Model
+
+The system is designed around explicit trust domains with credential
+isolation at each boundary:
+
+```text
+┌──────────────────────────────────────────────────┐
+│ OPERATOR (human)                                 │
+│ Role: content approval, connection requests      │
+│ Holds: nothing — approves via chat               │
+│ TSP: governance authority                        │
+└─────────────────────┬────────────────────────────┘
+                      │ boundary: human ↔ agent
+┌─────────────────────▼────────────────────────────┐
+│ AGENT (OpenClaw, native process)                 │
+│ Role: conversation, content drafting, routing    │
+│ Holds: LLM API keys (Gemini/Anthropic/Ollama)   │
+│ Cannot: access LinkedIn credentials              │
+│ Cannot: post without human approval              │
+│ Risk: malicious skills can read .env.local       │
+│ Mitigation: credentials isolated in n8n          │
+│ TSP: agent trust domain                          │
+│ STRIDE: spoofing (workspace file tampering),     │
+│         information disclosure (LLM key leakage) │
+└─────────────────────┬────────────────────────────┘
+                      │ boundary: agent ↔ orchestrator
+                      │ enforced by: HMAC-signed webhooks
+┌─────────────────────▼────────────────────────────┐
+│ ORCHESTRATOR (n8n, Docker container)             │
+│ Role: workflow execution, credential management  │
+│ Holds: LinkedIn OAuth token, Playwright session  │
+│ Cannot: act without HMAC-verified webhook        │
+│ Risk: CVE-2025-68949 (IP whitelist bypass, fixed │
+│        in v2.2.0, our v2.13.0 includes fix)     │
+│ TSP: orchestrator trust domain                   │
+│ STRIDE: elevation of privilege (if webhook auth  │
+│         bypassed), tampering (workflow modified)  │
+└─────────────────────┬────────────────────────────┘
+                      │ boundary: orchestrator ↔ platform
+┌─────────────────────▼────────────────────────────┐
+│ PLATFORM (openclaw-mac, hardened macOS)          │
+│ Role: OS hardening, container isolation, audit   │
+│ Enforces: 84 security checks, container caps,    │
+│   read-only filesystems, port binding            │
+│ TSP: platform trust domain                       │
+│ NIST ZTA: policy enforcement point               │
+└──────────────────────────────────────────────────┘
+```
+
+**Key design decisions:**
+
+- **Credential separation**: LinkedIn OAuth lives in n8n, not OpenClaw.
+  This prevents the 341+ malicious ClawHub skills from accessing it.
+- **HMAC webhook verification**: n8n only accepts requests signed with
+  a shared secret, proving the caller is OpenClaw.
+- **Human approval gate**: No content posts without explicit operator
+  approval via chat. This is both a quality control and a trust
+  boundary.
+- **Workspace file integrity**: SOUL.md, AGENTS.md, and TOOLS.md are
+  checksummed. Unauthorized changes are detected by the hardening
+  audit — preventing local prompt injection.
+
+**Mapping to standards:**
+
+| This system | NIST ZTA (SP 800-207) | ToIP / TEA | OWASP ASI | MITRE ATLAS |
+|---|---|---|---|---|
+| Operator | Policy Decision Point | Governance authority | Human-in-the-loop | — |
+| OpenClaw | Subject | Agent trust domain | Autonomous agent | ML supply chain |
+| n8n | Policy Enforcement Point | Orchestrator domain | Tool provider | — |
+| Platform | Enterprise infrastructure | Platform domain | Deployment env | — |
+| HMAC webhooks | Implicit trust zone boundary | TSP boundary | — | — |
+| Workspace checksums | Data integrity | — | Prompt injection defense | AML.T0051 |
+
+---
+
+## 15. Risks and Limitations
 
 ### Account risk
 
@@ -578,12 +665,47 @@ significantly reduces risk compared to pure browser automation, but it
 does not eliminate it. If the account is restricted, recovery options
 are limited.
 
-### Single point of failure
+### Reputational risk beyond bot detection
 
-The system runs on one Mac Mini. If that machine goes down, all
-automation stops until it is back online. There is no redundancy or
-automatic failover. For an early-stage system, this is acceptable.
-If reliability becomes critical, cloud hosting can be explored later.
+Account bans are not the only reputational concern:
+
+- **Content quality in niche communities:** If AI-generated content
+  gets a technical detail wrong, insiders notice. The smaller the
+  community, the faster credibility is lost. Human review is the
+  primary mitigation — but the reviewer must have domain expertise.
+- **Social discovery:** If someone in the community investigates and
+  discovers the persona is AI-operated, the reaction in a trust-based
+  B2B context could be severe. Transparency about AI assistance
+  (vs. full automation) is a strategic decision.
+- **Technical claims liability:** AI-generated statements about
+  engineering, safety standards, or competitors could have legal
+  implications in a B2B sponsorship context. All published content
+  should be reviewed for factual accuracy, not just tone.
+
+### System resilience
+
+The system runs on one Mac Mini with no redundancy. Mitigations:
+
+- **Auto-recovery:** OpenClaw and n8n can restart automatically on
+  boot via launchd services. Typical recovery time: minutes.
+- **Failure alerts:** n8n sends workflow failure notifications via
+  the same chat channel (Telegram/WhatsApp). If posting fails, the
+  operator knows immediately.
+- **Data durability:** Agent workspace files, n8n workflows, and
+  execution history should be backed up (Time Machine or Git).
+- **Cloud migration path:** If uptime becomes critical, the entire
+  stack (OpenClaw native + Docker containers) can migrate to EC2 or
+  equivalent. The trust boundary model still applies; the platform
+  domain changes from hardened macOS to hardened EC2 + VPC.
+
+### Scaling to multiple agents
+
+OpenClaw supports running multiple isolated agents inside one gateway
+process, each with its own workspace, SOUL.md, and channel bindings.
+If this project succeeds, additional agents (e.g., a second persona,
+a different platform, a prospect research agent) can be added without
+duplicating infrastructure. Qdrant supports per-agent memory
+collections for isolation.
 
 ### API stability
 
@@ -623,3 +745,39 @@ forgotten. The system will alert via chat 7 days before expiry.
 *This document is a proposal for review. Implementation details,
 timeline, and chat platform preference are subject to discussion
 and confirmation.*
+
+---
+
+## References
+
+### This project
+
+- [OpenClaw-Mac repository](https://github.com/traylorre/openclaw-mac)
+- [Getting Started guide](https://github.com/traylorre/openclaw-mac/blob/main/GETTING-STARTED.md)
+- [Hardening guide](https://github.com/traylorre/openclaw-mac/blob/main/docs/HARDENING.md)
+- [Trust gap analysis](https://github.com/traylorre/openclaw-mac/blob/main/docs/TRUST-GAPS.md)
+- [Roadmap](https://github.com/traylorre/openclaw-mac/blob/main/ROADMAP.md)
+
+### OpenClaw
+
+- [OpenClaw documentation](https://docs.openclaw.ai/)
+- [Agent workspace and SOUL.md](https://docs.openclaw.ai/concepts/agent-workspace)
+- [Multi-agent routing](https://docs.openclaw.ai/concepts/multi-agent)
+- [Model providers](https://docs.openclaw.ai/concepts/model-providers)
+
+### LinkedIn API
+
+- [LinkedIn Developer Portal](https://www.linkedin.com/developers/)
+- [Share on LinkedIn API](https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin)
+- [LinkedIn OAuth 2.0 flow](https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow)
+
+### Security frameworks
+
+- [NIST SP 800-207 Zero Trust Architecture](https://nvlpubs.nist.gov/nistpubs/specialpublications/NIST.SP.800-207.pdf)
+- [OWASP Top 10 for LLM Applications](https://owasp.org/www-project-top-10-for-large-language-model-applications/)
+- [ToIP AI & Human Trust Working Group](https://lf-toip.atlassian.net/wiki/spaces/HOME/pages/22982892/AI+Human+Trust+Working+Group)
+- [TEA: TSP-Enabled AI Agent protocols](https://github.com/trustoverip/aimwg-tsp-enabled-ai-agent-protocols)
+- [TSP specification](https://trustoverip.github.io/tswg-tsp-specification/)
+- [MITRE ATLAS — Adversarial threat landscape for AI](https://atlas.mitre.org/)
+- [Microsoft: AI Recommendation Poisoning](https://www.microsoft.com/en-us/security/blog/2026/02/10/ai-recommendation-poisoning/)
+- [CVE-2025-68949: n8n webhook IP whitelist bypass](https://github.com/n8n-io/n8n/security/advisories/GHSA-w96v-gf22-crwp)
