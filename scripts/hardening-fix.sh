@@ -1399,8 +1399,8 @@ fix_colima_running() {
         return 1
     fi
 
-    # Check if already running
-    if colima status &>/dev/null && docker info &>/dev/null; then
+    # Check if already running (use run_as_user since Colima runs as the invoking user, not root)
+    if run_as_user colima status &>/dev/null && run_as_user docker info &>/dev/null; then
         report_fix "$id" "Colima already running" "SKIPPED"
         return 0
     fi
@@ -1419,9 +1419,9 @@ fix_colima_running() {
         colima_args+=(--arch aarch64)
     fi
 
-    if run_fix_cmd "Start Colima (${hw_arch})" colima "${colima_args[@]}"; then
+    if run_fix_cmd "Start Colima (${hw_arch})" run_as_user colima "${colima_args[@]}"; then
         # Verify Docker socket is reachable after start
-        if docker info &>/dev/null; then
+        if run_as_user docker info &>/dev/null; then
             report_fix "$id" "Colima started, Docker socket reachable" "FIXED"
         else
             report_fix "$id" "Colima started but Docker socket not reachable" "FAILED" \
@@ -1891,8 +1891,23 @@ process_check() {
         return 0
     fi
 
-    # In interactive mode for SAFE checks, still apply without prompting
-    # (CONFIRMATION checks prompt inside their fix function)
+    # In interactive mode, prompt before every fix (SAFE and CONFIRMATION)
+    if [[ "$MODE" == "interactive" && "$classification" == "SAFE" ]] && ! $DRY_RUN; then
+        PROMPTED_COUNT=$((PROMPTED_COUNT + 1))
+        if ! $JSON_OUTPUT; then
+            printf "\n  ${CYAN}[SAFE]${NC} %s: %s\n" "$check_id" "$fix_desc"
+            printf "  Apply this fix? [y/N] "
+            local reply
+            read -r reply </dev/tty 2>/dev/null || reply="n"
+            case "$reply" in
+                [yY]|[yY][eE][sS]) ;;  # continue to fix
+                *)
+                    report_fix "$check_id" "$fix_desc" "SKIPPED" "User declined"
+                    return 0
+                    ;;
+            esac
+        fi
+    fi
 
     # Execute the fix function.
     # Must NOT use a subshell — counters must propagate to the parent.
