@@ -18,17 +18,19 @@ milestones.
 
 ---
 
-## Milestone 2: Security Baseline (`v0.2.0-baseline`)
+## Milestone 2: Security Baseline (`v0.2.0-baseline`) — DONE
 
 **Goal**: Establish the security posture of the deployment and
 document what self-attestation can and cannot verify.
 
-- [ ] Run mSCP compliance script for OS-level checks (~30 CIS/NIST-mapped controls)
-- [ ] Run `hardening-audit.sh --json` for full 84-check audit
-- [ ] Publish trust gap analysis: [docs/TRUST-GAPS.md](docs/TRUST-GAPS.md)
+- [x] Run mSCP compliance script for OS-level checks (NIST 800-53r5 moderate: 30 PASS / 118 FAIL — most FAILs are federal requirements not applicable to standalone Mac: smartcard, MDM, iCloud lockdown, policy banners)
+- [x] Run `hardening-audit.sh --json` for full 84-check audit (50 PASS, 0 FAIL)
+- [x] Publish trust gap analysis: [docs/TRUST-GAPS.md](docs/TRUST-GAPS.md)
 
-**Demo**: Audit passes. Trust gaps documented. Foundation laid for
-future TEA integration.
+Results: [docs/mscp-800-53r5-moderate-results.json](docs/mscp-800-53r5-moderate-results.json)
+
+**Demo**: Audit passes. Trust gaps documented. mSCP baseline run.
+Foundation laid for TEA integration in M3/M5.
 
 ---
 
