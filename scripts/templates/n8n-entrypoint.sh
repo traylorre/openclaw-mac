@@ -46,7 +46,8 @@ fi
 # Browsers are baked into the image at /home/node/node_modules/n8n-nodes-playwright/
 BROWSERS_SRC="/home/node/node_modules/n8n-nodes-playwright/dist/nodes/browsers"
 BROWSERS_DST="${PW_PKG}/dist/nodes/browsers"
-if [ -d "${BROWSERS_SRC}" ] && [ ! -d "${BROWSERS_DST}/chromium-1148" ]; then
+# Check for any chromium-* directory (version changes with Playwright updates)
+if [ -d "${BROWSERS_SRC}" ] && ! ls "${BROWSERS_DST}"/chromium-* >/dev/null 2>&1; then
   mkdir -p "${BROWSERS_DST}"
   cp -r "${BROWSERS_SRC}"/* "${BROWSERS_DST}/"
   echo "Copied pre-installed browsers into volume"

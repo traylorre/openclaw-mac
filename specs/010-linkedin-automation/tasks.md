@@ -26,11 +26,11 @@
 - [ ] T005 Configure Telegram chat channel in polling mode: `openclaw channels add telegram` with BotFather token in `~/.openclaw/openclaw.json`
 - [ ] T006 Configure OpenClaw inbound hooks in `~/.openclaw/openclaw.json`: enable hooks, set token, bind to `127.0.0.1:18789`
 - [x] T007 [P] Create `scripts/hmac-keygen.sh`: generate 32-byte hex secret via `openssl rand -hex 32`, write to OpenClaw `.env` and docker-compose environment section
-- [ ] T008 [P] Generate HMAC shared secret via `scripts/hmac-keygen.sh` and distribute to OpenClaw env (`N8N_WEBHOOK_SECRET`) and n8n env (`OPENCLAW_WEBHOOK_SECRET`)
+- [x] T008 [P] Generate HMAC shared secret via `scripts/hmac-keygen.sh` and distribute to OpenClaw env (`N8N_WEBHOOK_SECRET`) and n8n env (`OPENCLAW_WEBHOOK_SECRET`)
 - [x] T009 [P] Create `docker/n8n-playwright.Dockerfile`: extend official n8n image with Playwright system dependencies (libcairo2, fonts, X11/Wayland libs), install `n8n-nodes-playwright` community node
 - [x] T010 Update `docker-compose.yml`: use `openclaw-n8n:latest` image from custom Dockerfile, add `OPENCLAW_WEBHOOK_SECRET` env var, set `EXECUTIONS_DATA_MAX_AGE=2880` (120 days), add browser profile Docker volume mount at `/data/browser-profile`
-- [ ] T011 Build custom n8n Docker image: `docker build -t openclaw-n8n:latest -f docker/n8n-playwright.Dockerfile .` and restart n8n via `docker compose down && docker compose up -d`
-- [ ] T012 Create n8n API key via n8n web UI (Settings → API → Create API key) — required for activity-query and rate-limit-tracker workflows. Store as `N8N_API_KEY` in n8n Docker environment only (NOT in OpenClaw environment)
+- [x] T011 Build custom n8n Docker image: `docker build -t openclaw-n8n:latest -f docker/n8n-playwright.Dockerfile .` and restart n8n via `docker compose down && docker compose up -d`
+- [x] T012 Create n8n API key via n8n web UI (Settings → API → Create API key) — required for activity-query and rate-limit-tracker workflows. Store as `N8N_API_KEY` in n8n Docker environment only (NOT in OpenClaw environment)
 - [x] T013 Create `scripts/openclaw-setup.sh`: automate T001-T006 into a single idempotent setup script — install Bun, install OpenClaw, install Ollama, create agent, configure LLM providers, configure chat channel, configure inbound hooks. Follow Constitution VI (set -euo pipefail, shellcheck clean, colored output)
 
 **Checkpoint**: OpenClaw running natively with Telegram, LLM configured (including Ollama local fallback), n8n restarted with Playwright support, HMAC secret distributed, n8n API key created.
@@ -45,7 +45,7 @@
 
 - [x] T014 Create `hmac-verify` n8n sub-workflow in `workflows/hmac-verify.json`: Webhook trigger → Code node reads `OPENCLAW_WEBHOOK_SECRET` from env → validates `X-Timestamp` within 5 min → computes `HMAC-SHA256(secret, rawBody)` → compares to `X-Signature` header via `crypto.timingSafeEqual()` → returns pass/fail
 - [x] T015 Create `error-handler` n8n workflow in `workflows/error-handler.json`: Error Workflow trigger → extract workflow name, execution ID, error details → POST alert to OpenClaw inbound hook at `http://127.0.0.1:18789/hooks/agent` with Bearer token per `contracts/n8n-to-openclaw-hooks.md` Workflow Failure Alert payload
-- [ ] T016 Import foundational workflows into n8n: `docker exec -u node openclaw-n8n n8n import:workflow --separate --input=/workflows/`
+- [x] T016 Import foundational workflows into n8n: `docker exec -u node openclaw-n8n n8n import:workflow --separate --input=/workflows/`
 
 **Checkpoint**: HMAC verification sub-workflow and error handler operational. All subsequent webhook workflows can call hmac-verify as first step.
 
@@ -169,7 +169,7 @@
 
 - [ ] T062 [US3] Create `token-check` n8n workflow in `workflows/token-check.json`: Schedule trigger (daily at 09:00) → read `grant_timestamp` from Workflow Static Data → compute `days_remaining = 60 - (now - grant_timestamp)` → if ≤7 days: POST token expiry alert to OpenClaw inbound hook per `contracts/n8n-to-openclaw-hooks.md` → use `alert_sent` flag in Static Data to prevent duplicate alerts → reset flag when grant_timestamp is updated (token renewed)
 - [ ] T063 [US3] Create browser session health check in `workflows/token-check.json` (add to same daily schedule): load LinkedIn storageState → attempt to load LinkedIn feed → if login redirect detected: POST browser session alert to OpenClaw inbound hook per contract
-- [x] T064 [US3] Create `rate-limit-tracker` n8n workflow in `workflows/rate-limit-tracker.json`: Schedule trigger (hourly during active hours) → query n8n execution history API (`N8N_API_KEY` from n8n Docker env, T013) for today's linkedin-post, linkedin-comment, linkedin-like workflow executions → count successful executions → if ≥120 (80% of 150): POST rate limit warning to OpenClaw inbound hook per contract
+- [ ] T064 [US3] Create `rate-limit-tracker` n8n workflow in `workflows/rate-limit-tracker.json`: Schedule trigger (hourly during active hours) → query n8n execution history API (`N8N_API_KEY` from n8n Docker env, T013) for today's linkedin-post, linkedin-comment, linkedin-like workflow executions → count successful executions → if ≥120 (80% of 150): POST rate limit warning to OpenClaw inbound hook per contract
 - [ ] T065 [US3] Create `token-status` OpenClaw skill in `openclaw/skills/token-status/SKILL.md`: operator asks "check token status" → compute HMAC → POST to `/webhook/token-check` → present token status (days remaining, expiry date) and browser session status to operator
 - [ ] T066 [US3] Wire error-handler to all LinkedIn workflows: set Error Workflow = error-handler on `linkedin-post`, `linkedin-comment`, `linkedin-like`, `feed-discovery`, `action-runner` workflows → verify error payloads include workflow name and affected content
 
@@ -188,12 +188,12 @@
 
 **Independent Test**: Post content → ask "What did we post this week?" → verify accurate summary returned.
 
-- [x] T069 [US4] Create `activity-query` n8n workflow in `workflows/activity-query.json`: Webhook trigger at `/webhook/activity-query` → hmac-verify → query n8n REST API `GET /api/v1/executions?status=success&startedAfter={date_from}&startedBefore={date_to}` with `includeData=true` (using `N8N_API_KEY` from n8n Docker env, T013) → filter by workflow IDs (linkedin-post, linkedin-comment, linkedin-like, feed-discovery) → extract action type, timestamp, input summary (post topic / target URN), output summary (LinkedIn URL / error) → return per `contracts/openclaw-to-n8n-webhooks.md` Query Activity contract
+- [ ] T069 [US4] Create `activity-query` n8n workflow in `workflows/activity-query.json`: Webhook trigger at `/webhook/activity-query` → hmac-verify → query n8n REST API `GET /api/v1/executions?status=success&startedAfter={date_from}&startedBefore={date_to}` with `includeData=true` (using `N8N_API_KEY` from n8n Docker env, T013) → filter by workflow IDs (linkedin-post, linkedin-comment, linkedin-like, feed-discovery) → extract action type, timestamp, input summary (post topic / target URN), output summary (LinkedIn URL / error) → return per `contracts/openclaw-to-n8n-webhooks.md` Query Activity contract
 - [ ] T070 [US4] Create `linkedin-activity` OpenClaw skill in `openclaw/skills/linkedin-activity/SKILL.md`: parse operator queries ("What did we post this week?", "How active were we today?", "Show last 5 posts") → compute date range → compute HMAC → POST to `/webhook/activity-query` → format response as readable chat summary (date, action, topic, link)
 
 ### Verification
 
-- [x] T071 [US4] Activity query verification: ensure multiple posts/comments/likes have been made → ask "What did we post this week?" → verify agent returns accurate count and details → ask "How active were we today?" → verify breakdown by action type
+- [ ] T071 [US4] Activity query verification: ensure multiple posts/comments/likes have been made → ask "What did we post this week?" → verify agent returns accurate count and details → ask "How active were we today?" → verify breakdown by action type
 
 **Checkpoint**: US4 complete. Activity history queryable via chat.
 
@@ -217,12 +217,12 @@
 
 ### Manifest and Documentation
 
-- [ ] T079 [US5] Add `manifest-update` Make target to `Makefile`: compute SHA-256 checksums of all workspace files (main agent + extraction agent) → write to `~/.openclaw/manifest.json` via jq → operator runs after intentional workspace edits
+- [x] T079 [US5] Add `manifest-update` Make target to `Makefile`: compute SHA-256 checksums of all workspace files (main agent + extraction agent) → write to `~/.openclaw/manifest.json` via jq → operator runs after intentional workspace edits
 - [x] T080 [US5] Initialize manifest: run `make manifest-update` to store initial checksums for all workspace files
-- [ ] T081 [P] [US5] Create `docs/HARDENING-OBSERVATIONS.md`: document activities that work normally under hardened macOS (API posting, chat polling, Playwright browsing), workarounds needed (CDP Chrome flags for hardened browser, Docker volume permissions), activities not possible (if any discovered)
+- [x] T081 [P] [US5] Create `docs/HARDENING-OBSERVATIONS.md`: document activities that work normally under hardened macOS (API posting, chat polling, Playwright browsing), workarounds needed (CDP Chrome flags for hardened browser, Docker volume permissions), activities not possible (if any discovered)
 - [x] T082 [P] [US5] Update `docs/HARDENING.md`: add "Agent Deployment" section covering OpenClaw process hardening, credential isolation model, workspace file integrity, HMAC webhook auth, extraction agent isolation
 - [x] T083 [US5] Create `scripts/workflow-sync.sh`: `n8n export:workflow --all --separate --output=./workflows/` for export, `n8n import:workflow --separate --input=./workflows/` for import, with Docker exec wrapper
-- [ ] T084 [US5] Add `workflow-export` and `workflow-import` Make targets to `Makefile`: wrap `scripts/workflow-sync.sh` for operator convenience
+- [x] T084 [US5] Add `workflow-export` and `workflow-import` Make targets to `Makefile`: wrap `scripts/workflow-sync.sh` for operator convenience
 
 ### Verification
 
