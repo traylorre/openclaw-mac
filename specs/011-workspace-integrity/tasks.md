@@ -19,9 +19,9 @@
 
 **Purpose**: Create shared library functions and data structures used by all integrity scripts
 
-- [ ] T001 Create integrity manifest schema and helper functions in `scripts/lib/integrity.sh`: signed manifest read/write (JSON via jq), HMAC signing via macOS Keychain (`security find-generic-password`), SHA-256 checksum computation, protected file list enumeration (all categories from FR-004)
-- [ ] T002 Generate and store HMAC manifest signing key in macOS Keychain: `security add-generic-password -a "openclaw" -s "integrity-manifest-key" -w "$(openssl rand -hex 32)"` — separate from the webhook HMAC key
-- [ ] T003 Define the protected file list as a configuration array in `scripts/lib/integrity.sh` (same file as T001, sequential): workspace files (~/.openclaw/agents/*/SOUL.md, AGENTS.md, TOOLS.md, IDENTITY.md, USER.md, BOOT.md), skill files (*/skills/*/SKILL.md), orchestration files (CLAUDE.md), workflow files (workflows/*.json), scripts (scripts/*.sh), Docker config (scripts/templates/docker-compose.yml, n8n-entrypoint.sh), secrets (scripts/templates/secrets/*.txt), config files (~/.openclaw/openclaw.json, ~/.openclaw/.env, .env)
+- [x] T001 Create integrity manifest schema and helper functions in `scripts/lib/integrity.sh`: signed manifest read/write (JSON via jq), HMAC signing via macOS Keychain (`security find-generic-password`), SHA-256 checksum computation, protected file list enumeration (all categories from FR-004)
+- [x] T002 Generate and store HMAC manifest signing key in macOS Keychain: `security add-generic-password -a "openclaw" -s "integrity-manifest-key" -w "$(openssl rand -hex 32)"` — separate from the webhook HMAC key
+- [x] T003 Define the protected file list as a configuration array in `scripts/lib/integrity.sh` (same file as T001, sequential): workspace files (~/.openclaw/agents/*/SOUL.md, AGENTS.md, TOOLS.md, IDENTITY.md, USER.md, BOOT.md), skill files (*/skills/*/SKILL.md), orchestration files (CLAUDE.md), workflow files (workflows/*.json), scripts (scripts/*.sh), Docker config (scripts/templates/docker-compose.yml, n8n-entrypoint.sh), secrets (scripts/templates/secrets/*.txt), config files (~/.openclaw/openclaw.json, ~/.openclaw/.env, .env)
 
 **Checkpoint**: Shared library ready. All subsequent scripts source `scripts/lib/integrity.sh`.
 
@@ -33,9 +33,9 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 Create `scripts/integrity-deploy.sh`: verify git working tree is clean and on expected branch (FR-006), copy workspace files from repo to agent directories, compute SHA-256 checksums of all protected files (FR-017: verify manifest contains entries for all four categories — workspace, orchestration, workflow, config), record platform runtime version (`openclaw --version`), record content hashes of all installed skills in the manifest alongside file checksums (FR-028), build manifest JSON with all entries, sign manifest with Keychain HMAC key (FR-016), write to `~/.openclaw/manifest.json`
-- [ ] T005 [P] Create initial `~/.openclaw/skill-allowlist.json` with content hashes of the 5 M3 skills: linkedin-post, linkedin-engage, linkedin-activity, config-update, token-status (FR-026)
-- [ ] T006 Add `integrity-deploy` target to `Makefile`: wraps `scripts/integrity-deploy.sh`, runs as part of `make agents-setup` post-deployment step
+- [x] T004 Create `scripts/integrity-deploy.sh`: verify git working tree is clean and on expected branch (FR-006), copy workspace files from repo to agent directories, compute SHA-256 checksums of all protected files (FR-017: verify manifest contains entries for all four categories — workspace, orchestration, workflow, config), record platform runtime version (`openclaw --version`), record content hashes of all installed skills in the manifest alongside file checksums (FR-028), build manifest JSON with all entries, sign manifest with Keychain HMAC key (FR-016), write to `~/.openclaw/manifest.json`
+- [x] T005 [P] Create initial `~/.openclaw/skill-allowlist.json` with content hashes of the 5 M3 skills: linkedin-post, linkedin-engage, linkedin-activity, config-update, token-status (FR-026)
+- [x] T006 Add `integrity-deploy` target to `Makefile`: wraps `scripts/integrity-deploy.sh`, runs as part of `make agents-setup` post-deployment step
 
 **Checkpoint**: Signed integrity manifest exists with checksums of all ~40 protected files. Skill allowlist populated.
 
@@ -49,11 +49,11 @@
 
 ### Implementation
 
-- [ ] T007 [US1] Create `scripts/integrity-lock.sh`: iterate all protected files from manifest, verify no symlinks in protected directories (FR-005), set `chflags uchg` on each file (requires `sudo`), update `locked: true` and `locked_at` in manifest, re-sign manifest (FR-003)
-- [ ] T008 [US1] Create `scripts/integrity-unlock.sh`: accept `--file <path>` argument for single-file unlock, verify file is in the manifest, run `sudo chflags nouchg` on the specified file, record unlock in `~/.openclaw/lock-state.json` with timestamp and 5-minute timeout (FR-023), update manifest `locked: false`
-- [ ] T009 [P] [US1] Add symlink detection to `scripts/lib/integrity.sh`: function that scans all protected directories for symlinks, returns list of violations. Called by lock, deploy, and audit operations (FR-005)
-- [ ] T010 [US1] Add `integrity-lock` and `integrity-unlock` targets to `Makefile`: `integrity-lock` requires sudo, `integrity-unlock` requires sudo and `FILE=<path>` argument
-- [ ] T011 [US1] Extend `make agents-setup` to call `integrity-deploy` and `integrity-lock` as final steps after deploying workspace files
+- [x] T007 [US1] Create `scripts/integrity-lock.sh`: iterate all protected files from manifest, verify no symlinks in protected directories (FR-005), set `chflags uchg` on each file (requires `sudo`), update `locked: true` and `locked_at` in manifest, re-sign manifest (FR-003)
+- [x] T008 [US1] Create `scripts/integrity-unlock.sh`: accept `--file <path>` argument for single-file unlock, verify file is in the manifest, run `sudo chflags nouchg` on the specified file, record unlock in `~/.openclaw/lock-state.json` with timestamp and 5-minute timeout (FR-023), update manifest `locked: false`
+- [x] T009 [P] [US1] Add symlink detection to `scripts/lib/integrity.sh`: function that scans all protected directories for symlinks, returns list of violations. Called by lock, deploy, and audit operations (FR-005)
+- [x] T010 [US1] Add `integrity-lock` and `integrity-unlock` targets to `Makefile`: `integrity-lock` requires sudo, `integrity-unlock` requires sudo and `FILE=<path>` argument
+- [x] T011 [US1] Extend `make agents-setup` to call `integrity-deploy` and `integrity-lock` as final steps after deploying workspace files
 
 ### Verification
 
