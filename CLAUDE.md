@@ -4,6 +4,9 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
 
+- Bash 5.x (POSIX-compatible subset for scripts), JSON (manifest and config files), jq (JSON manipulation) + macOS chflags (filesystem immutability), OpenClaw v2026.3.13 (sandbox mode), fswatch (filesystem monitoring via Homebrew), launchd (process supervision), macOS Keychain (HMAC key storage) (011-workspace-integrity)
+- Filesystem — `~/.openclaw/manifest.json` (signed integrity manifest), `~/.openclaw/skill-allowlist.json`, `~/.openclaw/lock-state.json`, `~/.openclaw/integrity-monitor-heartbeat.json` (011-workspace-integrity)
+
 - JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions) + OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama) (010-linkedin-automation)
 - OpenClaw SQLite + sqlite-vec (conversation history), n8n Docker volume (execution history, credentials, workflow state), filesystem (workspace files, pending drafts JSON, manifest checksums) (010-linkedin-automation)
 
@@ -44,9 +47,10 @@ Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
 
+- 011-workspace-integrity: Added Bash 5.x (POSIX-compatible subset for scripts), JSON (manifest and config files), jq (JSON manipulation) + macOS chflags (filesystem immutability), OpenClaw v2026.3.13 (sandbox mode), fswatch (filesystem monitoring via Homebrew), launchd (process supervision), macOS Keychain (HMAC key storage)
+
 - 010-linkedin-automation: Added JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions) + OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama)
 
-- 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
 - 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
 
 <!-- MANUAL ADDITIONS START -->
