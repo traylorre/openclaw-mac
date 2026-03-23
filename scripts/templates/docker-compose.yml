@@ -17,7 +17,14 @@ services:
     #   2. docker compose pull n8n
     #   3. docker compose up -d --no-deps n8n
     #   4. Re-run hardening audit to verify
-    image: n8nio/n8n:2.13.0
+    # M3: Custom image with Playwright for LinkedIn feed discovery
+    # Original: n8nio/n8n:2.13.0
+    image: openclaw-n8n:latest
+    container_name: openclaw-n8n
+
+    # Load OPENCLAW_WEBHOOK_SECRET from repo-root .env (hmac-keygen.sh writes there)
+    env_file:
+      - ../../.env
 
     # Non-root user (FR-041) — UID 1000 matches Colima default
     user: "1000:1000"
@@ -28,11 +35,13 @@ services:
       - "127.0.0.1:5678:5678"
 
     # Read-only root filesystem (FR-041)
+    # M3: Playwright requires writable dirs for browser profile and cache
     read_only: true
     tmpfs:
       - /tmp
       - /var/tmp
       - /home/node/.cache:uid=1000,gid=1000
+      - /home/node/.local:uid=1000,gid=1000
 
     # Persistent data only — no host directory mounts (FR-058)
     # NOTE: Never mount /var/run/docker.sock (SC-017)
@@ -40,6 +49,8 @@ services:
       - n8n_data:/home/node/.n8n
       - ./n8n-entrypoint.sh:/entrypoint.sh:ro
       - ../../n8n/workflows:/tmp/workflows:ro
+      # M3: Playwright browser session persistence (storageState JSON)
+      - browser_profile:/data/browser-profile
 
     # Docker secrets — NOT environment variables (FR-058, FR-090)
     secrets:
@@ -53,9 +64,18 @@ services:
       - N8N_PORT=5678
       - N8N_LOG_LEVEL=info
       # Security hardening (§5.3)
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true        # Prevent Code nodes from reading env vars
+      # M3: Changed from true to false — HMAC verification Code node (hmac-verify.json)
+      # reads OPENCLAW_WEBHOOK_SECRET from env. This is a security trade-off:
+      # Pro: Enables HMAC webhook auth (identity + integrity + replay protection)
+      # Con: Code nodes can now read ALL env vars (including N8N_ENCRYPTION_KEY)
+      # Mitigation: n8n is localhost-only, workflows are version-controlled,
+      #   only operator can create/modify workflows via n8n UI
+      # Original: N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/.n8n  # Restrict Code node filesystem access
-      - N8N_PUBLIC_API_DISABLED=true              # Disable REST API unless needed
+      # M3: API enabled — required for activity-query (T068) and rate-limit-tracker (T063)
+      # Original: N8N_PUBLIC_API_DISABLED=true
+      - N8N_PUBLIC_API_DISABLED=false
       - N8N_MFA_ENABLED=true                      # Enable TOTP 2FA support
       # Dangerous node exclusion (§5.6)
       - NODES_EXCLUDE=["n8n-nodes-base.executeCommand","n8n-nodes-base.ssh","n8n-nodes-base.localFileTrigger"]
@@ -66,7 +86,14 @@ services:
       - N8N_PERSONALIZATION_ENABLED=false
       # Execution data retention
       - EXECUTIONS_DATA_SAVE_ON_ERROR=all
-      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
+      # M3: 120-day retention for activity log until M4 (Qdrant+Mem0) replaces
+      - EXECUTIONS_DATA_MAX_AGE=2880
+      # M3: Community node n8n-nodes-playwright is symlinked into ~/.n8n/nodes/
+      # by the entrypoint script on first boot (see n8n-entrypoint.sh)
+      # M3: OPENCLAW_WEBHOOK_SECRET loaded via env_file (repo-root .env)
+      # Do NOT duplicate here — environment: overrides env_file: and compose
+      # interpolation would resolve to empty if the host shell lacks the var.
 
     # Security hardening (FR-041)
     cap_drop:
@@ -106,4 +133,5 @@ services:
         max-file: "3"
 
 volumes:
-  n8n_data:  # Persists workflows, credentials, execution logs
+  n8n_data:       # Persists workflows, credentials, execution logs
+  browser_profile: # M3: Playwright LinkedIn session (storageState JSON)
