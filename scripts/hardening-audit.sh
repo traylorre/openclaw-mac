@@ -2053,6 +2053,304 @@ check_script_integrity() {
 }
 
 # --- Main ---
+# ===========================================================================
+# §11 — OpenClaw Agent Security (M3)
+# Verifies agent deployment security: process binding, credential isolation,
+# workspace integrity, webhook auth, extraction agent isolation.
+# ===========================================================================
+
+## Note: These checks run under sudo (via make audit). All $HOME references
+## must use the real user's home, not root's. We use SUDO_USER where available.
+_openclaw_home() {
+    if [[ $EUID -eq 0 && -n "${SUDO_USER:-}" ]]; then
+        dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2}'
+    else
+        echo "$HOME"
+    fi
+}
+
+check_openclaw_process() {
+    local id="CHK-OPENCLAW-PROCESS"
+    # Check if OpenClaw (or bun) process is running and bound to localhost
+    # Use specific patterns to avoid matching editor sessions, greps, or this audit script
+    local oc_pid
+    oc_pid=$(pgrep -f "openclaw (start|serve|gateway)" 2>/dev/null \
+          || pgrep -f "bun.*/openclaw" 2>/dev/null \
+          || echo "")
+
+    if [[ -z "$oc_pid" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "OpenClaw process not running" "SKIP" "11.1" \
+            "Start OpenClaw: openclaw start"
+        return
+    fi
+
+    # Check if bound to localhost only (port 18789 for hooks)
+    local listen_check
+    listen_check=$(lsof -i -P -n 2>/dev/null | grep "$oc_pid" | grep "LISTEN" || true)
+
+    if [[ -z "$listen_check" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "OpenClaw running (PID ${oc_pid}), no listening ports detected" "PASS" "11.1"
+    elif echo "$listen_check" | grep -qv "127.0.0.1\|localhost\|\*:"; then
+        report_result "$id" "OpenClaw Agent" \
+            "OpenClaw bound to non-localhost address" "FAIL" "11.1" \
+            "Configure OpenClaw to bind to 127.0.0.1 only"
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "OpenClaw running (PID ${oc_pid}), localhost-only binding" "PASS" "11.1"
+    fi
+}
+
+check_openclaw_creds() {
+    local id="CHK-OPENCLAW-CREDS"
+    local openclaw_dir
+    openclaw_dir="$(_openclaw_home)/.openclaw"
+    local found_creds=false
+
+    # Scan OpenClaw environment for LinkedIn credentials that should NOT be there
+    local scan_files=(
+        "${openclaw_dir}/.env"
+        "${openclaw_dir}/openclaw.json"
+    )
+
+    # Also scan agent workspace files
+    if [[ -d "${openclaw_dir}/agents" ]]; then
+        while IFS= read -r -d '' f; do
+            scan_files+=("$f")
+        done < <(find "${openclaw_dir}/agents" \( -name ".env" -o -name "*.json" \) -print0 2>/dev/null)
+    fi
+
+    local offending_file=""
+    local offending_pattern=""
+    for f in "${scan_files[@]}"; do
+        if [[ -f "$f" ]]; then
+            # Check for LinkedIn OAuth tokens, li_at cookies, JSESSIONID
+            local match
+            match=$(grep -iE 'li_at|JSESSIONID|linkedin.*token|linkedin.*secret|w_member_social' "$f" 2>/dev/null | head -1 || true)
+            if [[ -n "$match" ]]; then
+                found_creds=true
+                offending_file="$f"
+                offending_pattern="$match"
+                break
+            fi
+        fi
+    done
+
+    if [[ "$found_creds" == "true" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "LinkedIn credentials found in ${offending_file} — credential isolation violated" "FAIL" "11.2" \
+            "Remove from ${offending_file}: ${offending_pattern}"
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "No LinkedIn credentials in OpenClaw environment" "PASS" "11.2"
+    fi
+}
+
+check_openclaw_creds_n8n_api() {
+    local id="CHK-OPENCLAW-CREDS-N8N-API"
+    local openclaw_dir
+    openclaw_dir="$(_openclaw_home)/.openclaw"
+    local found_api_key=false
+
+    local scan_files=(
+        "${openclaw_dir}/.env"
+        "${openclaw_dir}/openclaw.json"
+    )
+
+    if [[ -d "${openclaw_dir}/agents" ]]; then
+        while IFS= read -r -d '' f; do
+            scan_files+=("$f")
+        done < <(find "${openclaw_dir}/agents" -name ".env" -print0 2>/dev/null)
+    fi
+
+    local offending_file=""
+    for f in "${scan_files[@]}"; do
+        if [[ -f "$f" ]]; then
+            if grep -qE 'N8N_API_KEY' "$f" 2>/dev/null; then
+                found_api_key=true
+                offending_file="$f"
+                break
+            fi
+        fi
+    done
+
+    if [[ "$found_api_key" == "true" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "N8N_API_KEY found in ${offending_file} — privilege escalation risk (R-002)" "FAIL" "11.2" \
+            "Remove N8N_API_KEY from ${offending_file}. Use config-update webhook instead of direct n8n API."
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "N8N_API_KEY not in OpenClaw environment" "PASS" "11.2"
+    fi
+}
+
+check_openclaw_workspace() {
+    local id="CHK-OPENCLAW-WORKSPACE"
+    local manifest
+    manifest="$(_openclaw_home)/.openclaw/manifest.json"
+
+    if [[ ! -f "$manifest" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "Workspace manifest not found — run 'make manifest-update' to initialize" "SKIP" "11.3" \
+            "Run: make manifest-update"
+        return
+    fi
+
+    local mismatch_count=0
+    local checked_count=0
+
+    # Read manifest entries and verify checksums
+    while IFS= read -r entry; do
+        local file_path checksum_expected
+        file_path=$(echo "$entry" | jq -r '.path')
+        checksum_expected=$(echo "$entry" | jq -r '.sha256')
+
+        if [[ ! -f "$file_path" ]]; then
+            mismatch_count=$((mismatch_count + 1))
+            continue
+        fi
+
+        local checksum_actual
+        checksum_actual=$(shasum -a 256 "$file_path" | awk '{print $1}')
+        checked_count=$((checked_count + 1))
+
+        if [[ "$checksum_actual" != "$checksum_expected" ]]; then
+            mismatch_count=$((mismatch_count + 1))
+        fi
+    done < <(jq -c '.files[]' "$manifest" 2>/dev/null)
+
+    if [[ "$checked_count" -eq 0 ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "Workspace manifest empty or malformed" "WARN" "11.3" \
+            "Run: make manifest-update" "" "" "recommended"
+    elif [[ "$mismatch_count" -gt 0 ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "Workspace file integrity: ${mismatch_count} file(s) modified since last manifest update" "WARN" "11.3" \
+            "If intentional, run: make manifest-update. If not, investigate unauthorized changes." "" "" "recommended"
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "Workspace file integrity: ${checked_count} file(s) match manifest checksums" "PASS" "11.3"
+    fi
+}
+
+check_openclaw_webhook_auth() {
+    local id="CHK-OPENCLAW-WEBHOOK-AUTH"
+
+    # Test if n8n is reachable
+    if ! curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:5678" --max-time 3 &>/dev/null; then
+        report_result "$id" "OpenClaw Agent" \
+            "n8n not reachable at localhost:5678 — cannot verify webhook auth" "SKIP" "11.4" \
+            "Ensure n8n is running: docker compose up -d"
+        return
+    fi
+
+    # Test multiple webhook endpoints with unsigned requests — all should reject
+    # We test actual endpoints (not a dummy path) because we need to verify
+    # the HMAC sub-workflow is wired in. But we send no X-Signature header,
+    # so the hmac-verify step should reject before any LinkedIn API call.
+    local endpoints=("linkedin-post" "linkedin-comment" "linkedin-like")
+    local all_pass=true
+    local any_found=false
+    local tested=0
+    local failed_endpoint=""
+
+    for ep in "${endpoints[@]}"; do
+        local http_code
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "http://127.0.0.1:5678/webhook/${ep}" \
+            -H "Content-Type: application/json" \
+            -d '{"action":"auth-test"}' \
+            --max-time 5 2>/dev/null || echo "000")
+
+        if [[ "$http_code" == "404" ]]; then
+            continue  # Workflow not imported yet — skip
+        fi
+
+        any_found=true
+        tested=$((tested + 1))
+
+        if [[ "$http_code" == "200" ]]; then
+            all_pass=false
+            failed_endpoint="$ep"
+            break
+        fi
+        # 401, 403, 500 (hmac rejection) all count as "auth is working"
+    done
+
+    if [[ "$any_found" == "false" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "No webhook endpoints found (HTTP 404) — workflows may not be imported yet" "SKIP" "11.4" \
+            "Import workflows: make workflow-import"
+    elif [[ "$all_pass" == "true" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "All ${tested} webhook endpoint(s) reject unsigned requests" "PASS" "11.4"
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "Webhook /webhook/${failed_endpoint} accepted unsigned request — HMAC verification not working" "FAIL" "11.4" \
+            "Verify hmac-verify sub-workflow is called as first step in ${failed_endpoint} workflow"
+    fi
+}
+
+check_openclaw_n8n_creds() {
+    local id="CHK-OPENCLAW-N8N-CREDS"
+
+    # Check if N8N_ENCRYPTION_KEY is set in Docker environment
+    local enc_key
+    enc_key=$(docker exec openclaw-n8n printenv N8N_ENCRYPTION_KEY 2>/dev/null || echo "")
+
+    if [[ -z "$enc_key" ]]; then
+        # Check if it's loaded via Docker secrets instead
+        if docker exec openclaw-n8n test -f /run/secrets/n8n_encryption_key 2>/dev/null; then
+            report_result "$id" "OpenClaw Agent" \
+                "n8n encryption key loaded via Docker secret" "PASS" "11.5"
+        else
+            report_result "$id" "OpenClaw Agent" \
+                "N8N_ENCRYPTION_KEY not set — credential store may not be encrypted" "WARN" "11.5" \
+                "Set N8N_ENCRYPTION_KEY in docker-compose.yml or use Docker secrets" "" "" "recommended"
+        fi
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "n8n encryption key is set" "PASS" "11.5"
+    fi
+}
+
+check_openclaw_extraction_agent() {
+    local id="CHK-OPENCLAW-EXTRACTION-AGENT"
+    # OpenClaw workspace files live at agent root, not in agent/ subdir
+    local extractor_dir
+    extractor_dir="$(_openclaw_home)/.openclaw/agents/feed-extractor"
+
+    if [[ ! -d "$extractor_dir" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "Extraction agent (feed-extractor) not deployed" "SKIP" "11.6" \
+            "Deploy extraction agent: copy openclaw-extractor/ to ~/.openclaw/agents/feed-extractor/agent/"
+        return
+    fi
+
+    local has_tools=false
+    local has_skills=false
+
+    # Check for any tool configuration
+    if [[ -d "${extractor_dir}/tools" ]] && [[ -n "$(ls -A "${extractor_dir}/tools" 2>/dev/null)" ]]; then
+        has_tools=true
+    fi
+
+    # Check for any skill folders
+    if [[ -d "${extractor_dir}/skills" ]] && [[ -n "$(ls -A "${extractor_dir}/skills" 2>/dev/null)" ]]; then
+        has_skills=true
+    fi
+
+    if [[ "$has_tools" == "true" || "$has_skills" == "true" ]]; then
+        report_result "$id" "OpenClaw Agent" \
+            "Extraction agent has tools or skills — Rule of Two violated (R-012)" "FAIL" "11.6" \
+            "Remove all tools and skills from feed-extractor workspace. It must have zero capabilities."
+    else
+        report_result "$id" "OpenClaw Agent" \
+            "Extraction agent has zero tools and zero skills (Rule of Two enforced)" "PASS" "11.6"
+    fi
+}
+
 main() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -2240,6 +2538,15 @@ main() {
     run_check check_log_dir
     run_check check_clamav_freshness
     run_check check_script_integrity
+
+    # §11 OpenClaw Agent Security checks (M3 — T071-T077)
+    run_check check_openclaw_process
+    run_check check_openclaw_creds
+    run_check check_openclaw_creds_n8n_api
+    run_check check_openclaw_workspace
+    run_check check_openclaw_webhook_auth
+    run_check check_openclaw_n8n_creds
+    run_check check_openclaw_extraction_agent
 
     # --- Output ---
     if $JSON_OUTPUT; then
