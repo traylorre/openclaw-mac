@@ -4,6 +4,9 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
 
+- JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions) + OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama) (010-linkedin-automation)
+- OpenClaw SQLite + sqlite-vec (conversation history), n8n Docker volume (execution history, credentials, workflow state), filesystem (workspace files, pending drafts JSON, manifest checksums) (010-linkedin-automation)
+
 - Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults) (009-nomoop)
 - Filesystem — `~/.openclaw/manifest.json` (JSON, managed with jq) (009-nomoop)
 - Bash 5.x (POSIX-compatible subset per constitution) + Homebrew (`brew install colima docker`), (008-colima-lifecycle)
@@ -41,9 +44,10 @@ Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
 
+- 010-linkedin-automation: Added JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions) + OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama)
+
 - 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
 - 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
-- 008-colima-lifecycle: Added Bash 5.x (POSIX-compatible subset per constitution) + Homebrew (`brew install colima docker`),
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
