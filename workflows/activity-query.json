@@ -1,0 +1,182 @@
+{
+  "id": "activity-query",
+  "name": "activity-query",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "activity-query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "activity-query-webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": "hmac-verify",
+        "options": {},
+        "workflowInputs": {
+          "value": {
+            "headers": "={{ $json.headers }}",
+            "body": "={{ $json.body }}",
+            "rawBody": "={{ $json.body ? JSON.stringify($json.body) : '' }}"
+          }
+        }
+      },
+      "id": "hmac-check",
+      "name": "HMAC Verify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "977564a2-04c5-447e-a333-c21347923f88",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-verified",
+      "name": "Is Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T069: Query n8n execution history API for LinkedIn activity summary\n// Filters by date range and workflow IDs (action_types) from request\n// Uses N8N_API_KEY environment variable\n\nconst body = $input.all()[0].json.body;\nconst dateFrom = body?.date_from || new Date(Date.now() - 7 * 86400000).toISOString();\nconst dateTo = body?.date_to || new Date().toISOString();\nconst actionTypes = body?.action_types || ['linkedin-post', 'linkedin-comment', 'linkedin-like', 'feed-discovery'];\n\nconst apiKey = $env.N8N_API_KEY;\n\nconst summary = {\n  posts: 0,\n  comments: 0,\n  likes: 0,\n  feed_discoveries: 0\n};\n\nconst details = [];\n\nconst workflowMapping = {\n  'linkedin-post': 'posts',\n  'linkedin-comment': 'comments',\n  'linkedin-like': 'likes',\n  'feed-discovery': 'feed_discoveries'\n};\n\nfor (const actionType of actionTypes) {\n  const summaryKey = workflowMapping[actionType];\n  if (!summaryKey) continue;\n\n  try {\n    const url = `http://localhost:5678/api/v1/executions?status=success&workflowId=${actionType}&startedAfter=${encodeURIComponent(dateFrom)}&startedBefore=${encodeURIComponent(dateTo)}&limit=200`;\n\n    if (!apiKey) {\n      // No API key: return zeroes\n      continue;\n    }\n\n    const response = await fetch(url, {\n      headers: { 'X-N8N-API-KEY': apiKey }\n    });\n\n    if (response.ok) {\n      const data = await response.json();\n      const executions = data.data || [];\n      summary[summaryKey] = executions.length;\n\n      for (const exec of executions) {\n        details.push({\n          action_type: actionType,\n          execution_id: exec.id,\n          started_at: exec.startedAt,\n          finished_at: exec.stoppedAt,\n          status: exec.finished ? 'success' : 'running'\n        });\n      }\n    }\n  } catch (e) {\n    // API may not be reachable; continue with zeroes\n  }\n}\n\n// Sort details by started_at descending\ndetails.sort((a, b) => new Date(b.started_at) - new Date(a.started_at));\n\nreturn [{\n  json: {\n    status: 'ok',\n    date_from: dateFrom,\n    date_to: dateTo,\n    summary: summary,\n    details: details\n  }\n}];"
+      },
+      "id": "query-activity",
+      "name": "Query Activity",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Unauthorized', details: $json.error }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        900,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HMAC Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Verify": {
+      "main": [
+        [
+          {
+            "node": "Is Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verified?": {
+      "main": [
+        [
+          {
+            "node": "Query Activity",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Activity": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "T069: Activity query workflow. Queries n8n execution history for LinkedIn actions within a date range. Returns summary counts (posts, comments, likes, feed_discoveries) and detailed execution records. Used by OpenClaw for activity reporting."
+  }
+}
