@@ -151,7 +151,66 @@ import_workflows() {
     done
 
     log_info "Imported ${imported}/${count} workflow(s)"
-    log_warn "Activate workflows in n8n UI if needed (imported workflows default to inactive)"
+
+    # Activate imported workflows via n8n public API.
+    # Requires API key in macOS Keychain (created via n8n UI, stored with make gateway-setup).
+    # If no key, import still succeeds — activation is skipped with a warning.
+    activate_workflows "${files[@]}"
+}
+
+activate_workflows() {
+    local files=("$@")
+    local api_key
+
+    api_key=$(security find-generic-password -a "openclaw" -s "n8n-api-key" -w 2>/dev/null) || true
+
+    if [[ -z "$api_key" ]]; then
+        log_warn "No n8n API key in Keychain — workflows imported but inactive"
+        log_warn "Create API key in n8n UI (Settings → API), then store it:"
+        log_warn "  security add-generic-password -a openclaw -s n8n-api-key -w 'YOUR_KEY'"
+        log_warn "Re-run 'make workflow-import' to activate."
+        return 0
+    fi
+
+    # Sort files so hmac-verify activates first (other workflows depend on it).
+    local sorted_files=()
+    for f in "${files[@]}"; do
+        if [[ "$(basename "$f")" == "hmac-verify.json" ]]; then
+            sorted_files=("$f" "${sorted_files[@]}")
+        else
+            sorted_files+=("$f")
+        fi
+    done
+
+    local activated=0
+    local failed=0
+    for f in "${sorted_files[@]}"; do
+        local wf_id
+        wf_id=$(python3 -c "import json; print(json.load(open('$f')).get('id',''))" 2>/dev/null) || continue
+        [[ -z "$wf_id" ]] && continue
+
+        # Deactivate then activate to ensure webhook registration
+        curl -s -X POST -H "X-N8N-API-KEY: ${api_key}" \
+            "http://localhost:5678/api/v1/workflows/${wf_id}/deactivate" >/dev/null 2>&1
+
+        local result
+        result=$(curl -s -X POST -H "X-N8N-API-KEY: ${api_key}" \
+            "http://localhost:5678/api/v1/workflows/${wf_id}/activate" 2>&1)
+
+        if echo "$result" | grep -q '"active":true\|"active": true'; then
+            activated=$((activated + 1))
+            log_debug "  Activated: ${wf_id}"
+        else
+            failed=$((failed + 1))
+            log_warn "  Failed to activate: ${wf_id}"
+        fi
+    done
+
+    if [[ $failed -eq 0 ]]; then
+        log_info "Activated ${activated} workflow(s)"
+    else
+        log_warn "Activated ${activated}, failed ${failed} workflow(s)"
+    fi
 }
 
 main() {
