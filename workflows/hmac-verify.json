@@ -8,34 +8,54 @@
       "name": "On Sub-Workflow Call",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// HMAC-SHA256 Verification (R-003, R-014)\n// Centralized sub-workflow — called by all webhook workflows\n// Constitution II: Threat-model driven (unauthorized webhook callers)\n\nconst crypto = require('crypto');\n\nconst secret = process.env.OPENCLAW_WEBHOOK_SECRET;\nif (!secret) {\n  return [{ json: { verified: false, error: 'OPENCLAW_WEBHOOK_SECRET not set in environment' } }];\n}\n\n// Read headers and body from the calling workflow's input\nconst inputData = $input.all()[0].json;\nconst signature = inputData.headers?.['x-signature'] || '';\nconst timestamp = inputData.headers?.['x-timestamp'] || '';\nconst rawBody = inputData.rawBody || JSON.stringify(inputData.body || {});\n\n// Replay protection: timestamp must be within 5 minutes\nconst now = Math.floor(Date.now() / 1000);\nconst requestTime = parseInt(timestamp, 10);\nif (isNaN(requestTime) || Math.abs(now - requestTime) > 300) {\n  return [{ json: { verified: false, error: 'Timestamp expired or invalid (>5 min drift)' } }];\n}\n\n// Compute expected signature\nconst expectedSig = 'sha256=' + crypto\n  .createHmac('sha256', secret)\n  .update(rawBody, 'utf8')\n  .digest('hex');\n\n// Constant-time comparison\nconst sigBuffer = Buffer.from(signature);\nconst expectedBuffer = Buffer.from(expectedSig);\n\nif (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {\n  return [{ json: { verified: false, error: 'HMAC signature mismatch' } }];\n}\n\nreturn [{ json: { verified: true, body: inputData.body } }];"
+        "jsCode": "// HMAC-SHA256 Verification (R-003, R-014)\n// Centralized sub-workflow \u2014 called by all webhook workflows\n// Constitution II: Threat-model driven (unauthorized webhook callers)\n\nconst crypto = require('crypto');\n\nconst secret = $env.OPENCLAW_WEBHOOK_SECRET;\nif (!secret) {\n  return [{ json: { verified: false, error: 'OPENCLAW_WEBHOOK_SECRET not set in environment' } }];\n}\n\n// Read headers and body from the calling workflow's input\nconst inputData = $input.all()[0].json;\nconst signature = inputData.headers?.['x-signature'] || '';\nconst timestamp = inputData.headers?.['x-timestamp'] || '';\nconst rawBody = inputData.rawBody || JSON.stringify(inputData.body || {});\n\n// Replay protection: timestamp must be within 5 minutes\nconst now = Math.floor(Date.now() / 1000);\nconst requestTime = parseInt(timestamp, 10);\nif (isNaN(requestTime) || Math.abs(now - requestTime) > 300) {\n  return [{ json: { verified: false, error: 'Timestamp expired or invalid (>5 min drift)' } }];\n}\n\n// Compute expected signature\nconst expectedSig = 'sha256=' + crypto\n  .createHmac('sha256', secret)\n  .update(rawBody, 'utf8')\n  .digest('hex');\n\n// Constant-time comparison\nconst sigBuffer = Buffer.from(signature);\nconst expectedBuffer = Buffer.from(expectedSig);\n\nif (sigBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(sigBuffer, expectedBuffer)) {\n  return [{ json: { verified: false, error: 'HMAC signature mismatch' } }];\n}\n\nreturn [{ json: { verified: true, body: inputData.body } }];"
       },
       "id": "hmac-code",
       "name": "Verify HMAC",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
         "conditions": {
-          "boolean": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
             {
-              "value1": "={{ $json.verified }}",
-              "value2": true
+              "id": "76f4d3e9-e1c2-4711-963b-b095d2311ba4",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         }
       },
       "id": "check-result",
       "name": "Is Verified?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
-      "position": [680, 300]
+      "position": [
+        680,
+        300
+      ]
     },
     {
       "parameters": {
@@ -49,25 +69,46 @@
       "name": "Reject 401",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1,
-      "position": [900, 420],
+      "position": [
+        900,
+        420
+      ],
       "notes": "Returns 401 for failed HMAC verification"
     }
   ],
   "connections": {
     "On Sub-Workflow Call": {
       "main": [
-        [{ "node": "Verify HMAC", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Verify HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Verify HMAC": {
       "main": [
-        [{ "node": "Is Verified?", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Is Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Is Verified?": {
       "main": [
         [],
-        [{ "node": "Reject 401", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },

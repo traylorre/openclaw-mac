@@ -1,0 +1,183 @@
+{
+  "id": "config-update",
+  "name": "config-update",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "config-update",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "config-update-webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": "hmac-verify",
+        "options": {},
+        "workflowInputs": {
+          "value": {
+            "headers": "={{ $json.headers }}",
+            "body": "={{ $json.body }}",
+            "rawBody": "={{ $json.body ? JSON.stringify($json.body) : '' }}"
+          }
+        }
+      },
+      "id": "hmac-check",
+      "name": "HMAC Verify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "d5f8e6ad-66f4-447c-8d96-db76b7029d37",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-verified",
+      "name": "Is Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// STUB: Replace with n8n internal API calls to update variables when ready.\n// T051: Update n8n workflow variables via internal API\n// Real version would call PUT /api/v1/variables for each key\n\nconst body = $input.all()[0].json.body;\nconst variables = body?.variables || {};\nconst changedKeys = Object.keys(variables);\n\nif (changedKeys.length === 0) {\n  return [{\n    json: {\n      status: 'no_changes',\n      variables_changed: []\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    status: 'updated',\n    variables_changed: changedKeys\n  }\n}];"
+      },
+      "id": "config-update-stub",
+      "name": "Update Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "STUB: Replace with n8n internal API calls to update variables when ready."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Unauthorized', details: $json.error }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        900,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HMAC Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Verify": {
+      "main": [
+        [
+          {
+            "node": "Is Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verified?": {
+      "main": [
+        [
+          {
+            "node": "Update Config",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Config": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "T051: Configuration update workflow. Receives variable key-value pairs from OpenClaw, verifies HMAC, updates n8n variables via internal API (currently stubbed), returns list of changed keys."
+  }
+}

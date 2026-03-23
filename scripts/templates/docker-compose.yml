@@ -63,6 +63,8 @@ services:
       - N8N_HOST=localhost
       - N8N_PORT=5678
       - N8N_LOG_LEVEL=info
+      # M3: Allow crypto module in Code nodes for HMAC verification
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto
       # Security hardening (§5.3)
       # M3: Changed from true to false — HMAC verification Code node (hmac-verify.json)
       # reads OPENCLAW_WEBHOOK_SECRET from env. This is a security trade-off:
