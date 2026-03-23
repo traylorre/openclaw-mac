@@ -1,0 +1,317 @@
+{
+  "id": "token-check",
+  "name": "token-check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "token-check",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        460
+      ],
+      "webhookId": "token-check-webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": "hmac-verify",
+        "options": {},
+        "workflowInputs": {
+          "value": {
+            "headers": "={{ $json.headers }}",
+            "body": "={{ $json.body }}",
+            "rawBody": "={{ $json.body ? JSON.stringify($json.body) : '' }}"
+          }
+        }
+      },
+      "id": "hmac-check",
+      "name": "HMAC Verify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        460,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "05af1013-37eb-4119-9314-d3ddfd1f63cd",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-verified",
+      "name": "Is Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T062-T063: Check LinkedIn OAuth token expiry\n// LinkedIn access tokens expire after 60 days\n// Computes days remaining and flags alert if <= 7 days\n\nconst staticData = $getWorkflowStaticData('global');\n\n// Initialize grant_timestamp to now if not set (first run)\nif (!staticData.grant_timestamp) {\n  staticData.grant_timestamp = new Date().toISOString();\n}\n\nconst grantDate = new Date(staticData.grant_timestamp);\nconst now = new Date();\nconst daysSinceGrant = Math.floor((now - grantDate) / (1000 * 60 * 60 * 24));\nconst daysRemaining = 60 - daysSinceGrant;\n\nconst expiryDate = new Date(grantDate);\nexpiryDate.setDate(expiryDate.getDate() + 60);\n\nconst alertNeeded = daysRemaining <= 7;\n\nreturn [{\n  json: {\n    status: alertNeeded ? 'expiring_soon' : 'ok',\n    days_remaining: Math.max(daysRemaining, 0),\n    grant_date: grantDate.toISOString().split('T')[0],\n    expiry_date: expiryDate.toISOString().split('T')[0],\n    alert_needed: alertNeeded\n  }\n}];"
+      },
+      "id": "check-token-schedule",
+      "name": "Check Token (Schedule)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T062-T063: Check LinkedIn OAuth token expiry (webhook path)\n// Same logic as schedule path but returns via webhook response\n\nconst staticData = $getWorkflowStaticData('global');\n\n// Initialize grant_timestamp to now if not set (first run)\nif (!staticData.grant_timestamp) {\n  staticData.grant_timestamp = new Date().toISOString();\n}\n\nconst grantDate = new Date(staticData.grant_timestamp);\nconst now = new Date();\nconst daysSinceGrant = Math.floor((now - grantDate) / (1000 * 60 * 60 * 24));\nconst daysRemaining = 60 - daysSinceGrant;\n\nconst expiryDate = new Date(grantDate);\nexpiryDate.setDate(expiryDate.getDate() + 60);\n\nconst alertNeeded = daysRemaining <= 7;\n\nreturn [{\n  json: {\n    status: alertNeeded ? 'expiring_soon' : 'ok',\n    days_remaining: Math.max(daysRemaining, 0),\n    grant_date: grantDate.toISOString().split('T')[0],\n    expiry_date: expiryDate.toISOString().split('T')[0],\n    alert_needed: alertNeeded\n  }\n}];"
+      },
+      "id": "check-token-webhook",
+      "name": "Check Token (Webhook)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Unauthorized', details: $json.error }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        900,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "bad8e942-9615-4175-be34-b922f5364a22",
+              "leftValue": "={{ $json.alert_needed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-alert-needed",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:18789/hooks/agent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENCLAW_HOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "payload",
+              "value": "={{ JSON.stringify({ type: 'alert', alert_type: 'token_expiring', message: 'LinkedIn OAuth token expires in ' + $json.days_remaining + ' days', severity: 'warning', days_remaining: $json.days_remaining, expiry_date: $json.expiry_date }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Alert OpenClaw",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        900,
+        140
+      ],
+      "notes": "Sends token expiry alert to OpenClaw inbound hook"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Token (Schedule)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Token (Schedule)": {
+      "main": [
+        [
+          {
+            "node": "Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Needed?": {
+      "main": [
+        [
+          {
+            "node": "Alert OpenClaw",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HMAC Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Verify": {
+      "main": [
+        [
+          {
+            "node": "Is Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verified?": {
+      "main": [
+        [
+          {
+            "node": "Check Token (Webhook)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Token (Webhook)": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "T062-T063: LinkedIn OAuth token expiry checker. Dual trigger: daily schedule (09:00) and webhook. Computes days remaining on 60-day token. Alerts OpenClaw when <= 7 days remain. Grant timestamp stored in Workflow Static Data."
+  }
+}

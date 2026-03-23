@@ -1,0 +1,183 @@
+{
+  "id": "feed-discovery",
+  "name": "feed-discovery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "feed-discovery",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "feed-discovery-webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": "hmac-verify",
+        "options": {},
+        "workflowInputs": {
+          "value": {
+            "headers": "={{ $json.headers }}",
+            "body": "={{ $json.body }}",
+            "rawBody": "={{ $json.body ? JSON.stringify($json.body) : '' }}"
+          }
+        }
+      },
+      "id": "hmac-check",
+      "name": "HMAC Verify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "89d939a1-0f4d-4194-b99a-029568a3a8df",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-verified",
+      "name": "Is Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// STUB: Replace with Playwright browser automation when session cookies are configured.\n// T044-T046: Discover feed posts matching topics via LinkedIn feed scraping\n\nconst body = $input.all()[0].json.body;\nconst topics = body?.topics || ['AI', 'leadership'];\n\nconst mockPosts = [\n  {\n    urn: 'urn:li:activity:STUB001',\n    author_name: 'Jane Smith',\n    author_headline: 'VP Engineering at TechCorp',\n    content_snippet: 'Excited to share our latest work on responsible AI deployment...',\n    topics_matched: [topics[0] || 'AI'],\n    engagement: { likes: 142, comments: 23 }\n  },\n  {\n    urn: 'urn:li:activity:STUB002',\n    author_name: 'Marcus Chen',\n    author_headline: 'CTO at StartupXYZ',\n    content_snippet: 'Three lessons from scaling our engineering team from 5 to 50...',\n    topics_matched: [topics[1] || 'leadership'],\n    engagement: { likes: 87, comments: 15 }\n  },\n  {\n    urn: 'urn:li:activity:STUB003',\n    author_name: 'Priya Patel',\n    author_headline: 'Senior ML Engineer',\n    content_snippet: 'A thread on why retrieval-augmented generation is changing how we build...',\n    topics_matched: [topics[0] || 'AI'],\n    engagement: { likes: 256, comments: 41 }\n  }\n];\n\nreturn [{\n  json: {\n    status: 'completed',\n    posts_found: mockPosts.length,\n    posts: mockPosts\n  }\n}];"
+      },
+      "id": "feed-scrape-stub",
+      "name": "Feed Discovery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "notes": "STUB: Replace with Playwright feed scraping nodes when LinkedIn session is configured."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Unauthorized', details: $json.error }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        900,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HMAC Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Verify": {
+      "main": [
+        [
+          {
+            "node": "Is Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verified?": {
+      "main": [
+        [
+          {
+            "node": "Feed Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feed Discovery": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "T044-T046: Feed discovery workflow. Scrapes LinkedIn feed for posts matching specified topics using Playwright (currently stubbed with mock data). Returns post URNs, authors, content snippets, and engagement metrics."
+  }
+}

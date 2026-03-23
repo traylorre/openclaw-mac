@@ -1,0 +1,250 @@
+{
+  "id": "action-runner",
+  "name": "action-runner",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "queue-action",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        460
+      ],
+      "webhookId": "queue-action-webhook"
+    },
+    {
+      "parameters": {
+        "workflowId": "hmac-verify",
+        "options": {},
+        "workflowInputs": {
+          "value": {
+            "headers": "={{ $json.headers }}",
+            "body": "={{ $json.body }}",
+            "rawBody": "={{ $json.body ? JSON.stringify($json.body) : '' }}"
+          }
+        }
+      },
+      "id": "hmac-check",
+      "name": "HMAC Verify",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        460,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "6f821a10-44ed-493e-863a-ee49b6717029",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-verified",
+      "name": "Is Verified?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T049: Enqueue action into Workflow Static Data queue\n// Adds entries from the verified webhook request body to the action queue\n\nconst body = $input.all()[0].json.body;\nconst staticData = $getWorkflowStaticData('global');\n\nif (!staticData.queue) {\n  staticData.queue = [];\n}\n\nconst entry = {\n  id: `action_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,\n  action_type: body.action_type,\n  target_urn: body.target_urn,\n  text: body.text || null,\n  scheduled_at: body.scheduled_at || new Date().toISOString(),\n  status: 'pending'\n};\n\nstaticData.queue.push(entry);\n\nreturn [{\n  json: {\n    status: 'queued',\n    entry: entry,\n    queue_length: staticData.queue.length\n  }\n}];"
+      },
+      "id": "enqueue-action",
+      "name": "Enqueue Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "respond-success",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ error: 'Unauthorized', details: $json.error }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "respond-401",
+      "name": "Reject 401",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        900,
+        580
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T049: Read queue from Static Data, filter for items that are due\n\nconst staticData = $getWorkflowStaticData('global');\n\nif (!staticData.queue) {\n  staticData.queue = [];\n}\n\nconst now = new Date();\nconst dueItems = staticData.queue.filter(item => {\n  if (item.status !== 'pending') return false;\n  const scheduledAt = new Date(item.scheduled_at);\n  return scheduledAt <= now;\n});\n\nif (dueItems.length === 0) {\n  return [{ json: { status: 'idle', message: 'No due items in queue', queue_length: staticData.queue.length } }];\n}\n\n// Return due items for processing\nreturn dueItems.map(item => ({ json: item }));"
+      },
+      "id": "read-queue",
+      "name": "Read Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T049: Execute due action by calling the appropriate workflow webhook\n// and update the queue entry status in Static Data\n\nconst item = $input.all()[0].json;\n\n// Skip if this is an idle status message (no due items)\nif (item.status === 'idle') {\n  return [{ json: item }];\n}\n\nconst staticData = $getWorkflowStaticData('global');\n\nlet endpoint = '';\nlet payload = {};\n\nswitch (item.action_type) {\n  case 'like':\n    endpoint = 'http://localhost:5678/webhook/linkedin-like';\n    payload = { action: 'like', target_urn: item.target_urn };\n    break;\n  case 'comment':\n    endpoint = 'http://localhost:5678/webhook/linkedin-comment';\n    payload = { action: 'comment', draft_id: item.id, target_urn: item.target_urn, text: item.text };\n    break;\n  default:\n    // Mark as failed for unknown action types\n    const idx = staticData.queue.findIndex(q => q.id === item.id);\n    if (idx >= 0) {\n      staticData.queue[idx].status = 'failed';\n      staticData.queue[idx].error = `Unknown action_type: ${item.action_type}`;\n    }\n    return [{ json: { status: 'failed', id: item.id, error: `Unknown action_type: ${item.action_type}` } }];\n}\n\n// Mark as executed in the queue\nconst queueIdx = staticData.queue.findIndex(q => q.id === item.id);\nif (queueIdx >= 0) {\n  staticData.queue[queueIdx].status = 'executed';\n  staticData.queue[queueIdx].executed_at = new Date().toISOString();\n}\n\n// Prune completed items older than 24 hours\nconst oneDayAgo = new Date(Date.now() - 86400000).toISOString();\nstaticData.queue = staticData.queue.filter(q =>\n  q.status === 'pending' || (q.executed_at && q.executed_at > oneDayAgo)\n);\n\nreturn [{\n  json: {\n    status: 'executed',\n    id: item.id,\n    action_type: item.action_type,\n    target_urn: item.target_urn,\n    endpoint: endpoint\n  }\n}];"
+      },
+      "id": "process-queue",
+      "name": "Process Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        680,
+        200
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Queue": {
+      "main": [
+        [
+          {
+            "node": "Process Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "HMAC Verify",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HMAC Verify": {
+      "main": [
+        [
+          {
+            "node": "Is Verified?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Verified?": {
+      "main": [
+        [
+          {
+            "node": "Enqueue Action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject 401",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enqueue Action": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "T049: Action runner with dual trigger. Schedule (every 5 min) processes due queue items by calling linkedin-like or linkedin-comment webhooks. Webhook trigger allows OpenClaw to enqueue new actions with HMAC verification. Queue is managed via Workflow Static Data."
+  }
+}
