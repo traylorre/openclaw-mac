@@ -1,0 +1,150 @@
+{
+  "id": "rate-limit-tracker",
+  "name": "rate-limit-tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// T064: Query n8n API for today's LinkedIn action executions\n// Uses N8N_API_KEY environment variable (already in container)\n// Counts successful executions of linkedin-post, linkedin-comment, linkedin-like\n// Flags alert if >= 120 (80% of 150 daily limit)\n\nconst apiKey = $env.N8N_API_KEY;\nif (!apiKey) {\n  return [{ json: { status: 'error', error: 'N8N_API_KEY not set in environment' } }];\n}\n\nconst today = new Date();\ntoday.setHours(0, 0, 0, 0);\nconst startOfDay = today.toISOString();\n\nconst workflowNames = ['linkedin-post', 'linkedin-comment', 'linkedin-like'];\nlet totalSuccessful = 0;\nconst breakdown = {};\n\nfor (const wfName of workflowNames) {\n  try {\n    const response = await fetch(\n      `http://localhost:5678/api/v1/executions?status=success&workflowId=${wfName}&startedAfter=${encodeURIComponent(startOfDay)}&limit=200`,\n      {\n        headers: {\n          'X-N8N-API-KEY': apiKey\n        }\n      }\n    );\n\n    if (response.ok) {\n      const data = await response.json();\n      const count = data.data ? data.data.length : 0;\n      breakdown[wfName] = count;\n      totalSuccessful += count;\n    } else {\n      breakdown[wfName] = 0;\n    }\n  } catch (e) {\n    // API may not be reachable in stub/test mode\n    breakdown[wfName] = 0;\n  }\n}\n\nconst dailyLimit = 150;\nconst alertThreshold = 120; // 80% of daily limit\nconst alertNeeded = totalSuccessful >= alertThreshold;\n\nreturn [{\n  json: {\n    status: alertNeeded ? 'threshold_exceeded' : 'ok',\n    total_actions_today: totalSuccessful,\n    daily_limit: dailyLimit,\n    alert_threshold: alertThreshold,\n    alert_needed: alertNeeded,\n    utilization_pct: Math.round((totalSuccessful / dailyLimit) * 100),\n    breakdown: breakdown,\n    checked_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "query-executions",
+      "name": "Query Executions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "88f25a4d-1d9a-497a-9c0a-ffa3682e4662",
+              "leftValue": "={{ $json.alert_needed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-alert-needed",
+      "name": "Alert Needed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:18789/hooks/agent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer {{ $env.OPENCLAW_HOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "payload",
+              "value": "={{ JSON.stringify({ type: 'alert', alert_type: 'rate_limit_warning', message: 'LinkedIn API usage at ' + $json.utilization_pct + '% (' + $json.total_actions_today + '/' + $json.daily_limit + ')', severity: 'warning', total_actions_today: $json.total_actions_today, daily_limit: $json.daily_limit, breakdown: $json.breakdown }) }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "send-alert",
+      "name": "Alert OpenClaw",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        900,
+        240
+      ],
+      "notes": "Sends rate limit alert to OpenClaw inbound hook when >= 80% of daily limit"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Query Executions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Query Executions": {
+      "main": [
+        [
+          {
+            "node": "Alert Needed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Needed?": {
+      "main": [
+        [
+          {
+            "node": "Alert OpenClaw",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "notes": "T064: Rate limit tracker. Runs hourly. Queries n8n execution history API for today's successful linkedin-post, linkedin-comment, and linkedin-like executions. Alerts OpenClaw when usage reaches 80% (120/150) of daily limit."
+  }
+}
