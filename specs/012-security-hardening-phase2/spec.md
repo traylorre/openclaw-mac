@@ -18,8 +18,8 @@ The operator deploys the integrity system and all sensitive files on the host ar
 **Acceptance Scenarios**:
 
 1. **Given** the integrity system is deployed, **When** the operator runs the deploy command, **Then** the manifest includes checksums for all sensitive files identified in the file inventory (models.json, workspace-state.json, development tool permissions, restore scripts, skill-allowlist.json).
-2. **Given** old configuration backups exist, **When** the operator runs the lock command, **Then** the backups are either removed or locked with immutable flags, preventing rollback to a weaker security posture.
-3. **Given** git hooks exist in agent workspace directories, **When** the integrity system deploys, **Then** the hooks directory is emptied or made read-only, preventing arbitrary code execution via git operations.
+2. **Given** old configuration backups exist (e.g., openclaw.json.bak*), **When** the operator runs the lock command, **Then** the backups are locked with immutable flags (preserving operator recovery capability) and their checksums are added to the manifest. The operator is advised to periodically clean up old backups after confirming the current configuration is stable.
+3. **Given** git hooks exist in agent workspace directories (.git/hooks/), **When** the integrity system deploys, **Then** all hook files have their execute permission removed (chmod -x) and are locked with immutable flags. Legitimate hooks declared in a hooks allowlist configuration are preserved. Hooks in the main repository (.git/hooks/ at repo root) are also checked.
 4. **Given** restore scripts exist with world-readable permissions (755), **When** the integrity system deploys, **Then** permissions are tightened to owner-only (700) and files are locked, or removed entirely.
 5. **Given** the skill-allowlist is not HMAC-signed, **When** the integrity system deploys, **Then** the allowlist is signed using the same state-file signing pattern as the lock-state, and verification checks the signature before trusting allowlist entries.
 
@@ -60,6 +60,7 @@ The operator can verify that the workflow orchestration container is running the
 2. **Given** workflows are exported and compared, **When** a workflow has been modified inside the container, **Then** the integrity check detects the mismatch and reports the specific workflow.
 3. **Given** the orchestrator has credential entries configured, **When** the integrity system checks credentials, **Then** it enumerates credential names (not secrets) and compares against an expected set — unexpected credentials are flagged.
 4. **Given** the container has been replaced with a different image, **When** the integrity check runs, **Then** it detects the image ID mismatch and blocks agent launch with a specific error.
+5. **Given** the continuous monitoring service is running, **When** the container image ID changes at any time (not just startup), **Then** the monitor detects the change and alerts the operator within 60 seconds.
 
 ---
 
@@ -164,6 +165,7 @@ The integrity verification system integrates critical audit checks so that known
 - **FR-012**: System MUST log integrity verification results (pass/fail, error count, warning count, specific failures) to the audit log.
 - **FR-013**: System MUST log monitor alert events (file path, expected hash, actual hash, delivery status) to the audit log regardless of alert delivery success.
 - **FR-014**: Audit log entries MUST be structured (one entry per line) for machine parseability.
+- **FR-014b**: Each audit log entry MUST include the hash of the previous entry (hash chain), enabling detection of entry insertion, reordering, or deletion. The first entry's previous-hash is a well-known constant.
 
 **Docker and Container Integrity (US3)**:
 
@@ -197,7 +199,10 @@ The integrity verification system integrates critical audit checks so that known
 
 - **FR-031**: Integrity verification MUST enforce (not just warn on) critical audit checks: sandbox enabled, all files locked, skill allowlist valid.
 - **FR-032**: A force override MUST be available for debugging, with the bypass logged in the audit trail.
-- **FR-033**: The set of enforced checks MUST be configurable (not hardcoded) to allow the operator to adjust enforcement as the system matures.
+- **FR-033**: The set of enforced checks MUST be configurable (not hardcoded) to allow the operator to adjust enforcement as the system matures. A minimum set (sandbox enabled, manifest signature valid) MUST be hardcoded and cannot be disabled via configuration. The enforcement configuration file MUST be in the protected file set (US1).
+- **FR-034**: ALL scripts performing security operations MUST verify the integrity library's content hash before sourcing it. The bootstrap case (no manifest yet) MUST log a warning rather than silently pass.
+- **FR-035**: The environment variable validation MUST include TMPDIR (verify it points to the system default or is unset) in addition to the existing checks.
+- **FR-036**: The output sanitization workflow definition MUST be included in the protected file set (US1) so that an attacker who can modify container workflows cannot disable sanitization without detection.
 
 ### Key Entities
 
@@ -214,7 +219,7 @@ The integrity verification system integrates critical audit checks so that known
 - **SC-002**: The audit log survives a simulated compromise scenario where an attacker with user-level access attempts to delete or modify log entries — append-only enforcement holds.
 - **SC-003**: A container replacement attack (swapping the orchestrator image) is detected within one integrity verification cycle.
 - **SC-004**: Browser session credentials are not readable at rest without the credential-store decryption key — exfiltration of the encrypted file yields no usable credentials.
-- **SC-005**: Webhook payloads with injection patterns are rejected before reaching external APIs — zero malicious payloads pass through the sanitization layer.
+- **SC-005**: All webhook payloads are validated against the schema and sanitization rules before processing. A defined test suite of injection patterns (control characters, null bytes, escape sequences, oversized payloads, schema violations) is rejected with 100% accuracy.
 - **SC-006**: A manifest rollback attack (replacing current manifest with an older signed version) is detected and blocks agent launch.
 - **SC-007**: The system blocks agent launch when critical security controls are disabled (sandbox off, files unlocked) — enforcement is not advisory.
 - **SC-008**: All security-relevant events are reconstructable from the audit log after a simulated compromise — no forensic gaps.
@@ -250,6 +255,30 @@ The integrity verification system integrates critical audit checks so that known
 - Real-time prompt injection detection at the model level
 - Automated incident response (quarantine, rollback) — response remains manual
 - Full provenance chain for all artifacts (partial implementation via manifest versioning)
+- Social engineering attacks via skill marketplace comments (operator training concern, not technical control)
+
+## Known Limitations (Accepted Residual Risk)
+
+**Trust anchor in shared security domain (ADV-001)**: All HMAC signing operations (manifest, lock-state, heartbeat, allowlist, sequence file) use a key stored in the macOS login Keychain, which is accessible to any process running as the operator's user. This means a same-user attacker can extract the key and forge any signed artifact. All signing-dependent protections (US1-FR007/FR008, US6, US7) are defense against external/agent-level threats, NOT against same-user compromise. Browser session encryption (US4) similarly only protects against offline/physical-access attacks, not same-user extraction. Moving to a per-application Keychain with interactive confirmation is deferred to M5.
+
+**Append-only is not forgery-proof**: The audit log's append-only flag prevents deletion and truncation but does not prevent a same-user attacker from appending false entries. Hash-chained entries (FR-014b) detect insertion and reordering but not appended forgeries unless each entry is also HMAC-signed. The hash chain provides ordering integrity; the append-only flag provides deletion resistance. Together they raise the bar significantly but do not achieve full tamper-evidence against a same-user attacker with the HMAC key.
+
+**TOCTOU in symlink detection (ADV-013)**: A race condition exists between symlink checking and file locking. An attacker who can observe the lock sequence can plant a symlink after the check but before the lock is applied. Atomic check-and-lock per file would close this gap but is not implemented in this spec (would require significant refactoring of the lock script).
+
+## Deployment Sequence
+
+The following order resolves circular dependencies between user stories:
+
+1. **Phase A**: Deploy expanded file list (US1) — adds new files to manifest
+2. **Phase B**: Lock all files (US1) — sets immutable flags
+3. **Phase C**: Set append-only on audit log (US2) — after first log entries are written
+4. **Phase D**: Deploy container integrity checks (US3) — records image IDs
+5. **Phase E**: Deploy session encryption (US4) — encrypts browser state
+6. **Phase F**: Deploy output sanitization (US5) — adds validation to webhook workflows
+7. **Phase G**: Deploy manifest versioning (US6) — starts sequence counter
+8. **Phase H**: Enable enforcement gate (US7) — last, after all controls are active
+
+The system is vulnerable during this transition. Each phase should be followed by a verification run to confirm the control is active before proceeding.
 
 ## Dependencies
 
