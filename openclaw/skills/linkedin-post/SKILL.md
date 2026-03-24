@@ -64,7 +64,7 @@ On draft creation, write to pending-drafts.json:
 
 ```bash
 DRAFT_ID=$(uuidgen | tr '[:upper:]' '[:lower:]')
-DRAFTS_FILE="$HOME/.openclaw/agents/linkedin-persona/pending-drafts.json"
+DRAFTS_FILE="$HOME/.openclaw/sandboxes/linkedin-persona/data/pending-drafts.json"
 
 # Read existing or create empty array
 if [ -f "$DRAFTS_FILE" ]; then

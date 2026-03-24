@@ -2351,6 +2351,297 @@ check_openclaw_extraction_agent() {
     fi
 }
 
+# ===========================================================================
+# §12 Workspace Integrity checks (M4 — T040-T047)
+# ===========================================================================
+
+# Source integrity library for shared functions
+# shellcheck source=lib/integrity.sh
+source "${SCRIPT_DIR}/lib/integrity.sh" 2>/dev/null || true
+
+check_openclaw_integrity_lock() {
+    local id="CHK-OPENCLAW-INTEGRITY-LOCK"
+    local manifest="${HOME}/.openclaw/manifest.json"
+
+    if [[ ! -f "$manifest" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Integrity manifest not found" "SKIP" "12.1" \
+            "Run: make integrity-deploy && sudo make integrity-lock"
+        return
+    fi
+
+    local total=0 locked=0 unlocked_files=""
+    while IFS= read -r entry; do
+        local path
+        path=$(echo "$entry" | jq -r '.path')
+        total=$((total + 1))
+        if [[ -f "$path" ]] && ls -lO "$path" 2>/dev/null | grep -q "uchg"; then
+            locked=$((locked + 1))
+        elif [[ -f "$path" ]]; then
+            unlocked_files="${unlocked_files}${path} "
+        fi
+    done < <(jq -c '.files[]' "$manifest" 2>/dev/null)
+
+    if [[ $locked -eq $total ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "All ${total} protected files have uchg flag" "PASS" "12.1"
+    elif [[ $locked -gt 0 ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "${locked}/${total} files locked (some unlocked)" "WARN" "12.1" \
+            "Unlocked: ${unlocked_files:0:100}" "" "recommended"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "No protected files are locked" "FAIL" "12.1" \
+            "Run: sudo make integrity-lock"
+    fi
+}
+
+check_openclaw_integrity_manifest() {
+    local id="CHK-OPENCLAW-INTEGRITY-MANIFEST"
+    local manifest="${HOME}/.openclaw/manifest.json"
+
+    if [[ ! -f "$manifest" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Integrity manifest not found" "SKIP" "12.2" \
+            "Run: make integrity-deploy"
+        return
+    fi
+
+    # Verify HMAC signature
+    if ! type integrity_verify_signature &>/dev/null; then
+        report_result "$id" "Workspace Integrity" \
+            "integrity.sh not loaded — cannot verify manifest" "SKIP" "12.2"
+        return
+    fi
+
+    if ! integrity_verify_signature "$manifest" 2>/dev/null; then
+        report_result "$id" "Workspace Integrity" \
+            "Manifest HMAC signature invalid — possible tampering" "FAIL" "12.2" \
+            "Rebuild: make integrity-deploy && sudo make integrity-lock"
+        return
+    fi
+
+    # Verify checksums
+    local total=0 mismatched=0
+    while IFS= read -r entry; do
+        local path expected actual
+        path=$(echo "$entry" | jq -r '.path')
+        expected=$(echo "$entry" | jq -r '.sha256')
+        total=$((total + 1))
+        if [[ -f "$path" ]]; then
+            actual=$(shasum -a 256 "$path" | awk '{print $1}')
+            [[ "$expected" != "$actual" ]] && mismatched=$((mismatched + 1))
+        fi
+    done < <(jq -c '.files[]' "$manifest" 2>/dev/null)
+
+    if [[ $mismatched -eq 0 ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Manifest signature valid, all ${total} checksums match" "PASS" "12.2"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "${mismatched}/${total} file checksums do not match manifest" "FAIL" "12.2" \
+            "Rebuild: make integrity-deploy && sudo make integrity-lock"
+    fi
+}
+
+check_openclaw_sandbox_mode() {
+    local id="CHK-OPENCLAW-SANDBOX-MODE"
+    local config="${HOME}/.openclaw/openclaw.json"
+
+    if [[ ! -f "$config" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "openclaw.json not found" "SKIP" "12.3" \
+            "Run: make sandbox-setup"
+        return
+    fi
+
+    local persona_mode extractor_mode
+    persona_mode=$(jq -r '.agents.list[] | select(.id == "linkedin-persona") | .sandbox.mode // empty' "$config" 2>/dev/null)
+    extractor_mode=$(jq -r '.agents.list[] | select(.id == "feed-extractor") | .sandbox.mode // empty' "$config" 2>/dev/null)
+
+    if [[ "$persona_mode" == "all" && "$extractor_mode" == "all" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Sandbox mode enabled for both agents" "PASS" "12.3"
+    else
+        local missing=""
+        [[ "$persona_mode" != "all" ]] && missing="linkedin-persona "
+        [[ "$extractor_mode" != "all" ]] && missing="${missing}feed-extractor"
+        report_result "$id" "Workspace Integrity" \
+            "Sandbox not configured: ${missing}" "FAIL" "12.3" \
+            "Run: make sandbox-setup"
+    fi
+}
+
+check_openclaw_sandbox_tools() {
+    local id="CHK-OPENCLAW-SANDBOX-TOOLS"
+    local config="${HOME}/.openclaw/openclaw.json"
+
+    if [[ ! -f "$config" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "openclaw.json not found" "SKIP" "12.4"
+        return
+    fi
+
+    local persona_deny extractor_allow
+    persona_deny=$(jq -r '.agents.list[] | select(.id == "linkedin-persona") | .tools.deny | length // 0' "$config" 2>/dev/null)
+    extractor_allow=$(jq -r '.agents.list[] | select(.id == "feed-extractor") | .tools.allow | length // 0' "$config" 2>/dev/null)
+
+    local issues=""
+    [[ "$persona_deny" -eq 0 ]] 2>/dev/null && issues="linkedin-persona has no denied tools; "
+    [[ "$extractor_allow" != "0" ]] 2>/dev/null && issues="${issues}feed-extractor has allowed tools"
+
+    if [[ -z "$issues" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Tool restrictions configured (persona deny=${persona_deny}, extractor allow=0)" "PASS" "12.4"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "Tool restrictions misconfigured: ${issues}" "FAIL" "12.4" \
+            "Run: make sandbox-setup"
+    fi
+}
+
+check_openclaw_monitor_status() {
+    local id="CHK-OPENCLAW-MONITOR-STATUS"
+    local plist_name="com.openclaw.integrity-monitor"
+    local heartbeat="${HOME}/.openclaw/integrity-monitor-heartbeat.json"
+
+    if ! launchctl list 2>/dev/null | grep -q "$plist_name"; then
+        report_result "$id" "Workspace Integrity" \
+            "Integrity monitor LaunchAgent not loaded" "FAIL" "12.5" \
+            "Run: make monitor-setup"
+        return
+    fi
+
+    if [[ ! -f "$heartbeat" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Monitor loaded but no heartbeat file" "WARN" "12.5" \
+            "Check logs: ~/.openclaw/logs/integrity-monitor.err.log" "" "recommended"
+        return
+    fi
+
+    local ts now_epoch hb_epoch age
+    ts=$(jq -r '.timestamp' "$heartbeat" 2>/dev/null)
+    now_epoch=$(date +%s)
+    hb_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || echo 0)
+    age=$((now_epoch - hb_epoch))
+
+    if [[ $age -lt 60 ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Monitor running, heartbeat ${age}s ago" "PASS" "12.5"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "Monitor heartbeat stale (${age}s old)" "WARN" "12.5" \
+            "Restart: make monitor-teardown && make monitor-setup" "" "recommended"
+    fi
+}
+
+check_openclaw_skillallow() {
+    local id="CHK-OPENCLAW-SKILLALLOW"
+    local allowlist="${HOME}/.openclaw/skill-allowlist.json"
+
+    if [[ ! -f "$allowlist" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Skill allowlist not found" "WARN" "12.6" \
+            "Run: make skillallow-add NAME=<skill> for each skill" "" "recommended"
+        return
+    fi
+
+    local repo_root
+    repo_root="$(resolve_repo_root "$SCRIPT_DIR" 2>/dev/null || echo "")"
+    local total=0 passed=0
+
+    # Check both repo skills and deployed agent skills
+    local -a skill_dirs=()
+    [[ -d "${repo_root}/openclaw/skills" ]] && skill_dirs+=("${repo_root}/openclaw/skills")
+    while IFS= read -r d; do
+        [[ -d "$d" ]] && skill_dirs+=("$d")
+    done < <(find "${HOME}/.openclaw/agents" -type d -name "skills" 2>/dev/null)
+
+    local -A seen_skills
+    for parent in "${skill_dirs[@]}"; do
+        for skill_dir in "${parent}"/*/; do
+            local skill_file="${skill_dir}SKILL.md"
+            [[ -f "$skill_file" ]] || continue
+            local name
+            name=$(basename "$skill_dir")
+            [[ -n "${seen_skills[$name]:-}" ]] && continue
+            seen_skills[$name]=1
+            total=$((total + 1))
+
+            local hash approved
+            hash=$(shasum -a 256 "$skill_file" | awk '{print $1}')
+            approved=$(jq -r --arg n "$name" '.skills[] | select(.name == $n) | .content_hash // empty' "$allowlist" 2>/dev/null)
+
+            [[ "$hash" == "$approved" ]] && passed=$((passed + 1))
+        done
+    done
+
+    if [[ $total -eq 0 ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "No skills installed" "PASS" "12.6"
+    elif [[ $passed -eq $total ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "All ${total} skills match allowlist hashes" "PASS" "12.6"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "$((total - passed))/${total} skills have hash mismatches" "FAIL" "12.6" \
+            "Re-approve: make skillallow-add NAME=<skill>"
+    fi
+}
+
+check_openclaw_symlink() {
+    local id="CHK-OPENCLAW-SYMLINK"
+
+    if ! type integrity_check_symlinks &>/dev/null; then
+        report_result "$id" "Workspace Integrity" \
+            "integrity.sh not loaded — cannot check symlinks" "SKIP" "12.7"
+        return
+    fi
+
+    local repo_root
+    repo_root="$(resolve_repo_root "$SCRIPT_DIR" 2>/dev/null || echo "")"
+
+    if integrity_check_symlinks "$repo_root" 2>/dev/null; then
+        report_result "$id" "Workspace Integrity" \
+            "No symlinks in protected directories" "PASS" "12.7"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "Symlinks found in protected directories" "FAIL" "12.7" \
+            "Remove symlinks from agent workspace and scripts directories"
+    fi
+}
+
+check_openclaw_platform_version() {
+    local id="CHK-OPENCLAW-PLATFORM-VERSION"
+    local manifest="${HOME}/.openclaw/manifest.json"
+
+    if [[ ! -f "$manifest" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Manifest not found — cannot verify platform version" "SKIP" "12.8"
+        return
+    fi
+
+    local manifest_ver current_ver
+    manifest_ver=$(jq -r '.platform_version // empty' "$manifest" 2>/dev/null)
+    current_ver=$(openclaw --version 2>/dev/null || echo "unknown")
+
+    if [[ -z "$manifest_ver" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "No platform version in manifest" "WARN" "12.8" \
+            "Rebuild manifest: make integrity-deploy"
+        return
+    fi
+
+    if [[ "$manifest_ver" == "$current_ver" ]]; then
+        report_result "$id" "Workspace Integrity" \
+            "Platform version matches manifest: ${current_ver}" "PASS" "12.8"
+    else
+        report_result "$id" "Workspace Integrity" \
+            "Platform version changed (manifest: ${manifest_ver}, current: ${current_ver})" "FAIL" "12.8" \
+            "Rebuild after update: make integrity-deploy && sudo make integrity-lock"
+    fi
+}
+
 main() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -2547,6 +2838,16 @@ main() {
     run_check check_openclaw_webhook_auth
     run_check check_openclaw_n8n_creds
     run_check check_openclaw_extraction_agent
+
+    # §12 Workspace Integrity checks (M4 — T040-T047)
+    run_check check_openclaw_integrity_lock
+    run_check check_openclaw_integrity_manifest
+    run_check check_openclaw_sandbox_mode
+    run_check check_openclaw_sandbox_tools
+    run_check check_openclaw_monitor_status
+    run_check check_openclaw_skillallow
+    run_check check_openclaw_symlink
+    run_check check_openclaw_platform_version
 
     # --- Output ---
     if $JSON_OUTPUT; then

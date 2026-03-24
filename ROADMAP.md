@@ -52,12 +52,13 @@ connection requests.
 
 ### Security and trust boundaries
 
-- [ ] Add CHK-OPENCLAW-* audit checks (process binding, credential storage, workspace file integrity)
-- [ ] Add HMAC signature verification on n8n webhooks (prove caller is OpenClaw, not arbitrary localhost process)
+- [x] Add CHK-OPENCLAW-* audit checks — 15 checks total: 7 agent security (M3), 8 workspace integrity (M4-accelerated)
+- [x] Add HMAC signature verification on n8n webhooks (prove caller is OpenClaw, not arbitrary localhost process)
 - [ ] Document agent authority: what credentials each trust domain holds
 - [ ] Collect trust boundary observations for TEA mapping (formalized in M5)
 - [ ] Document OAuth token lifecycle as agent credential management pattern
-- [ ] Checksum OpenClaw workspace files (SOUL.md, AGENTS.md, TOOLS.md) to detect tampering
+- [x] Checksum OpenClaw workspace files (SOUL.md, AGENTS.md, TOOLS.md) to detect tampering — HMAC-signed manifest, 49 protected files
+- [x] **011-workspace-integrity (pulled forward from M4)**: filesystem immutability (chflags uchg), agent sandbox isolation (ro workspace, tool restrictions), startup integrity verification (10 checks), continuous monitoring (fswatch + LaunchAgent), skill allowlist (content-hash identity), adversarial review (18 findings, 9 fixed). 46/58 tasks complete; 12 integration tests deferred until agent is running.
 
 ### Hardening observations
 
@@ -68,6 +69,23 @@ connection requests.
 **Demo**: Operator messages OpenClaw via Telegram, LLM drafts
 content, human approves, n8n workflow posts to LinkedIn and engages
 with community. Agent never touches LinkedIn credentials directly.
+
+---
+
+## Milestone 3.5: Workspace Integrity (pulled forward from M4)
+
+**Status**: 79% complete (46/58 tasks). Implementation done. Integration tests deferred until M3 agent is running.
+
+**Why pulled forward**: ClawHavoc supply chain attack (1,184 malicious skills on ClawHub, Feb 2026) made workspace integrity controls a prerequisite for safely deploying M3's LinkedIn automation. A compromised skill can rewrite CLAUDE.md — the agent's system prompt loaded every turn.
+
+**Defense layers implemented**:
+
+- **Prevent**: `chflags uchg` immutable flags on 49 protected files (kernel-enforced)
+- **Contain**: OpenClaw sandbox — read-only workspace, tool deny lists, zero-tool extraction agent
+- **Detect**: Pre-launch attestation (HMAC-signed manifest, checksums, env vars, symlinks, skill allowlist, platform version, pending-drafts schema) + continuous fswatch monitoring with signed heartbeat
+- **Verify**: 8 new CHK-OPENCLAW-* audit checks in hardening-audit.sh
+
+**Adversarial review**: 18 findings (3 CRITICAL, 6 HIGH, 6 MEDIUM, 3 LOW). 9 fixed. Key residual: HMAC trust anchor in Keychain accessible to same-user processes. Report: `specs/011-workspace-integrity/ADVERSARIAL-REVIEW-01.md`
 
 ---
 
@@ -123,7 +141,12 @@ Operator (Telegram / WhatsApp)
 Platform: openclaw-mac (this repo)
   ├── Colima + Docker runtime
   ├── macOS hardening (make audit, make fix)
-  └── n8n gateway (M1)
+  ├── n8n gateway (M1)
+  └── Workspace integrity (M3.5)
+        ├── chflags uchg on 49 protected files
+        ├── HMAC-signed manifest + skill allowlist
+        ├── fswatch continuous monitoring
+        └── Adversarial review: 18 findings
 
 Trust boundaries (TSP model):
   Operator ──── agent (OpenClaw) ──── orchestrator (n8n) ──── platform
