@@ -69,54 +69,66 @@ scripts/
 
 ## Implementation Phases
 
-### Phase 1: Expanded Protection Surface (US1)
+### Phase 1A: Expanded Protection Surface — Deploy (US1, Spec Phase A)
 
 **Purpose**: Add all newly identified files to the protected set, sign the allowlist, clean up git hooks and restore scripts.
 
 **Tasks**:
-1. Expand `_integrity_protected_file_patterns()` in `lib/integrity.sh` with R-007 file list
-2. Add HMAC signing to `skill-allowlist.sh` (wrap in state-file signing pattern)
-3. Update `integrity-verify.sh` to verify allowlist signature (FR-008)
-4. Add git hooks neutralization to `integrity-deploy.sh` (chmod -x, lock)
-5. Add restore scripts permission tightening to `integrity-deploy.sh`
-6. Add old backup detection and locking to `integrity-lock.sh`
-7. Add TMPDIR validation to `integrity_check_env_vars()` (FR-035)
-8. Add lib self-verification to all new scripts (FR-034)
-9. Verification: deploy + lock → verify expanded manifest includes new files
+1. Expand `_integrity_protected_file_patterns()` in `lib/integrity.sh` with R-007 file list (FR-001 through FR-006)
+2. Add HMAC signing to `skill-allowlist.sh` (wrap in state-file signing pattern, FR-007)
+3. Update `integrity-verify.sh` to verify allowlist signature before trusting entries (FR-008)
+4. Add git hooks neutralization to `integrity-deploy.sh`: chmod -x all hooks, respect hooks allowlist config for legitimate hooks (FR-005)
+5. Add restore scripts permission tightening (700) to `integrity-deploy.sh` (FR-006)
+6. Add TMPDIR validation to `integrity_check_env_vars()` — verify points to /tmp or /private/tmp (FR-035)
+7. Add lib self-verification (inline SHA-256 check) to all new scripts created in 012 (FR-034)
+8. Verification: deploy → verify expanded manifest includes all new files → verify allowlist signature valid
 
 **Dependencies**: None (first phase)
-**Risk**: Protected file list growth increases deploy/lock time. Mitigate by parallelizing checksums.
+**Risk**: Protected file list growth increases deploy/lock time. Mitigate by batching checksums.
+
+### Phase 1B: Expanded Protection Surface — Lock (US1, Spec Phase B)
+
+**Purpose**: Lock all files including newly protected ones. Separate from deploy to allow verification checkpoint between deploy and lock per spec Deployment Sequence.
+
+**Tasks**:
+1. Add old backup (openclaw.json.bak*) detection and locking to `integrity-lock.sh` (FR-004)
+2. Lock all files including newly protected set
+3. Verification: verify all files (including new) have uchg flag → attempt modification of newly protected file → verify "Operation not permitted"
+
+**Dependencies**: Phase 1A (deploy must run first)
 
 ### Phase 2: Hash-Chained Audit Log (US2)
 
 **Purpose**: Implement tamper-evident audit logging with append-only enforcement.
 
-**Tasks**:
-1. Update `integrity_audit_log()` in `lib/integrity.sh` to include `prev_hash` field
-2. Add hash chain verification function `integrity_verify_audit_chain()`
-3. Add `chflags uappnd` setup to `integrity-deploy.sh` (run after first log entry)
-4. Update all operations (lock, unlock, deploy, verify, allowlist, monitor) to log through the audit function
-5. Add audit log verification to `integrity-verify.sh`
-6. Add CHK-OPENCLAW-AUDIT-CHAIN audit check to `hardening-audit.sh`
-7. Verification: append entries → verify chain → attempt truncation → verify denied
+**Tasks** (MUST be implemented in this order):
+1. Update `integrity_audit_log()` in `lib/integrity.sh` to compute SHA-256 of the last log line and include it as `prev_hash` field in the new entry (FR-014b). First entry uses "GENESIS" as prev_hash. Validate entries are JSONL format (FR-014).
+2. Add hash chain verification function `integrity_verify_audit_chain()` that walks the log and verifies each entry's prev_hash matches the SHA-256 of the preceding line.
+3. Update all operations (lock, unlock, deploy, verify, allowlist, monitor) to log through the audit function. Each operation must include the specific detail fields required by FR-012 (error/warning counts) and FR-013 (file path, hashes, delivery status).
+4. Add audit log write failure detection: if append fails (disk full, permissions), alert operator immediately rather than silently dropping the event (Spec Edge Case 1).
+5. Add `chflags uappnd` setup to `integrity-deploy.sh` — MUST run AFTER Task 1 is deployed and at least one hash-chained entry exists (Spec Phase C ordering requirement).
+6. Document log rotation procedure: `sudo chflags nouappnd`, archive log, create new empty log, `sudo chflags uappnd`. Rotation event logged to new log.
+7. Add audit log verification to `integrity-verify.sh`
+8. Add CHK-OPENCLAW-AUDIT-CHAIN audit check to `hardening-audit.sh`
+9. Verification: append entries → verify chain → attempt truncation → verify denied → attempt insertion → verify chain detects
 
-**Dependencies**: Phase 1 (expanded file list must include audit log path)
-**Risk**: `uappnd` prevents log rotation. Mitigate by documenting rotation procedure (requires sudo to clear flag temporarily).
+**Dependencies**: Phase 1A (expanded file list must include audit log path)
+**Risk**: `uappnd` prevents log rotation. Mitigated by documented rotation procedure (Task 6).
 
 ### Phase 3: Container and Docker Integrity (US3)
 
 **Purpose**: Verify n8n container image and credential set.
 
 **Tasks**:
-1. Add container image ID capture to `integrity-deploy.sh` (R-004)
-2. Add container image verification to `integrity-verify.sh` (FR-015)
-3. Add credential enumeration to `integrity-verify.sh` (FR-017)
-4. Add container image monitoring to `integrity-monitor.sh` heartbeat cycle
-5. Add CHK-OPENCLAW-CONTAINER-IMAGE audit check
-6. Add CHK-OPENCLAW-CONTAINER-CREDS audit check
-7. Verification: record image → replace container → verify detection
+1. Add container image ID capture to `integrity-deploy.sh`: record image SHA-256 digest in manifest via `docker inspect` (FR-016). Record expected credential names (FR-017).
+2. Add container image verification to `integrity-verify.sh`: verify running image ID matches manifest (FR-015). Block agent launch on mismatch (FR-015).
+3. Add credential enumeration to `integrity-verify.sh`: list n8n credential names via `docker exec n8n n8n list:credentials`, compare against expected set, report unexpected credentials as potential compromise indicator (FR-017, FR-018).
+4. Add workflow export and comparison: export workflows from n8n and compare against version-controlled copies in `workflows/` (US3 acceptance scenario 2). Existing `check_n8n_workflows()` in integrity-verify.sh does this but needs to run on the verified container.
+5. Add container image monitoring to `integrity-monitor.sh`: periodically check image ID (e.g., every heartbeat cycle) and alert on change (US3 acceptance scenario 5).
+6. Add CHK-OPENCLAW-CONTAINER-IMAGE and CHK-OPENCLAW-CONTAINER-CREDS audit checks to `hardening-audit.sh`
+7. Verification: record image → replace container → verify detection at both startup and continuous monitoring
 
-**Dependencies**: Phase 1 (manifest extension with container fields)
+**Dependencies**: Phase 1A (manifest extension with container fields)
 **Risk**: `docker inspect` requires Docker socket access. Container may be stopped during check. Mitigate with graceful skip + warning.
 
 ### Phase 4: Browser Session Encryption (US4)
@@ -131,7 +143,7 @@ scripts/
 5. Add CHK-OPENCLAW-SESSION-ENCRYPTED audit check
 6. Verification: encrypt → verify not plaintext → decrypt → verify usable
 
-**Dependencies**: None (independent of other phases)
+**Dependencies**: Phase 2 (audit logging must be operational for session access logging per FR-021). Code can be written in parallel but deployment must follow Phase 2.
 **Risk**: If Keychain entry is lost, session cannot be decrypted. Mitigate by documenting recovery (re-login to LinkedIn manually).
 
 ### Phase 5: Output Sanitization (US5)
@@ -181,14 +193,17 @@ scripts/
 
 ### Phase 8: Polish and Cross-Cutting
 
-**Purpose**: Shellcheck, verification, documentation.
+**Purpose**: Shellcheck, verification, documentation, key rotation procedure.
 
 **Tasks**:
 1. Shellcheck all new/modified scripts (zero warnings)
 2. Full verification script for all 7 user stories
 3. Adversarial testing (state-actor scenarios from ADVERSARIAL-REVIEW-01.md)
-4. Update quickstart.md with verified commands
-5. Content notes for LinkedIn
+4. Create key rotation script/procedure: re-signs all 7+ signed artifacts (manifest, lock-state, heartbeat, allowlist, sequence, enforcement config) in documented order with rollback on interruption. Logs rotation event to audit trail.
+5. Update quickstart.md with verified commands
+6. Content notes for LinkedIn
+
+**Dependencies**: All previous phases
 
 ## Research Decisions
 
