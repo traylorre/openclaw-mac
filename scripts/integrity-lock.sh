@@ -62,6 +62,13 @@ main() {
     echo "$manifest" > "$INTEGRITY_MANIFEST"
     chmod 600 "$INTEGRITY_MANIFEST"
 
+    # Fix ownership — script runs as root but these files must be user-writable
+    # (monitoring LaunchAgent and unlock both run as the real user)
+    local real_user="${SUDO_USER:-$(whoami)}"
+    if [[ "$real_user" != "root" ]]; then
+        chown "$real_user" "$INTEGRITY_MANIFEST" "$INTEGRITY_LOCKSTATE"
+    fi
+
     local file_count
     file_count=$(echo "$manifest" | jq '.files | length')
 

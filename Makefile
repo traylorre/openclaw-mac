@@ -394,7 +394,7 @@ sandbox-setup: ## M4: Configure OpenClaw sandbox mode in openclaw.json
 	bash $(SCRIPTS)/sandbox-setup.sh
 
 sandbox-teardown: ## M4: Disable sandbox mode
-	bash $(SCRIPTS)/sandbox-setup.sh --teardown
+	bash $(SCRIPTS)/sandbox-teardown.sh
 
 monitor-setup: ## M4: Install and start file monitoring service
 	bash $(SCRIPTS)/integrity-monitor.sh --install

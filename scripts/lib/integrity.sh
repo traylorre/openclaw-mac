@@ -6,14 +6,19 @@
 # Provides: manifest read/write, HMAC signing, SHA-256 checksums,
 # protected file enumeration, symlink detection, lock state management.
 
-# --- Constants ---
+# --- Constants (exported for use by scripts that source this file) ---
+# shellcheck disable=SC2034
 readonly INTEGRITY_MANIFEST="${HOME}/.openclaw/manifest.json"
+# shellcheck disable=SC2034
 readonly INTEGRITY_ALLOWLIST="${HOME}/.openclaw/skill-allowlist.json"
+# shellcheck disable=SC2034
 readonly INTEGRITY_LOCKSTATE="${HOME}/.openclaw/lock-state.json"
+# shellcheck disable=SC2034
 readonly INTEGRITY_HEARTBEAT="${HOME}/.openclaw/integrity-monitor-heartbeat.json"
 readonly INTEGRITY_KEYCHAIN_SERVICE="integrity-manifest-key"
 readonly INTEGRITY_KEYCHAIN_ACCOUNT="openclaw"
 readonly INTEGRITY_MANIFEST_VERSION=1
+# shellcheck disable=SC2034
 readonly INTEGRITY_GRACE_MINUTES=5
 
 # --- Protected File List (FR-004) ---
@@ -76,12 +81,12 @@ integrity_check_symlinks() {
     local repo_root="$1"
     local violations=0
 
+    # Check enumerated protected files and their parent directories
     while IFS= read -r f; do
         if [[ -L "$f" ]]; then
             log_error "Symlink detected in protected path: ${f} -> $(readlink "$f")"
             violations=$((violations + 1))
         fi
-        # Check parent directories for symlinks
         local dir
         dir=$(dirname "$f")
         while [[ "$dir" != "/" && "$dir" != "$HOME" ]]; do
@@ -93,6 +98,24 @@ integrity_check_symlinks() {
             dir=$(dirname "$dir")
         done
     done < <(integrity_list_protected_files "$repo_root")
+
+    # Scan protected directories for ANY symlinks (catches planted files
+    # that find -type f would miss, e.g. attacker replaces SOUL.md with a symlink)
+    local openclaw_dir="${HOME}/.openclaw"
+    local protected_dirs=(
+        "${openclaw_dir}/agents"
+        "${openclaw_dir}/sandboxes"
+        "${repo_root}/workflows"
+        "${repo_root}/scripts"
+        "${repo_root}/scripts/templates/secrets"
+    )
+    for pdir in "${protected_dirs[@]}"; do
+        [[ -d "$pdir" ]] || continue
+        while IFS= read -r link; do
+            log_error "Symlink found in protected directory: ${link} -> $(readlink "$link")"
+            violations=$((violations + 1))
+        done < <(find "$pdir" -type l 2>/dev/null)
+    done
 
     return "$violations"
 }
@@ -208,6 +231,8 @@ integrity_categorize_file() {
 integrity_is_locked() {
     local file="$1"
     # Check if uchg flag is set
+    # macOS-specific: no alternative to ls -lO for BSD file flags
+    # shellcheck disable=SC2010
     if ls -lO "$file" 2>/dev/null | grep -q "uchg"; then
         echo "true"
     else
