@@ -178,7 +178,7 @@
 - [x] T055 Adversarial testing: symlink from writable data dir to protected workspace — initially MISSED (writable dir not in scan list). Fixed by adding `~/.openclaw/sandboxes` to `integrity_check_symlinks` protected_dirs. Now detected.
 - [x] T056 Adversarial testing: DYLD_INSERT_LIBRARIES crashes process before check runs (dyld terminates). NODE_OPTIONS=--require=/tmp/evil.js correctly detected and blocks startup. Both env vars checked.
 - [ ] T057 Full end-to-end: deferred — requires running agent + n8n + monitor
-- [ ] T058 Update ROADMAP.md: deferred — document completion status after remaining items
+- [x] T058 Update ROADMAP.md: added M3.5 section documenting workspace integrity as pulled-forward milestone, updated M3 security checklist, updated architecture diagram
 
 ---
 
