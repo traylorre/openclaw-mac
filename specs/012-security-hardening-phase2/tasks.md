@@ -58,15 +58,15 @@
 - [ ] T014 [US2] Add `integrity_verify_audit_chain()` to `scripts/lib/integrity.sh`: walk the log file line-by-line, verify each entry's `prev_hash` matches the SHA-256 of the preceding line. Return count of violations.
 - [ ] T015 [US2] Update all operations to include required detail fields in audit log entries: `integrity-lock.sh` (file count, operator — FR-010), `integrity-unlock.sh` (file path, operator — FR-010), `integrity-deploy.sh` (manifest version, file count — FR-010), `integrity-verify.sh` (pass/fail, error count, warning count, specific failures — FR-012), `integrity-monitor.sh` (file path, expected hash, actual hash, delivery status — FR-013), `skill-allowlist.sh` (skill name, content hash — FR-010)
 - [ ] T016 [US2] Add audit log write failure detection to `integrity_audit_log()`: if append fails (disk full, permission denied), print error to stderr and attempt to alert operator via alternative channel (FR-009 edge case)
-- [ ] T017 [US2] Add `chflags uappnd` setup to `scripts/integrity-deploy.sh`: after first hash-chained log entry is written, set the append-only flag (FR-009). Must run AFTER T013 is deployed. Include ownership fix (chown to $SUDO_USER if running as root)
-- [ ] T018 [P] [US2] Document audit log rotation procedure in `specs/012-security-hardening-phase2/quickstart.md`: `sudo chflags nouappnd` → archive → create new log → `sudo chflags uappnd`. Log rotation event to new log.
-- [ ] T019 [US2] Add audit log chain verification to `scripts/integrity-verify.sh`: new `check_audit_chain()` function calls `integrity_verify_audit_chain()`, fails if violations found
-- [ ] T020 [US2] Add CHK-OPENCLAW-AUDIT-CHAIN check to `scripts/hardening-audit.sh`: verify hash chain integrity, verify uappnd flag is set, report entry count
+- [ ] T017 [US2] Add `chflags uappnd` setup to `scripts/integrity-deploy.sh`: after first hash-chained log entry is written, set the append-only flag (FR-009). Must run AFTER T018 is deployed. Include ownership fix (chown to $SUDO_USER if running as root)
+- [ ] T019 [P] [US2] Document audit log rotation procedure in `specs/012-security-hardening-phase2/quickstart.md`: `sudo chflags nouappnd` → archive → create new log → `sudo chflags uappnd`. Log rotation event to new log.
+- [ ] T020 [US2] Add audit log chain verification to `scripts/integrity-verify.sh`: new `check_audit_chain()` function calls `integrity_verify_audit_chain()`, fails if violations found
+- [ ] T021 [US2] Add CHK-OPENCLAW-AUDIT-CHAIN check to `scripts/hardening-audit.sh`: verify hash chain integrity, verify uappnd flag is set, report entry count
 
 ### Verification
 
-- [ ] T021 [US2] Verification: append entries → verify chain validates → attempt to truncate log → verify "Operation not permitted" → insert a forged entry in the middle → verify chain verification detects the break
-- [ ] T022 [US2] Verification: run lock/unlock/deploy/verify/skill-add sequence → verify each generates audit log entry with all required fields (timestamp, action, operator, pid, details, prev_hash)
+- [ ] T022 [US2] Verification: append entries → verify chain validates → attempt to truncate log → verify "Operation not permitted" → insert a forged entry in the middle → verify chain verification detects the break
+- [ ] T023 [US2] Verification: run lock/unlock/deploy/verify/skill-add sequence → verify each generates audit log entry with all required fields (timestamp, action, operator, pid, details, prev_hash)
 
 **Checkpoint**: US2 complete. Audit log is hash-chained and append-only. All privileged operations logged.
 
@@ -76,17 +76,17 @@
 
 **Purpose**: Verify orchestration container image and credential set.
 
-- [ ] T023 [US3] Add container image ID capture to `scripts/integrity-deploy.sh`: use `docker inspect --format '{{.Image}}' n8n` to record SHA-256 digest in manifest under `container_image_id` field (FR-016). Also record expected credential names via `docker exec n8n n8n list:credentials --format=json | jq '.[].name'` under `expected_credentials` (FR-017)
-- [ ] T024 [US3] Add `check_container_image()` to `scripts/integrity-verify.sh`: verify running container image ID matches manifest's `container_image_id`. Block agent launch on mismatch (FR-015). Gracefully skip with warning if container is not running.
-- [ ] T025 [US3] Add `check_container_credentials()` to `scripts/integrity-verify.sh`: enumerate n8n credential names, compare against `expected_credentials` from manifest. Report unexpected credentials as "potential compromise indicator" (FR-017, FR-018)
-- [ ] T026 [US3] Enhance `check_n8n_workflows()` in `scripts/integrity-verify.sh`: export workflows from running container via `docker exec n8n n8n export:workflow --all`, compare against version-controlled copies in `workflows/` using jq (ignore metadata: updatedAt, createdAt, versionId). Report specific workflow mismatches. Must run AFTER container image verification passes (US3 acceptance scenario 2)
-- [ ] T027 [US3] Add container image monitoring to `scripts/integrity-monitor.sh`: in the heartbeat cycle, check current container image ID against manifest. Alert operator if changed (US3 acceptance scenario 5)
-- [ ] T028 [P] [US3] Add CHK-OPENCLAW-CONTAINER-IMAGE and CHK-OPENCLAW-CONTAINER-CREDS checks to `scripts/hardening-audit.sh`
+- [ ] T024 [US3] Add container image ID capture to `scripts/integrity-deploy.sh`: use `docker inspect --format '{{.Image}}' n8n` to record SHA-256 digest in manifest under `container_image_id` field (FR-016). Also record expected credential names via `docker exec n8n n8n list:credentials --format=json | jq '.[].name'` under `expected_credentials` (FR-017)
+- [ ] T025 [US3] Add `check_container_image()` to `scripts/integrity-verify.sh`: verify running container image ID matches manifest's `container_image_id`. Block agent launch on mismatch (FR-015). Gracefully skip with warning if container is not running.
+- [ ] T026 [US3] Add `check_container_credentials()` to `scripts/integrity-verify.sh`: enumerate n8n credential names, compare against `expected_credentials` from manifest. Report unexpected credentials as "potential compromise indicator" (FR-017, FR-018)
+- [ ] T027 [US3] Enhance `check_n8n_workflows()` in `scripts/integrity-verify.sh`: export workflows from running container via `docker exec n8n n8n export:workflow --all`, compare against version-controlled copies in `workflows/` using jq (ignore metadata: updatedAt, createdAt, versionId). Report specific workflow mismatches. Must run AFTER container image verification passes (US3 acceptance scenario 2)
+- [ ] T028 [US3] Add container image monitoring to `scripts/integrity-monitor.sh`: in the heartbeat cycle, check current container image ID against manifest. Alert operator if changed (US3 acceptance scenario 5)
+- [ ] T029 [P] [US3] Add CHK-OPENCLAW-CONTAINER-IMAGE and CHK-OPENCLAW-CONTAINER-CREDS checks to `scripts/hardening-audit.sh`
 
 ### Verification
 
-- [ ] T029 [US3] Verification: record n8n image ID in manifest → stop n8n → start different image with same name → run integrity-verify → verify image mismatch detected → restore correct image → verify passes
-- [ ] T030 [US3] Verification: add unexpected credential to n8n → run integrity-verify → verify unexpected credential flagged as compromise indicator
+- [ ] T030 [US3] Verification: record n8n image ID in manifest → stop n8n → start different image with same name → run integrity-verify → verify image mismatch detected → restore correct image → verify passes
+- [ ] T031 [US3] Verification: add unexpected credential to n8n → run integrity-verify → verify unexpected credential flagged as compromise indicator
 
 **Checkpoint**: US3 complete. Container image and credential set verified at startup and continuously.
 
@@ -98,15 +98,15 @@
 
 **Dependencies**: Phase 2 (audit logging for session access events per FR-021)
 
-- [ ] T033 [US4] Create `scripts/session-encrypt.sh` with subcommands: `encrypt` (AES-256-GCM via openssl, key from Keychain service `session-encryption-key`), `decrypt --temp` (decrypt to temporary file, return path), `status` (check if encrypted). Use `security add-generic-password` for key generation if not exists (FR-019, FR-020)
+- [ ] T032 [US4] Create `scripts/session-encrypt.sh` with subcommands: `encrypt` (AES-256-GCM via openssl, key from Keychain service `session-encryption-key`), `decrypt --temp` (decrypt to temporary file, return path), `status` (check if encrypted). Use `security add-generic-password` for key generation if not exists (FR-019, FR-020)
 - [ ] T033 [US4] Add secure deletion of plaintext after encryption in `scripts/session-encrypt.sh`: overwrite with random bytes before unlinking (`dd if=/dev/urandom of=<file> bs=1 count=<size> && rm`) (FR-022)
-- [ ] T033 [US4] Add session access audit logging to `scripts/session-encrypt.sh`: log decrypt events to integrity audit log with timestamp and calling context (FR-021)
+- [ ] T034 [US4] Add session access audit logging to `scripts/session-encrypt.sh`: log decrypt events to integrity audit log with timestamp and calling context (FR-021)
 - [ ] T035 [P] [US4] Add CHK-OPENCLAW-SESSION-ENCRYPTED check to `scripts/hardening-audit.sh`: verify storageState file is encrypted (not plaintext JSON), verify encryption key exists in Keychain
-- [ ] T035 [P] [US4] Add Makefile targets: `session-encrypt`, `session-decrypt`, `session-status`
+- [ ] T036 [P] [US4] Add Makefile targets: `session-encrypt`, `session-decrypt`, `session-status`
 
 ### Verification
 
-- [ ] T036 [US4] Verification: encrypt storageState → verify file is not readable as JSON → attempt to read raw bytes → verify encrypted → decrypt to temp → verify usable JSON → verify temp file deleted after use → verify audit log entry for decrypt event
+- [ ] T037 [US4] Verification: encrypt storageState → verify file is not readable as JSON → attempt to read raw bytes → verify encrypted → decrypt to temp → verify usable JSON → verify temp file deleted after use → verify audit log entry for decrypt event
 
 **Checkpoint**: US4 complete. Browser session credentials encrypted at rest.
 
@@ -119,12 +119,12 @@
 **Dependencies**: Phase 1A (workflow files in protected set per FR-036)
 
 - [ ] T038 [US5] Add sanitization Code node to `workflows/linkedin-post.json`: insert after HMAC verification node, before LinkedIn API node. Validates: (1) required fields present with correct types (FR-023), (2) no control characters in content fields — reject null bytes, escape sequences, terminal injection (FR-024), (3) content length within limits: 3000 chars for posts, 1250 for comments (FR-025)
-- [ ] T038 [US5] Add rejection logging and operator notification to sanitization node: on validation failure, return structured error with rejection reason, log to audit trail, trigger error-handler workflow for operator notification (FR-026)
-- [ ] T039 [P] [US5] Create sanitization test payloads in `specs/012-security-hardening-phase2/test-payloads/`: valid payload, payload with null bytes, payload with escape sequences, oversized payload, payload missing required fields, payload with unexpected fields, payload with wrong types
+- [ ] T039 [US5] Add rejection logging and operator notification to sanitization node: on validation failure, return structured error with rejection reason, log to audit trail, trigger error-handler workflow for operator notification (FR-026)
+- [ ] T040 [P] [US5] Create sanitization test payloads in `specs/012-security-hardening-phase2/test-payloads/`: valid payload, payload with null bytes, payload with escape sequences, oversized payload, payload missing required fields, payload with unexpected fields, payload with wrong types
 
 ### Verification
 
-- [ ] T040 [US5] Verification: send each test payload to linkedin-post webhook → verify valid payload passes through → verify all injection payloads rejected with specific error → verify rejection events in audit log → verify operator notified
+- [ ] T041 [US5] Verification: send each test payload to linkedin-post webhook → verify valid payload passes through → verify all injection payloads rejected with specific error → verify rejection events in audit log → verify operator notified
 
 **Checkpoint**: US5 complete. Webhook payloads sanitized before reaching external APIs.
 
@@ -136,15 +136,15 @@
 
 **Dependencies**: Phase 2 (audit logging for rollback events)
 
-- [ ] T046 [US6] Add `manifest_sequence` counter to `integrity_build_manifest()` in `scripts/lib/integrity.sh`: read current sequence from `~/.openclaw/manifest-sequence.json`, increment, include in manifest (FR-027)
-- [ ] T046 [US6] Create `~/.openclaw/manifest-sequence.json` signed state file management: `integrity_read_sequence()` reads and verifies signature, `integrity_write_sequence()` writes and signs (FR-029). First deploy initializes sequence to 1.
-- [ ] T046 [US6] Add sequence verification to `scripts/integrity-verify.sh`: new `check_manifest_sequence()` function reads last verified sequence from signed state file, compares to manifest sequence, fails if manifest sequence < last verified (FR-028). Log rollback attempt to audit trail.
-- [ ] T046 [US6] Add `--force` flag to `scripts/integrity-deploy.sh`: when set, resets sequence counter with audit trail warning (FR-030). Without flag, sequence must only increase.
+- [ ] T042 [US6] Add `manifest_sequence` counter to `integrity_build_manifest()` in `scripts/lib/integrity.sh`: read current sequence from `~/.openclaw/manifest-sequence.json`, increment, include in manifest (FR-027)
+- [ ] T043 [US6] Create `~/.openclaw/manifest-sequence.json` signed state file management: `integrity_read_sequence()` reads and verifies signature, `integrity_write_sequence()` writes and signs (FR-029). First deploy initializes sequence to 1.
+- [ ] T044 [US6] Add sequence verification to `scripts/integrity-verify.sh`: new `check_manifest_sequence()` function reads last verified sequence from signed state file, compares to manifest sequence, fails if manifest sequence < last verified (FR-028). Log rollback attempt to audit trail.
+- [ ] T045 [US6] Add `--force` flag to `scripts/integrity-deploy.sh`: when set, resets sequence counter with audit trail warning (FR-030). Without flag, sequence must only increase.
 
 ### Verification
 
 - [ ] T046 [US6] Verification: deploy manifest (seq=1) → deploy again (seq=2) → copy seq=1 manifest back → run integrity-verify → verify rollback detected and agent launch blocked → verify audit log records rollback attempt
-- [ ] T046 [US6] Verification: deploy with `--force` → verify sequence resets → verify audit log records the force reset with warning
+- [ ] T047 [US6] Verification: deploy with `--force` → verify sequence resets → verify audit log records the force reset with warning
 
 **Checkpoint**: US6 complete. Manifest rollback attacks detected and blocked.
 
@@ -156,18 +156,18 @@
 
 **Dependencies**: Phase 1A (enforcement.json in protected set), Phase 2 (audit logging for bypass events)
 
-- [ ] T050 [US7] Create `scripts/enforcement-setup.sh`: create `~/.openclaw/enforcement.json` with default enforced checks (sandbox_enabled, manifest_signature, files_locked, allowlist_valid), sign with HMAC (R-008)
-- [ ] T050 [US7] Modify `scripts/integrity-verify.sh`: load enforcement config, for each enforced check, change from `warn()` to `fail()` on failure (FR-031). Implement hardcoded minimum set that cannot be disabled: sandbox_enabled, manifest_signature (FR-033).
+- [ ] T048 [US7] Create `scripts/enforcement-setup.sh`: create `~/.openclaw/enforcement.json` with default enforced checks (sandbox_enabled, manifest_signature, files_locked, allowlist_valid), sign with HMAC (R-008)
+- [ ] T049 [US7] Modify `scripts/integrity-verify.sh`: load enforcement config, for each enforced check, change from `warn()` to `fail()` on failure (FR-031). Implement hardcoded minimum set that cannot be disabled: sandbox_enabled, manifest_signature (FR-033).
 - [ ] T050 [US7] Add `FORCE=1` bypass to `scripts/integrity-verify.sh`: when set, enforced checks warn instead of fail. Log bypass event to audit trail with operator identity (FR-032)
-- [ ] T050 [US7] Add enforcement.json to protected file list and lock with uchg (FR-033)
+- [ ] T051 [US7] Add enforcement.json to protected file list and lock with uchg (FR-033)
 - [ ] T052 [P] [US7] Add CHK-OPENCLAW-ENFORCEMENT check to `scripts/hardening-audit.sh`: verify enforcement.json exists, is signed, and contains the hardcoded minimum set
-- [ ] T052 [P] [US7] Add Makefile targets: `enforcement-setup`, `enforcement-status`
+- [ ] T053 [P] [US7] Add Makefile targets: `enforcement-setup`, `enforcement-status`
 
 ### Verification
 
-- [ ] T055 [US7] Verification: enable enforcement → disable sandbox → run integrity-verify → verify FAILS (not warns) → re-enable sandbox → verify PASSES
+- [ ] T054 [US7] Verification: enable enforcement → disable sandbox → run integrity-verify → verify FAILS (not warns) → re-enable sandbox → verify PASSES
 - [ ] T055 [US7] Verification: enable enforcement → run with FORCE=1 → verify warns but does not block → verify audit log records bypass event
-- [ ] T055 [US7] Verification: attempt to remove sandbox_enabled from enforced checks via enforcement.json edit → verify hardcoded minimum prevents removal
+- [ ] T056 [US7] Verification: attempt to remove sandbox_enabled from enforced checks via enforcement.json edit → verify hardcoded minimum prevents removal
 
 **Checkpoint**: US7 complete. Critical audit checks enforced at startup.
 
@@ -177,12 +177,12 @@
 
 **Purpose**: Shellcheck, verification, key rotation, documentation.
 
-- [ ] T056 Run shellcheck on all new/modified scripts: `session-encrypt.sh`, `enforcement-setup.sh`, `lib/integrity.sh`, `integrity-verify.sh`, `integrity-deploy.sh`, `integrity-lock.sh`, `integrity-monitor.sh`, `skill-allowlist.sh`, `hardening-audit.sh` — zero warnings required per Constitution VI
-- [ ] T057 Create key rotation script `scripts/integrity-key-rotate.sh`: re-sign all signed artifacts (manifest, lock-state, heartbeat, allowlist, sequence, enforcement) in documented order. Log rotation event to audit trail. Handle interruption gracefully (rollback to old key if incomplete)
-- [ ] T058 Full verification script `scripts/integrity-verify-phase2.sh`: automated assertions for all 7 user stories
-- [ ] T059 Adversarial testing: state-actor scenarios from ADVERSARIAL-REVIEW-01.md — attempt manifest forgery, grace period exploitation, heartbeat forgery, container replacement, session exfiltration
-- [ ] T060 Update `specs/012-security-hardening-phase2/quickstart.md` with verified commands
-- [ ] T061 Content notes for LinkedIn: capture findings for social-content inbox
+- [ ] T057 Run shellcheck on all new/modified scripts: `session-encrypt.sh`, `enforcement-setup.sh`, `lib/integrity.sh`, `integrity-verify.sh`, `integrity-deploy.sh`, `integrity-lock.sh`, `integrity-monitor.sh`, `skill-allowlist.sh`, `hardening-audit.sh` — zero warnings required per Constitution VI
+- [ ] T058 Create key rotation script `scripts/integrity-key-rotate.sh`: re-sign all signed artifacts (manifest, lock-state, heartbeat, allowlist, sequence, enforcement) in documented order. Log rotation event to audit trail. Handle interruption gracefully (rollback to old key if incomplete)
+- [ ] T059 Full verification script `scripts/integrity-verify-phase2.sh`: automated assertions for all 7 user stories
+- [ ] T060 Adversarial testing: state-actor scenarios from ADVERSARIAL-REVIEW-01.md — attempt manifest forgery, grace period exploitation, heartbeat forgery, container replacement, session exfiltration
+- [ ] T061 Update `specs/012-security-hardening-phase2/quickstart.md` with verified commands
+- [ ] T062 Content notes for LinkedIn: capture findings for social-content inbox
 
 ---
 
