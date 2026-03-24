@@ -24,6 +24,10 @@ OPENCLAW_DIR := $(HOME)/.openclaw
 	manifest-update manifest-clean \
 	workflow-export workflow-import workflow-clean \
 	m3-teardown \
+	integrity-deploy integrity-lock integrity-unlock integrity-verify \
+	sandbox-setup sandbox-teardown \
+	monitor-setup monitor-teardown monitor-status \
+	skillallow-add skillallow-remove \
 	setup-gateway teardown-gateway shellrc shellrc-undo
 
 help: ## Show available targets
@@ -361,6 +365,53 @@ m3-teardown: ## M3: Remove ALL M3 artifacts (agents, secrets, image, manifest, w
 	@$(MAKE) --no-print-directory ollama-model-teardown
 	@echo ""
 	@echo "M3 teardown complete. Shared tools (Bun, OpenClaw, Ollama) left in place."
+
+# ===========================================================================
+# M4: Workspace Integrity and Host Isolation (011-workspace-integrity)
+#
+# Defense layers: Prevent (chflags uchg) → Contain (sandbox) →
+#   Detect (startup check + monitoring) → Verify (audit)
+#
+# Typical flow:
+#   sandbox-setup → skillallow-add → integrity-deploy → integrity-lock
+#   → monitor-setup → audit
+# ===========================================================================
+
+integrity-deploy: ## M4: Deploy workspace files, create signed manifest
+	bash $(SCRIPTS)/integrity-deploy.sh
+
+integrity-lock: ## M4: Set immutable flags on all protected files (requires sudo)
+	sudo bash $(SCRIPTS)/integrity-lock.sh
+
+integrity-unlock: ## M4: Unlock a specific file for editing (requires sudo, FILE=<path>)
+	@if [ -z "$(FILE)" ]; then echo "Usage: make integrity-unlock FILE=<path>"; exit 1; fi
+	sudo bash $(SCRIPTS)/integrity-unlock.sh --file "$(FILE)"
+
+integrity-verify: ## M4: Run integrity check without starting agent (dry-run)
+	bash $(SCRIPTS)/integrity-verify.sh --dry-run
+
+sandbox-setup: ## M4: Configure OpenClaw sandbox mode in openclaw.json
+	bash $(SCRIPTS)/sandbox-setup.sh
+
+sandbox-teardown: ## M4: Disable sandbox mode
+	bash $(SCRIPTS)/sandbox-teardown.sh
+
+monitor-setup: ## M4: Install and start file monitoring service
+	bash $(SCRIPTS)/integrity-monitor.sh --install
+
+monitor-teardown: ## M4: Stop and remove file monitoring service
+	bash $(SCRIPTS)/integrity-monitor.sh --uninstall
+
+monitor-status: ## M4: Check monitoring service status and heartbeat
+	bash $(SCRIPTS)/integrity-monitor.sh --status
+
+skillallow-add: ## M4: Add a skill to the allowlist (NAME=<skill-name>)
+	@if [ -z "$(NAME)" ]; then echo "Usage: make skillallow-add NAME=<skill-name>"; exit 1; fi
+	bash $(SCRIPTS)/skill-allowlist.sh add "$(NAME)"
+
+skillallow-remove: ## M4: Remove a skill from the allowlist (NAME=<skill-name>)
+	@if [ -z "$(NAME)" ]; then echo "Usage: make skillallow-remove NAME=<skill-name>"; exit 1; fi
+	bash $(SCRIPTS)/skill-allowlist.sh remove "$(NAME)"
 
 # ===========================================================================
 # Backwards compatibility aliases (M1/M2 used verb-noun naming)

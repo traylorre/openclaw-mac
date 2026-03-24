@@ -4,7 +4,7 @@ On restart, perform these checks:
 
 ## 1. Check Pending Drafts
 
-Read `~/.openclaw/agents/linkedin-persona/pending-drafts.json`.
+Read `~/.openclaw/sandboxes/linkedin-persona/data/pending-drafts.json`.
 For each entry with `status: "presented"`:
 
 1. Present the draft to the operator:
