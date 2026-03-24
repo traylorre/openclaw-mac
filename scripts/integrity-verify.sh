@@ -21,6 +21,31 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+
+# ADV-008: Verify integrity of sourced library before sourcing.
+# Uses only builtins (shasum) — cannot rely on integrity.sh functions yet.
+_verify_lib_integrity() {
+    local lib_path="${SCRIPT_DIR}/lib/integrity.sh"
+    local manifest="${HOME}/.openclaw/manifest.json"
+
+    if [[ ! -f "$manifest" || ! -f "$lib_path" ]]; then
+        return 0  # No manifest yet — skip (first deploy)
+    fi
+
+    local actual_hash expected_hash
+    actual_hash=$(shasum -a 256 "$lib_path" | awk '{print $1}')
+    expected_hash=$(jq -r --arg p "$lib_path" '.files[] | select(.path == $p) | .sha256 // empty' "$manifest" 2>/dev/null)
+
+    if [[ -n "$expected_hash" && "$actual_hash" != "$expected_hash" ]]; then
+        printf "\033[0;31m[ERROR]\033[0m lib/integrity.sh integrity violation detected\n" >&2
+        printf "\033[0;31m[ERROR]\033[0m   expected: %s\n" "$expected_hash" >&2
+        printf "\033[0;31m[ERROR]\033[0m   actual:   %s\n" "$actual_hash" >&2
+        printf "\033[0;31m[ERROR]\033[0m   Library may have been tampered with. Rebuild: make integrity-deploy\n" >&2
+        exit 1
+    fi
+}
+_verify_lib_integrity
+
 # shellcheck source=lib/integrity.sh
 source "${SCRIPT_DIR}/lib/integrity.sh"
 
@@ -206,6 +231,44 @@ check_pending_drafts() {
         content_len=$(echo "$entry" | jq -r '.content | length' 2>/dev/null)
         if [[ "$content_len" -gt "$max_content_length" ]]; then
             fail "pending-drafts content exceeds ${max_content_length} chars (got ${content_len})"
+            violations=$((violations + 1))
+        fi
+
+        # ADV-014: Type validation — id must be UUID-like
+        local id_val
+        id_val=$(echo "$entry" | jq -r '.id // empty' 2>/dev/null)
+        if [[ -n "$id_val" ]] && ! echo "$id_val" | grep -qE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+            fail "pending-drafts entry has non-UUID id: ${id_val:0:40}"
+            violations=$((violations + 1))
+        fi
+
+        # ADV-014: Enum validation — status must be known value
+        local status_val
+        status_val=$(echo "$entry" | jq -r '.status // empty' 2>/dev/null)
+        case "$status_val" in
+            draft|presented|approved|rejected|published|failed) ;;
+            *)
+                fail "pending-drafts entry has invalid status: ${status_val}"
+                violations=$((violations + 1))
+                ;;
+        esac
+
+        # ADV-014: Enum validation — type must be known value
+        local type_val
+        type_val=$(echo "$entry" | jq -r '.type // empty' 2>/dev/null)
+        case "$type_val" in
+            post|comment|like|share|article) ;;
+            *)
+                fail "pending-drafts entry has invalid type: ${type_val}"
+                violations=$((violations + 1))
+                ;;
+        esac
+
+        # ADV-014: ISO-8601 format for created_at
+        local created_val
+        created_val=$(echo "$entry" | jq -r '.created_at // empty' 2>/dev/null)
+        if [[ -n "$created_val" ]] && ! echo "$created_val" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then
+            fail "pending-drafts entry has invalid created_at format: ${created_val}"
             violations=$((violations + 1))
         fi
     done < <(jq -c '.[]' "$PENDING_DRAFTS" 2>/dev/null)

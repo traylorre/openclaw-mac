@@ -66,7 +66,7 @@ main() {
     # (monitoring LaunchAgent and unlock both run as the real user)
     local real_user="${SUDO_USER:-$(whoami)}"
     if [[ "$real_user" != "root" ]]; then
-        chown "$real_user" "$INTEGRITY_MANIFEST" "$INTEGRITY_LOCKSTATE"
+        chown "$real_user" "$INTEGRITY_MANIFEST" "$INTEGRITY_LOCKSTATE" "$INTEGRITY_AUDIT_LOG" 2>/dev/null || true
     fi
 
     local file_count
