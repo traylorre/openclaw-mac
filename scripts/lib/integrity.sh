@@ -63,6 +63,38 @@ _integrity_protected_file_patterns() {
              "${repo_root}/.env"; do
         [[ -f "$f" ]] && echo "$f"
     done
+
+    # --- 012: Expanded Protection Surface (FR-001 through FR-006) ---
+
+    # LLM routing configuration (FR-001)
+    find "${openclaw_dir}/agents" -name "models.json" -type f 2>/dev/null
+
+    # Agent session state (FR-002)
+    find "${openclaw_dir}/agents" -path "*/.openclaw/workspace-state.json" -type f 2>/dev/null
+
+    # Development tool permissions (FR-003)
+    if [[ -f "${repo_root}/.claude/settings.local.json" ]]; then
+        echo "${repo_root}/.claude/settings.local.json"
+    fi
+
+    # Old configuration backups (FR-004)
+    for f in "${openclaw_dir}"/openclaw.json.bak*; do
+        [[ -f "$f" ]] && echo "$f"
+    done
+
+    # Restore scripts (FR-006)
+    find "${openclaw_dir}/restore-scripts" -type f 2>/dev/null
+
+    # Integrity state files (rollback counter, enforcement config, hooks allowlist)
+    for f in "${openclaw_dir}/manifest-sequence.json" \
+             "${openclaw_dir}/enforcement.json" \
+             "${openclaw_dir}/hooks-allowlist.json"; do
+        [[ -f "$f" ]] && echo "$f"
+    done
+
+    # LaunchAgent plists (templates + deployed)
+    find "${repo_root}/scripts/launchd" -name "*.plist" -type f 2>/dev/null
+    find "${repo_root}/scripts/templates" -name "*.plist" -type f 2>/dev/null
 }
 
 integrity_list_protected_files() {
@@ -414,6 +446,18 @@ integrity_check_env_vars() {
     if [[ -n "$expected_home" && "$HOME" != "$expected_home" ]]; then
         log_error "HOME override detected: ${HOME} (expected ${expected_home})"
         violations=$((violations + 1))
+    fi
+
+    # TMPDIR must be system default or unset (FR-035)
+    if [[ -n "${TMPDIR:-}" ]]; then
+        case "$TMPDIR" in
+            /tmp|/tmp/|/private/tmp|/private/tmp/|/var/folders/*)
+                ;; # macOS default locations are safe
+            *)
+                log_error "TMPDIR override detected: ${TMPDIR} (expected /tmp, /private/tmp, or /var/folders/*)"
+                violations=$((violations + 1))
+                ;;
+        esac
     fi
 
     return "$violations"

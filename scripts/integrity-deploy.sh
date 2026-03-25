@@ -119,10 +119,95 @@ main() {
     # Deploy workspace files
     deploy_workspace_files
 
+    # 012 T002: Neutralize git hooks in agent workspaces (FR-005)
+    neutralize_git_hooks
+
+    # 012 T003: Tighten restore script permissions (FR-006)
+    tighten_restore_scripts
+
     # Create signed manifest
     create_manifest
 
+    integrity_audit_log "deploy" "manifest created with $(jq '.files | length' "$INTEGRITY_MANIFEST" 2>/dev/null) files"
     log_info "Deploy complete. Run 'sudo make integrity-lock' to set immutable flags."
+}
+
+neutralize_git_hooks() {
+    log_step "Neutralizing git hooks in protected directories"
+    local openclaw_dir="${HOME}/.openclaw"
+    local hooks_neutralized=0
+
+    # Load hooks allowlist (if exists and signed)
+    local allowed_hooks=()
+    if [[ -f "${openclaw_dir}/hooks-allowlist.json" ]]; then
+        if integrity_verify_state_file "${openclaw_dir}/hooks-allowlist.json"; then
+            while IFS= read -r h; do
+                allowed_hooks+=("$h")
+            done < <(jq -r '.allowed_hooks[]' "${openclaw_dir}/hooks-allowlist.json" 2>/dev/null)
+        else
+            log_warn "Hooks allowlist signature invalid — treating all hooks as unauthorized"
+        fi
+    fi
+
+    # Scan agent workspaces and repo root
+    local hook_dirs=()
+    while IFS= read -r d; do
+        hook_dirs+=("$d")
+    done < <(find "${openclaw_dir}/agents" -type d -name "hooks" -path "*/.git/*" 2>/dev/null)
+    [[ -d "${REPO_ROOT}/.git/hooks" ]] && hook_dirs+=("${REPO_ROOT}/.git/hooks")
+
+    for hooks_dir in "${hook_dirs[@]}"; do
+        find "$hooks_dir" -type f 2>/dev/null | while IFS= read -r hook; do
+            local hook_name
+            hook_name=$(basename "$hook")
+
+            # Check allowlist
+            local is_allowed=false
+            for allowed in "${allowed_hooks[@]}"; do
+                if [[ "$hook_name" == "$allowed" ]]; then
+                    is_allowed=true
+                    break
+                fi
+            done
+
+            if $is_allowed; then
+                log_debug "Hook allowed: ${hook}"
+                continue
+            fi
+
+            # Remove execute permission
+            if [[ -x "$hook" ]]; then
+                chmod -x "$hook"
+                hooks_neutralized=$((hooks_neutralized + 1))
+                log_debug "Neutralized: ${hook}"
+            fi
+        done
+    done
+
+    if [[ $hooks_neutralized -gt 0 ]]; then
+        log_info "Neutralized ${hooks_neutralized} git hooks (chmod -x)"
+    else
+        log_info "No active git hooks to neutralize"
+    fi
+}
+
+tighten_restore_scripts() {
+    local restore_dir="${HOME}/.openclaw/restore-scripts"
+    if [[ ! -d "$restore_dir" ]]; then
+        return
+    fi
+
+    local tightened=0
+    find "$restore_dir" -type f 2>/dev/null | while IFS= read -r f; do
+        local current_perms
+        current_perms=$(stat -f '%Lp' "$f" 2>/dev/null)
+        if [[ "$current_perms" != "700" ]]; then
+            chmod 700 "$f" 2>/dev/null || log_debug "Cannot chmod (may be locked): ${f}"
+            tightened=$((tightened + 1))
+        fi
+    done
+
+    log_info "Restore scripts permissions tightened to 700"
 }
 
 main "$@"

@@ -357,6 +357,12 @@ check_skill_allowlist() {
         return
     fi
 
+    # FR-008: Verify allowlist HMAC signature before trusting entries
+    if ! integrity_verify_state_file "$INTEGRITY_ALLOWLIST"; then
+        fail "Skill allowlist signature invalid — possible tampering"
+        return
+    fi
+
     local skills_dir="${REPO_ROOT}/openclaw/skills"
     local openclaw_dir="${HOME}/.openclaw"
     local total=0
