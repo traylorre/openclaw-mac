@@ -330,6 +330,17 @@ integrity_audit_log() {
     local details="${2:-}"
     local operator="${SUDO_USER:-$(whoami)}"
 
+    # FR-014b: Compute hash of previous entry for hash chain
+    local prev_hash="GENESIS"
+    if [[ -f "$INTEGRITY_AUDIT_LOG" ]] && [[ -s "$INTEGRITY_AUDIT_LOG" ]]; then
+        local last_line
+        last_line=$(tail -1 "$INTEGRITY_AUDIT_LOG")
+        if [[ -n "$last_line" ]]; then
+            prev_hash=$(echo -n "$last_line" | shasum -a 256 | awk '{print $1}')
+        fi
+    fi
+
+    # FR-011: Include all required fields + prev_hash for hash chain
     local entry
     entry=$(jq -n -c \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -337,11 +348,55 @@ integrity_audit_log() {
         --arg op "$operator" \
         --arg details "$details" \
         --argjson pid "$$" \
-        '{timestamp: $ts, action: $action, operator: $op, pid: $pid, details: $details}')
+        --arg prev_hash "$prev_hash" \
+        '{timestamp: $ts, action: $action, operator: $op, pid: $pid, details: $details, prev_hash: $prev_hash}')
 
     # Append to audit log (create if needed)
-    echo "$entry" >> "$INTEGRITY_AUDIT_LOG"
+    if ! echo "$entry" >> "$INTEGRITY_AUDIT_LOG" 2>/dev/null; then
+        # FR-009 edge case: detect write failure (disk full, permissions)
+        log_error "CRITICAL: Failed to write audit log entry — disk full or permissions issue" >&2
+        log_error "  Action: ${action}, Details: ${details}" >&2
+        return 1
+    fi
     chmod 600 "$INTEGRITY_AUDIT_LOG" 2>/dev/null || true
+}
+
+# FR-014b: Verify audit log hash chain integrity
+integrity_verify_audit_chain() {
+    if [[ ! -f "$INTEGRITY_AUDIT_LOG" ]]; then
+        return 0  # No log = no violations
+    fi
+
+    local violations=0
+    local expected_prev="GENESIS"
+    local line_num=0
+
+    while IFS= read -r line; do
+        line_num=$((line_num + 1))
+        [[ -z "$line" ]] && continue
+
+        # Extract prev_hash from this entry
+        local entry_prev
+        entry_prev=$(echo "$line" | jq -r '.prev_hash // empty' 2>/dev/null)
+
+        if [[ -z "$entry_prev" ]]; then
+            log_error "Audit log line ${line_num}: missing prev_hash field"
+            violations=$((violations + 1))
+        elif [[ "$entry_prev" != "$expected_prev" ]]; then
+            log_error "Audit log line ${line_num}: hash chain broken"
+            log_error "  expected prev_hash: ${expected_prev:0:16}..."
+            log_error "  actual prev_hash:   ${entry_prev:0:16}..."
+            violations=$((violations + 1))
+        fi
+
+        # Compute hash of this line for next iteration
+        expected_prev=$(echo -n "$line" | shasum -a 256 | awk '{print $1}')
+    done < "$INTEGRITY_AUDIT_LOG"
+
+    if [[ $violations -gt 0 ]]; then
+        log_error "Audit log chain verification: ${violations} violation(s) in ${line_num} entries"
+    fi
+    return "$violations"
 }
 
 # --- Lock State Management (FR-023, ADV-002) ---

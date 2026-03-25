@@ -348,6 +348,24 @@ check_sandbox_config() {
 }
 
 # --- 9. Skill Allowlist Verification (FR-027, FR-029, T034) ---
+# --- Audit Log Chain Verification (FR-014b, T019) ---
+check_audit_chain() {
+    log_step "Verifying audit log hash chain"
+
+    if [[ ! -f "$INTEGRITY_AUDIT_LOG" ]]; then
+        log_info "No audit log (OK — first run)"
+        return
+    fi
+
+    if integrity_verify_audit_chain; then
+        local entry_count
+        entry_count=$(wc -l < "$INTEGRITY_AUDIT_LOG" | tr -d ' ')
+        log_info "Audit log chain valid (${entry_count} entries)"
+    else
+        fail "Audit log hash chain integrity violation — possible tampering"
+    fi
+}
+
 check_skill_allowlist() {
     log_step "Verifying skill allowlist"
 
@@ -498,6 +516,9 @@ main() {
     check_platform_version
     check_pending_drafts
     check_skill_allowlist
+
+    # Audit log chain verification (T019)
+    check_audit_chain
 
     # Advisory checks (warnings only)
     check_heartbeat
