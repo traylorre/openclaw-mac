@@ -54,7 +54,5 @@ Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 - 011-workspace-integrity: Added Bash 5.x (POSIX-compatible subset for scripts), JSON (manifest and config files), jq (JSON manipulation) + macOS chflags (filesystem immutability), OpenClaw v2026.3.13 (sandbox mode), fswatch (filesystem monitoring via Homebrew), launchd (process supervision), macOS Keychain (HMAC key storage)
 
-- 010-linkedin-automation: Added JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions) + OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama)
-
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

@@ -28,10 +28,12 @@ OPENCLAW_DIR := $(HOME)/.openclaw
 	sandbox-setup sandbox-teardown \
 	monitor-setup monitor-teardown monitor-status \
 	skillallow-add skillallow-remove \
+	container-security-config-update \
+	security-tools-setup container-bench n8n-audit scan-image security \
 	setup-gateway teardown-gateway shellrc shellrc-undo
 
 help: ## Show available targets
-	@grep -E '^[a-z_-]+:.*##' $(MAKEFILE_LIST) | sort | \
+	@grep -E '^[a-z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 # ===========================================================================
@@ -63,6 +65,8 @@ verify: ## Check that all expected artifacts are present
 	@colima status 2>/dev/null && echo "  OK  Colima running" || echo "  DOWN  Colima not running"
 	@docker ps 2>/dev/null | grep -q n8n && echo "  OK  n8n container running" || echo "  DOWN  n8n container not running"
 	@[ -f "$(OPENCLAW_DIR)/shellrc" ] && echo "  OK  Shell aliases" || echo "  MISSING  Shell aliases (run: make shellrc-setup)"
+	@command -v grype >/dev/null 2>&1 && echo "  OK  Grype (CVE scanner)" || echo "  MISSING  Grype (run: make security-tools-setup)"
+	@[ -d "$(HOME)/.openclaw/tools/docker-bench-security" ] && echo "  OK  docker-bench-security (CIS benchmark)" || echo "  MISSING  docker-bench-security (run: make security-tools-setup)"
 
 # --- Fix targets ---
 
@@ -374,7 +378,7 @@ m3-teardown: ## M3: Remove ALL M3 artifacts (agents, secrets, image, manifest, w
 #
 # Typical flow:
 #   sandbox-setup → skillallow-add → integrity-deploy → integrity-lock
-#   → monitor-setup → audit
+#   → monitor-setup → security-tools-setup → security
 # ===========================================================================
 
 integrity-deploy: ## M4: Deploy workspace files, create signed manifest
@@ -404,6 +408,46 @@ monitor-teardown: ## M4: Stop and remove file monitoring service
 
 monitor-status: ## M4: Check monitoring service status and heartbeat
 	bash $(SCRIPTS)/integrity-monitor.sh --status
+
+container-security-config-update: ## M4: Update n8n minimum safe version (MIN_VERSION=x.y.z)
+	@if [ -z "$(MIN_VERSION)" ]; then echo "Usage: make container-security-config-update MIN_VERSION=1.123.0"; exit 1; fi
+	@bash -c 'source $(SCRIPTS)/lib/common.sh && source $(SCRIPTS)/lib/integrity.sh && \
+		config=$$(integrity_read_container_config) && \
+		config=$$(echo "$$config" | jq --arg v "$(MIN_VERSION)" ".min_n8n_version = \$$v") && \
+		integrity_write_container_config "$$config" && \
+		echo "Updated min_n8n_version to $(MIN_VERSION)"'
+
+# --- Phase 3B: Security Tool Integration ---
+
+security-tools-setup: ## M4: Install security scanning tools (Grype, docker-bench-security)
+	@echo "Installing security tools..."
+	@command -v grype >/dev/null 2>&1 && echo "  OK  Grype already installed ($$(grype version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1))" \
+		|| (echo "  Installing Grype via Homebrew..." && brew install grype)
+	@if [ -d "$(HOME)/.openclaw/tools/docker-bench-security" ]; then \
+		echo "  OK  docker-bench-security already installed"; \
+	else \
+		echo "  Installing docker-bench-security v1.6.1..."; \
+		mkdir -p "$(HOME)/.openclaw/tools"; \
+		git clone --branch v1.6.1 --depth 1 --quiet \
+			https://github.com/docker/docker-bench-security.git \
+			"$(HOME)/.openclaw/tools/docker-bench-security"; \
+		echo "  OK  docker-bench-security v1.6.1 installed"; \
+	fi
+	@echo ""
+	@echo "Security tools installed. No teardown — shared tools."
+	@echo "Manual removal: brew uninstall grype && rm -rf ~/.openclaw/tools/docker-bench-security"
+
+container-bench: ## M4: Run CIS Docker Benchmark against n8n container
+	bash $(SCRIPTS)/container-bench.sh
+
+n8n-audit: ## M4: Run n8n application security audit
+	bash $(SCRIPTS)/n8n-audit.sh
+
+scan-image: ## M4: Scan container image for CVEs (requires: brew install grype)
+	bash $(SCRIPTS)/scan-image.sh
+
+security: ## M4: Run all security layers (unified pipeline)
+	bash $(SCRIPTS)/security-pipeline.sh
 
 skillallow-add: ## M4: Add a skill to the allowlist (NAME=<skill-name>)
 	@if [ -z "$(NAME)" ]; then echo "Usage: make skillallow-add NAME=<skill-name>"; exit 1; fi

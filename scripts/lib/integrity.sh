@@ -92,6 +92,12 @@ _integrity_protected_file_patterns() {
         [[ -f "$f" ]] && echo "$f"
     done
 
+    # Container security state files (012 Phase 3: TP3-001)
+    for f in "${openclaw_dir}/container-security-config.json" \
+             "${openclaw_dir}/container-verify-state.json"; do
+        [[ -f "$f" ]] && echo "$f"
+    done
+
     # LaunchAgent plists (templates + deployed)
     find "${repo_root}/scripts/launchd" -name "*.plist" -type f 2>/dev/null
     find "${repo_root}/scripts/templates" -name "*.plist" -type f 2>/dev/null
@@ -151,7 +157,7 @@ integrity_check_symlinks() {
         done < <(find "$pdir" -type l 2>/dev/null)
     done
 
-    return "$violations"
+    [[ $violations -gt 0 ]] && return 1 || return 0
 }
 
 # --- HMAC Manifest Signing (FR-016) ---
@@ -329,6 +335,28 @@ integrity_audit_log() {
     local action="$1"
     local details="${2:-}"
     local operator="${SUDO_USER:-$(whoami)}"
+    local _audit_lockdir="${INTEGRITY_AUDIT_LOG}.lock"
+
+    # Serialize concurrent writers with mkdir lock (atomic on all filesystems)
+    # flock is not available on macOS; mkdir is the portable alternative
+    local _audit_lock_acquired=false
+    local _lock_attempt
+    for _lock_attempt in 1 2 3 4 5; do
+        if mkdir "$_audit_lockdir" 2>/dev/null; then
+            _audit_lock_acquired=true
+            break
+        fi
+        # Check for stale lock (older than 10 seconds)
+        if [[ -d "$_audit_lockdir" ]]; then
+            local lock_age
+            lock_age=$(( $(date +%s) - $(stat -f '%m' "$_audit_lockdir" 2>/dev/null || echo 0) ))
+            if [[ $lock_age -gt 10 ]]; then
+                rmdir "$_audit_lockdir" 2>/dev/null
+                continue
+            fi
+        fi
+        sleep 0.1
+    done
 
     # FR-014b: Compute hash of previous entry for hash chain
     local prev_hash="GENESIS"
@@ -352,13 +380,21 @@ integrity_audit_log() {
         '{timestamp: $ts, action: $action, operator: $op, pid: $pid, details: $details, prev_hash: $prev_hash}')
 
     # Append to audit log (create if needed)
-    if ! echo "$entry" >> "$INTEGRITY_AUDIT_LOG" 2>/dev/null; then
+    local _write_rc=0
+    if ! echo "$entry" >> "$INTEGRITY_AUDIT_LOG"; then
         # FR-009 edge case: detect write failure (disk full, permissions)
         log_error "CRITICAL: Failed to write audit log entry — disk full or permissions issue" >&2
         log_error "  Action: ${action}, Details: ${details}" >&2
-        return 1
+        _write_rc=1
     fi
     chmod 600 "$INTEGRITY_AUDIT_LOG" 2>/dev/null || true
+
+    # Release lock
+    if $_audit_lock_acquired; then
+        rmdir "$_audit_lockdir" 2>/dev/null || true
+    fi
+
+    return "$_write_rc"
 }
 
 # FR-014b: Verify audit log hash chain integrity
@@ -395,8 +431,9 @@ integrity_verify_audit_chain() {
 
     if [[ $violations -gt 0 ]]; then
         log_error "Audit log chain verification: ${violations} violation(s) in ${line_num} entries"
+        return 1
     fi
-    return "$violations"
+    return 0
 }
 
 # --- Lock State Management (FR-023, ADV-002) ---
@@ -410,7 +447,10 @@ integrity_record_unlock() {
     if [[ -f "$INTEGRITY_LOCKSTATE" ]]; then
         # ADV-002: Verify signature before trusting existing state
         if integrity_verify_state_file "$INTEGRITY_LOCKSTATE"; then
-            entries=$(jq -c '.entries // []' "$INTEGRITY_LOCKSTATE" 2>/dev/null || echo '[]')
+            entries=$(jq -c '.entries // []' "$INTEGRITY_LOCKSTATE") || {
+                log_warn "Failed to parse verified lock state — resetting entries"
+                entries='[]'
+            }
         else
             log_warn "Lock state signature invalid — resetting"
             entries='[]'
@@ -556,4 +596,484 @@ integrity_check_heartbeat() {
         return 1
     fi
     return 0
+}
+
+# ============================================================================
+# --- Container & Orchestration Integrity (012 Phase 3) ---
+# Defense-in-depth verification for the n8n Docker container.
+# Implements FR-P3-001 through FR-P3-039.
+# ============================================================================
+
+# shellcheck disable=SC2034
+readonly INTEGRITY_CONTAINER_CONFIG="${HOME}/.openclaw/container-security-config.json"
+# shellcheck disable=SC2034
+readonly INTEGRITY_CONTAINER_VERIFY_STATE="${HOME}/.openclaw/container-verify-state.json"
+
+# --- TP3-002: Default container security configuration ---
+
+_integrity_default_container_config() {
+    jq -n '{
+        min_n8n_version: "1.121.0",
+        min_n8n_version_reason: "CVE-2026-21858 (CVSS 10.0), CVE-2026-27495 (CVSS 9.4)",
+        container_name_pattern: "n8n",
+        expected_runtime_config: {
+            privileged: false,
+            cap_drop: ["ALL"],
+            network_mode_not: "host",
+            readonly_rootfs: true,
+            no_new_privileges: true,
+            seccomp_not_unconfined: true,
+            user_not_root: true,
+            no_docker_socket: true,
+            ports_localhost_only: true,
+            required_env: {
+                NODES_EXCLUDE: "[\"n8n-nodes-base.executeCommand\",\"n8n-nodes-base.ssh\",\"n8n-nodes-base.localFileTrigger\"]",
+                N8N_RESTRICT_FILE_ACCESS_TO: "/home/node/.n8n"
+            }
+        },
+        drift_safe_paths: ["/tmp", "/var/tmp", "/home/node/.cache", "/home/node/.local", "/run", "/data", "/entrypoint.sh", "/home", "/var"]
+    }'
+}
+
+# --- TP3-003: Container discovery (FR-P3-036) ---
+
+integrity_discover_container() {
+    local pattern="${1:-}"
+
+    # Read pattern from config if not provided
+    if [[ -z "$pattern" ]]; then
+        if [[ -f "$INTEGRITY_CONTAINER_CONFIG" ]]; then
+            pattern=$(jq -r '.container_name_pattern // "n8n"' "$INTEGRITY_CONTAINER_CONFIG" 2>/dev/null)
+        fi
+        pattern="${pattern:-n8n}"
+    fi
+
+    # Validate pattern against safe characters (prevent Docker filter injection)
+    if ! [[ "$pattern" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        echo "Invalid container name pattern: ${pattern}" >&2
+        return 1
+    fi
+
+    # Check Docker availability
+    if ! command -v docker &>/dev/null; then
+        echo "Docker CLI not found" >&2
+        return 1
+    fi
+
+    local ids
+    ids=$(docker ps -q --filter "name=${pattern}" 2>/dev/null)
+
+    if [[ -z "$ids" ]]; then
+        echo "No container matching '${pattern}' is running" >&2
+        return 1
+    fi
+
+    # Validate output: must be hex container IDs, not error messages
+    local validated_ids=""
+    local count=0
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if [[ "$line" =~ ^[0-9a-f]{12,64}$ ]]; then
+            validated_ids="${validated_ids}${line}"$'\n'
+            count=$((count + 1))
+        else
+            echo "Docker returned unexpected output: ${line}" >&2
+            return 1
+        fi
+    done <<< "$ids"
+
+    if [[ $count -eq 0 ]]; then
+        echo "No valid container ID in docker output" >&2
+        return 1
+    fi
+
+    if [[ $count -gt 1 ]]; then
+        echo "CRITICAL: Multiple containers match '${pattern}' — ambiguous discovery" >&2
+        echo "$validated_ids" >&2
+        integrity_audit_log "container_discovery_ambiguous" \
+            "pattern=${pattern}, count=${count}" || true
+        return 2
+    fi
+
+    # Single valid match
+    echo "${validated_ids}" | head -1 | tr -d '\n'
+    return 0
+}
+
+# --- TP3-004: Atomic container snapshot (FR-P3-012b) ---
+
+integrity_capture_container_snapshot() {
+    local cid="$1"
+
+    if [[ -z "$cid" ]]; then
+        echo "Container ID required" >&2
+        return 1
+    fi
+
+    local snapshot
+    snapshot=$(docker inspect "$cid" --format '{{json .}}' 2>/dev/null)
+    local rc=$?
+
+    if [[ $rc -ne 0 ]] || [[ -z "$snapshot" ]]; then
+        echo "Failed to inspect container ${cid}" >&2
+        return 1
+    fi
+
+    # Validate the output is parseable JSON (not a Docker error message)
+    if ! echo "$snapshot" | jq empty 2>/dev/null; then
+        echo "Container snapshot is not valid JSON for ${cid}" >&2
+        return 1
+    fi
+
+    echo "$snapshot"
+    return 0
+}
+
+# --- TP3-005: Container ID verification (FR-P3-037) ---
+
+integrity_verify_container_id() {
+    local expected_id="$1"
+    local current_id="$2"
+
+    if [[ "$expected_id" == "$current_id" ]]; then
+        return 0
+    fi
+
+    integrity_audit_log "container_id_changed" "expected=${expected_id:0:12}, actual=${current_id:0:12}" || true
+    return 1
+}
+
+# --- TP3-006: Semantic version comparison (FR-P3-004) ---
+
+integrity_version_gte() {
+    local current="$1"
+    local minimum="$2"
+
+    if [[ -z "$current" ]] || [[ -z "$minimum" ]]; then
+        return 1  # Fail safe on empty input
+    fi
+
+    # Split on '.' into arrays
+    IFS='.' read -ra cur_parts <<< "$current"
+    IFS='.' read -ra min_parts <<< "$minimum"
+
+    # Pad to 3 segments
+    while [[ ${#cur_parts[@]} -lt 3 ]]; do cur_parts+=("0"); done
+    while [[ ${#min_parts[@]} -lt 3 ]]; do min_parts+=("0"); done
+
+    # Compare each segment numerically
+    local i
+    for i in 0 1 2; do
+        local c="${cur_parts[$i]}"
+        local m="${min_parts[$i]}"
+
+        # Non-numeric → fail safe
+        if ! [[ "$c" =~ ^[0-9]+$ ]] || ! [[ "$m" =~ ^[0-9]+$ ]]; then
+            return 1
+        fi
+
+        if [[ "$c" -gt "$m" ]]; then
+            return 0
+        elif [[ "$c" -lt "$m" ]]; then
+            return 1
+        fi
+    done
+
+    # All segments equal → current == minimum → gte is true
+    return 0
+}
+
+# --- TP3-007: Container baseline capture (FR-P3-001, FR-P3-002, FR-P3-013, FR-P3-025) ---
+
+integrity_capture_container_baseline() {
+    local cid="$1"
+    local baseline='{}'
+
+    # Image digest and name from snapshot
+    local snapshot
+    snapshot=$(integrity_capture_container_snapshot "$cid")
+    if [[ -z "$snapshot" ]]; then
+        echo "Failed to capture container snapshot" >&2
+        return 1
+    fi
+
+    local image_digest image_name
+    image_digest=$(echo "$snapshot" | jq -r '.Image // empty')
+    image_name=$(echo "$snapshot" | jq -r '.Config.Image // empty')
+
+    baseline=$(echo "$baseline" | jq \
+        --arg digest "$image_digest" \
+        --arg name "$image_name" \
+        '. + {container_image_digest: $digest, container_image_name: $name}')
+
+    # n8n version — trap "no such container" explicitly
+    local n8n_version=""
+    local exec_output
+    exec_output=$(docker exec "$cid" n8n --version 2>&1)
+    local rc=$?
+    if [[ $rc -ne 0 ]]; then
+        if echo "$exec_output" | grep -qi "no such container"; then
+            echo "CRITICAL: Container disappeared during baseline capture" >&2
+            integrity_audit_log "container_disappeared" "during baseline capture, cid=${cid:0:12}"
+            return 1
+        fi
+        echo "Warning: Could not get n8n version: ${exec_output}" >&2
+    else
+        # n8n --version may output "1.72.1" or "n8n 1.72.1" — extract version
+        n8n_version=$(echo "$exec_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    fi
+    baseline=$(echo "$baseline" | jq --arg ver "$n8n_version" '. + {container_n8n_version: $ver}')
+
+    # Credential names via n8n REST API from host
+    # Use --config to avoid leaking API key in process list
+    local cred_json=""
+    local cred_enum_failed=false
+    local api_key
+    api_key=$(security find-generic-password -a "openclaw" -s "n8n-api-key" -w 2>/dev/null)
+    if [[ -z "$api_key" ]]; then
+        echo "Warning: No n8n API key in Keychain (n8n-api-key) — cannot enumerate credentials" >&2
+        cred_enum_failed=true
+    else
+        local api_response
+        api_response=$(curl -s --config - \
+            "http://localhost:5678/api/v1/credentials" --max-time 10 \
+            <<< "header = \"X-N8N-API-KEY: ${api_key}\"")
+        if [[ -z "$api_response" ]]; then
+            echo "Warning: n8n API returned empty response — is n8n running?" >&2
+            cred_enum_failed=true
+        elif ! echo "$api_response" | jq '.data' &>/dev/null; then
+            echo "Warning: n8n API credential response not valid JSON" >&2
+            cred_enum_failed=true
+        else
+            cred_json=$(echo "$api_response" | jq -c '[.data[].name // empty] | sort')
+            if [[ -z "$cred_json" ]]; then
+                echo "Warning: jq failed to extract credential names" >&2
+                cred_enum_failed=true
+            fi
+        fi
+    fi
+    # Only include credentials in baseline if enumeration succeeded
+    # An empty-but-successful result [] is different from a failed enumeration
+    if $cred_enum_failed; then
+        echo "Warning: Credential baseline not recorded — re-run deploy when n8n is accessible" >&2
+    else
+        baseline=$(echo "$baseline" | jq --argjson creds "$cred_json" '. + {expected_credentials: $creds}')
+    fi
+
+    # Community node packages — cat all package.json files in one exec, parse on host
+    # (container doesn't have jq)
+    local nodes_json='[]'
+    local pkg_output
+    pkg_output=$(docker exec "$cid" sh -c '
+        for f in /home/node/.n8n/nodes/node_modules/n8n-nodes-*/package.json; do
+            [ -f "$f" ] && cat "$f" && printf "\n---PKG_DELIMITER---\n"
+        done' 2>/dev/null)
+    rc=$?
+    if [[ $rc -ne 0 ]] && ! docker ps -q --filter "id=${cid}" 2>/dev/null | grep -q .; then
+        echo "CRITICAL: Container disappeared during node enumeration" >&2
+        integrity_audit_log "container_disappeared" "during node enum, cid=${cid:0:12}" || true
+        return 1
+    fi
+    if [[ -n "$pkg_output" ]] && [[ "$pkg_output" != *"No such file"* ]]; then
+        # Split on delimiter, extract name+version from each block on the host
+        local tmp_nodes='[]'
+        local IFS_backup="$IFS"
+        local block=""
+        while IFS= read -r line; do
+            if [[ "$line" == "---PKG_DELIMITER---" ]]; then
+                if [[ -n "$block" ]]; then
+                    local pname pver
+                    pname=$(echo "$block" | jq -r '.name // empty' 2>/dev/null)
+                    pver=$(echo "$block" | jq -r '.version // empty' 2>/dev/null)
+                    if [[ -n "$pname" ]]; then
+                        tmp_nodes=$(echo "$tmp_nodes" | jq --arg n "$pname" --arg v "$pver" \
+                            '. + [{"name": $n, "version": $v}]')
+                    fi
+                fi
+                block=""
+            else
+                block="${block}${line}"$'\n'
+            fi
+        done <<< "$pkg_output"
+        IFS="$IFS_backup"
+        nodes_json="$tmp_nodes"
+    fi
+    baseline=$(echo "$baseline" | jq --argjson nodes "$nodes_json" '. + {expected_community_nodes: $nodes}')
+
+    echo "$baseline"
+    return 0
+}
+
+# --- TP3-008: Container security config read/write ---
+
+integrity_read_container_config() {
+    if [[ ! -f "$INTEGRITY_CONTAINER_CONFIG" ]]; then
+        _integrity_default_container_config
+        return 0
+    fi
+
+    # Read once, verify in-memory (avoids TOCTOU between verify and read)
+    local content
+    content=$(cat "$INTEGRITY_CONTAINER_CONFIG" 2>/dev/null)
+    if [[ -z "$content" ]]; then
+        _integrity_default_container_config
+        return 0
+    fi
+
+    local stored_sig body computed_sig
+    stored_sig=$(echo "$content" | jq -r '.signature // empty' 2>/dev/null)
+    if [[ -z "$stored_sig" ]]; then
+        integrity_audit_log "container_config_tampered" "CRITICAL: no signature — using safe defaults" || true
+        _integrity_default_container_config
+        return 0
+    fi
+    body=$(echo "$content" | jq --sort-keys -c 'del(.signature)' 2>/dev/null)
+    computed_sig=$(integrity_sign_manifest "$body")
+    if [[ "$stored_sig" != "$computed_sig" ]]; then
+        integrity_audit_log "container_config_tampered" "CRITICAL: signature invalid — using safe defaults" || true
+        _integrity_default_container_config
+        return 0
+    fi
+
+    echo "$content" | jq '.'
+}
+
+integrity_write_container_config() {
+    local config_json="$1"
+    if ! integrity_sign_state_file "$config_json" "$INTEGRITY_CONTAINER_CONFIG"; then
+        integrity_audit_log "container_config_write_failed" "sign_state_file returned non-zero" || true
+        return 1
+    fi
+}
+
+# --- TP3-009: Container verify state read/write ---
+
+_integrity_default_verify_state() {
+    jq -n '{
+        last_verified_at: "",
+        last_container_id: "",
+        credential_enum_failures: 0,
+        last_alert_states: {
+            image_digest: {"state": "healthy", "since": ""},
+            runtime_config: {"state": "healthy", "since": ""},
+            credentials: {"state": "healthy", "since": ""},
+            drift: {"state": "healthy", "since": ""},
+            reachability: {"state": "healthy", "since": ""}
+        }
+    }'
+}
+
+integrity_read_verify_state() {
+    if [[ ! -f "$INTEGRITY_CONTAINER_VERIFY_STATE" ]]; then
+        _integrity_default_verify_state
+        return 0
+    fi
+
+    # Read once, verify in-memory (avoids TOCTOU)
+    local content
+    content=$(cat "$INTEGRITY_CONTAINER_VERIFY_STATE" 2>/dev/null)
+    if [[ -z "$content" ]]; then
+        _integrity_default_verify_state
+        return 0
+    fi
+
+    local stored_sig body computed_sig
+    stored_sig=$(echo "$content" | jq -r '.signature // empty' 2>/dev/null)
+    if [[ -z "$stored_sig" ]]; then
+        integrity_audit_log "container_verify_state_tampered" "CRITICAL: no signature — safe defaults" || true
+        _integrity_safe_verify_state
+        return 0
+    fi
+    body=$(echo "$content" | jq --sort-keys -c 'del(.signature)' 2>/dev/null)
+    computed_sig=$(integrity_sign_manifest "$body")
+    if [[ "$stored_sig" != "$computed_sig" ]]; then
+        integrity_audit_log "container_verify_state_tampered" "CRITICAL: signature invalid — safe defaults" || true
+        _integrity_safe_verify_state
+        return 0
+    fi
+
+    echo "$content" | jq '.'
+}
+
+# Safe defaults: max failures, all alerts unhealthy (triggers re-fire on every check)
+_integrity_safe_verify_state() {
+    jq -n '{
+        last_verified_at: "",
+        last_container_id: "",
+        credential_enum_failures: 3,
+        last_alert_states: {
+            image_digest: {"state": "unhealthy", "since": ""},
+            runtime_config: {"state": "unhealthy", "since": ""},
+            credentials: {"state": "unhealthy", "since": ""},
+            drift: {"state": "unhealthy", "since": ""},
+            reachability: {"state": "unhealthy", "since": ""}
+        }
+    }'
+}
+
+integrity_write_verify_state() {
+    local state_json="$1"
+    if ! integrity_sign_state_file "$state_json" "$INTEGRITY_CONTAINER_VERIFY_STATE"; then
+        integrity_audit_log "container_verify_state_write_failed" "sign_state_file returned non-zero" || true
+        return 1
+    fi
+}
+
+# ============================================================================
+# --- Phase 3B: Security Tool Integration Helpers ---
+# ============================================================================
+
+# --- T3B-001: Docker socket path resolution ---
+integrity_docker_socket_path() {
+    # Resolve from active Docker context (supports non-default Colima profiles)
+    local ctx_host
+    ctx_host=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)
+    if [[ -n "$ctx_host" ]]; then
+        echo "$ctx_host" | sed 's|unix://||'
+        return 0
+    fi
+
+    # Fall back to DOCKER_HOST env var
+    if [[ -n "${DOCKER_HOST:-}" ]]; then
+        echo "$DOCKER_HOST" | sed 's|unix://||'
+        return 0
+    fi
+
+    # Last resort: default Colima path
+    local default_path="${HOME}/.colima/default/docker.sock"
+    if [[ -S "$default_path" ]]; then
+        echo "$default_path"
+        return 0
+    fi
+
+    echo "Cannot resolve Docker socket path" >&2
+    return 1
+}
+
+# --- T3B-002: macOS-compatible timeout (no GNU timeout on macOS) ---
+integrity_run_with_timeout() {
+    local timeout_secs="$1"; shift
+
+    "$@" &
+    local cmd_pid=$!
+
+    # Watchdog: kill command after timeout
+    ( sleep "$timeout_secs"; kill "$cmd_pid" 2>/dev/null ) &
+    local watchdog_pid=$!
+
+    # Wait for command to finish
+    wait "$cmd_pid" 2>/dev/null
+    local rc=$?
+
+    # Check if watchdog is still running (command finished before timeout)
+    if kill -0 "$watchdog_pid" 2>/dev/null; then
+        # Command finished first — cancel watchdog
+        kill "$watchdog_pid" 2>/dev/null
+        wait "$watchdog_pid" 2>/dev/null
+    else
+        # Watchdog finished first — timeout occurred
+        rc=124
+    fi
+
+    return "$rc"
 }

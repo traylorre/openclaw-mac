@@ -652,8 +652,108 @@ check_colima_running() {
     fi
 }
 
+# --- §4.1b Colima VM Boundary (012 Phase 3, TP3-027/028, FR-P3-028/029/030) ---
+
+check_colima_vm_mounts() {
+    local id="CHK-COLIMA-VM-MOUNTS"
+    # Resolve HOME symlinks for accurate path comparison (macOS APFS /Users → /System/Volumes/Data/Users)
+    local resolved_home
+    resolved_home=$(cd "$HOME" 2>/dev/null && pwd -P)
+
+    if ! command -v colima &>/dev/null; then
+        report_result "$id" "VM Boundary" "Colima not installed — skipping VM mount check" "SKIP" "4.1"
+        return
+    fi
+
+    # Detect active Colima profile
+    local profile="default"
+    local colima_list
+    colima_list=$(run_as_user colima list 2>/dev/null || true)
+    if [[ -n "$colima_list" ]]; then
+        # Parse the PROFILE column for running instances
+        local running_profile
+        running_profile=$(echo "$colima_list" | awk 'NR>1 && $2=="Running" {print $1}' | head -1)
+        if [[ -n "$running_profile" ]]; then
+            profile="$running_profile"
+        fi
+    fi
+
+    local config_path="${HOME}/.colima/${profile}/colima.yaml"
+    if [[ ! -f "$config_path" ]]; then
+        report_result "$id" "VM Boundary" "Colima config not found at ${config_path}" "SKIP" "4.1" \
+            "Profile '${profile}' may not exist or may use non-default location"
+        return
+    fi
+
+    # Parse YAML mounts section
+    local writable_home=false
+    local mount_info=""
+
+    # Check for empty array: mounts: [] (default = writable $HOME)
+    if grep -qE '^\s*mounts:\s*\[\]' "$config_path"; then
+        writable_home=true
+        mount_info="mounts: [] (default — writable \$HOME)"
+    # Check for missing mounts section entirely (same as default)
+    elif ! grep -q '^\s*mounts:' "$config_path"; then
+        writable_home=true
+        mount_info="no mounts section (default — writable \$HOME)"
+    else
+        # Parse explicit mount entries
+        # awk: capture mounts block, handling blank lines + EOF correctly
+        local mount_block
+        mount_block=$(awk '/^\s*mounts:/{found=1; next} found && /^[a-zA-Z]/{exit} found' "$config_path" \
+            | grep -E 'location:|writable:' || true)
+        if [[ -n "$mount_block" ]]; then
+            local current_loc=""
+            while IFS= read -r line; do
+                if echo "$line" | grep -q 'location:'; then
+                    current_loc=$(echo "$line" | sed 's/.*location:\s*//' | sed 's/#.*//' | tr -d '"' | tr -d "'" | tr -d ' ')
+                    # Expand tilde to $HOME
+                    current_loc="${current_loc/#\~/$HOME}"
+                elif echo "$line" | grep -q 'writable:'; then
+                    local is_writable
+                    is_writable=$(echo "$line" | sed 's/.*writable:\s*//' | sed 's/#.*//' | tr -d ' ')
+                    # Check if this is the home directory or a parent of it
+                    # Resolve mount location for symlink-safe comparison
+                    local resolved_loc
+                    resolved_loc=$(cd "$current_loc" 2>/dev/null && pwd -P || echo "$current_loc")
+                    # Directory boundary check: use trailing slash to avoid /Use matching /Users
+                    if [[ -n "$resolved_loc" ]] && [[ "${resolved_home}/" == "${resolved_loc}/"* || "${resolved_loc}/" == "${resolved_home}/"* ]]; then
+                        if [[ "$is_writable" == "true" ]]; then
+                            writable_home=true
+                            mount_info="explicit mount: ${current_loc} writable=true"
+                        fi
+                    fi
+                    mount_info="${mount_info:+${mount_info}; }${current_loc}:writable=${is_writable}"
+                fi
+            done <<< "$mount_block"
+        else
+            writable_home=true
+            mount_info="mounts section exists but no explicit entries (default behavior)"
+        fi
+    fi
+
+    if $writable_home; then
+        report_result "$id" "VM Boundary" \
+            "Home directory mounted WRITABLE in Colima VM — container escape exposes all host files" "WARN" "4.1" \
+            "Remediation: Edit ${config_path} and set restrictive mounts:
+  mounts:
+    - location: ${HOME}
+      writable: false
+    - location: $(pwd)
+      writable: true
+  Then restart: colima stop && colima start"
+        # TP3-028: Audit log
+        integrity_audit_log "vm_boundary_warning" "mount_info=${mount_info}, config=${config_path}" || true
+    else
+        report_result "$id" "VM Boundary" \
+            "Colima VM mounts are restrictive (${mount_info})" "PASS" "4.1"
+    fi
+}
+
 # --- §4 Container Isolation Checks (T024) ---
 
+# CIS Docker Benchmark 5.x (non-root user) — also covered by docker-bench-security
 check_container_root() {
     local id="CHK-CONTAINER-ROOT"
     local container_id
@@ -672,6 +772,7 @@ check_container_root() {
     fi
 }
 
+# CIS Docker Benchmark 5.13 (read-only rootfs) — also covered by docker-bench-security
 check_container_readonly() {
     local id="CHK-CONTAINER-READONLY"
     local container_id
@@ -690,6 +791,7 @@ check_container_readonly() {
     fi
 }
 
+# CIS Docker Benchmark 5.4 (restrict capabilities) — also covered by docker-bench-security
 check_container_caps() {
     local id="CHK-CONTAINER-CAPS"
     local container_id
@@ -708,6 +810,7 @@ check_container_caps() {
     fi
 }
 
+# CIS Docker Benchmark 5.5 (no privileged) — also covered by docker-bench-security
 check_container_privileged() {
     local id="CHK-CONTAINER-PRIVILEGED"
     local container_id
@@ -726,6 +829,7 @@ check_container_privileged() {
     fi
 }
 
+# CIS Docker Benchmark 5.32 (no docker.sock mount) — also covered by docker-bench-security
 check_docker_socket() {
     local id="CHK-DOCKER-SOCKET"
     local container_id
@@ -762,7 +866,7 @@ check_secrets_env() {
     fi
 }
 
-check_colima_mounts() {
+# CIS Docker Benchmark 5.6 (sensitive host dirs) — partially covered by docker-bench-securitycheck_colima_mounts() {
     local id="CHK-COLIMA-MOUNTS"
     local container_id
     container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
@@ -780,6 +884,7 @@ check_colima_mounts() {
     fi
 }
 
+# CIS Docker Benchmark 5.10 (no host network) — also covered by docker-bench-security
 check_container_network() {
     local id="CHK-CONTAINER-NETWORK"
     local container_id
@@ -798,6 +903,7 @@ check_container_network() {
     fi
 }
 
+# CIS Docker Benchmark 5.11/5.12 (memory/CPU limits) — also covered by docker-bench-security
 check_container_resources() {
     local id="CHK-CONTAINER-RESOURCES"
     local container_id
@@ -2763,6 +2869,7 @@ main() {
 
     # §4.1 Container Runtime
     run_check check_colima_running
+    run_check check_colima_vm_mounts
 
     # §4 Container Isolation checks (T024) — containerized only
     if [[ "$deployment" == "containerized" ]]; then

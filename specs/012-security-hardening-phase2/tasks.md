@@ -74,21 +74,9 @@
 
 ## Phase 3: Docker and Container Integrity (US3, Spec Phase D)
 
-**Purpose**: Verify orchestration container image and credential set.
+**[SUPERSEDED]** T024-T031 replaced by `phase3-tasks.md` (38 tasks, 43 FRs — expanded from deep research + 3 adversarial reviews). The original 8 tasks covered 4 FRs; the expanded spec covers 8 user stories across 7 defense-in-depth verification layers: image digest pinning, runtime configuration (10 properties), credential set baseline, workflow integrity, filesystem drift detection, community node supply chain verification, VM boundary auditing, and continuous monitoring with alert deduplication.
 
-- [ ] T024 [US3] Add container image ID capture to `scripts/integrity-deploy.sh`: use `docker inspect --format '{{.Image}}' n8n` to record SHA-256 digest in manifest under `container_image_id` field (FR-016). Also record expected credential names via `docker exec n8n n8n list:credentials --format=json | jq '.[].name'` under `expected_credentials` (FR-017)
-- [ ] T025 [US3] Add `check_container_image()` to `scripts/integrity-verify.sh`: verify running container image ID matches manifest's `container_image_id`. Block agent launch on mismatch (FR-015). Gracefully skip with warning if container is not running.
-- [ ] T026 [US3] Add `check_container_credentials()` to `scripts/integrity-verify.sh`: enumerate n8n credential names, compare against `expected_credentials` from manifest. Report unexpected credentials as "potential compromise indicator" (FR-017, FR-018)
-- [ ] T027 [US3] Enhance `check_n8n_workflows()` in `scripts/integrity-verify.sh`: export workflows from running container via `docker exec n8n n8n export:workflow --all`, compare against version-controlled copies in `workflows/` using jq (ignore metadata: updatedAt, createdAt, versionId). Report specific workflow mismatches. Must run AFTER container image verification passes (US3 acceptance scenario 2)
-- [ ] T028 [US3] Add container image monitoring to `scripts/integrity-monitor.sh`: in the heartbeat cycle, check current container image ID against manifest. Alert operator if changed (US3 acceptance scenario 5)
-- [ ] T029 [P] [US3] Add CHK-OPENCLAW-CONTAINER-IMAGE and CHK-OPENCLAW-CONTAINER-CREDS checks to `scripts/hardening-audit.sh`
-
-### Verification
-
-- [ ] T030 [US3] Verification: record n8n image ID in manifest → stop n8n → start different image with same name → run integrity-verify → verify image mismatch detected → restore correct image → verify passes
-- [ ] T031 [US3] Verification: add unexpected credential to n8n → run integrity-verify → verify unexpected credential flagged as compromise indicator
-
-**Checkpoint**: US3 complete. Container image and credential set verified at startup and continuously.
+**Checkpoint**: See `phase3-tasks.md` for implementation and verification tasks.
 
 ---
 
