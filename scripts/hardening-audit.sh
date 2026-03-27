@@ -100,7 +100,7 @@ check_platform() {
 # --- Deployment Detection ---
 # Docker+n8n container → containerized; native n8n process → bare-metal; else → unknown
 detect_deployment() {
-    if command -v docker &>/dev/null && run_as_user docker ps 2>/dev/null | grep -q n8n; then
+    if command -v docker &>/dev/null && integrity_run_with_timeout 30 run_as_user docker ps 2>/dev/null | grep -q n8n; then
         echo "containerized"
     elif pgrep -f "n8n" &>/dev/null; then
         echo "bare-metal"
@@ -652,18 +652,118 @@ check_colima_running() {
     fi
 }
 
+# --- §4.1b Colima VM Boundary (012 Phase 3, TP3-027/028, FR-P3-028/029/030) ---
+
+check_colima_vm_mounts() {
+    local id="CHK-COLIMA-VM-MOUNTS"
+    # Resolve HOME symlinks for accurate path comparison (macOS APFS /Users → /System/Volumes/Data/Users)
+    local resolved_home
+    resolved_home=$(cd "$HOME" 2>/dev/null && pwd -P)
+
+    if ! command -v colima &>/dev/null; then
+        report_result "$id" "VM Boundary" "Colima not installed — skipping VM mount check" "SKIP" "4.1"
+        return
+    fi
+
+    # Detect active Colima profile
+    local profile="default"
+    local colima_list
+    colima_list=$(run_as_user colima list 2>/dev/null || true)
+    if [[ -n "$colima_list" ]]; then
+        # Parse the PROFILE column for running instances
+        local running_profile
+        running_profile=$(echo "$colima_list" | awk 'NR>1 && $2=="Running" {print $1}' | head -1)
+        if [[ -n "$running_profile" ]]; then
+            profile="$running_profile"
+        fi
+    fi
+
+    local config_path="${HOME}/.colima/${profile}/colima.yaml"
+    if [[ ! -f "$config_path" ]]; then
+        report_result "$id" "VM Boundary" "Colima config not found at ${config_path}" "SKIP" "4.1" \
+            "Profile '${profile}' may not exist or may use non-default location"
+        return
+    fi
+
+    # Parse YAML mounts section
+    local writable_home=false
+    local mount_info=""
+
+    # Check for empty array: mounts: [] (default = writable $HOME)
+    if grep -qE '^\s*mounts:\s*\[\]' "$config_path"; then
+        writable_home=true
+        mount_info="mounts: [] (default — writable \$HOME)"
+    # Check for missing mounts section entirely (same as default)
+    elif ! grep -q '^\s*mounts:' "$config_path"; then
+        writable_home=true
+        mount_info="no mounts section (default — writable \$HOME)"
+    else
+        # Parse explicit mount entries
+        # awk: capture mounts block, handling blank lines + EOF correctly
+        local mount_block
+        mount_block=$(awk '/^\s*mounts:/{found=1; next} found && /^[a-zA-Z]/{exit} found' "$config_path" \
+            | grep -E 'location:|writable:' || true)
+        if [[ -n "$mount_block" ]]; then
+            local current_loc=""
+            while IFS= read -r line; do
+                if echo "$line" | grep -q 'location:'; then
+                    current_loc=$(echo "$line" | sed 's/.*location:\s*//' | sed 's/#.*//' | tr -d '"' | tr -d "'" | tr -d ' ')
+                    # Expand tilde to $HOME
+                    current_loc="${current_loc/#\~/$HOME}"
+                elif echo "$line" | grep -q 'writable:'; then
+                    local is_writable
+                    is_writable=$(echo "$line" | sed 's/.*writable:\s*//' | sed 's/#.*//' | tr -d ' ')
+                    # Check if this is the home directory or a parent of it
+                    # Resolve mount location for symlink-safe comparison
+                    local resolved_loc
+                    resolved_loc=$(cd "$current_loc" 2>/dev/null && pwd -P || echo "$current_loc")
+                    # Directory boundary check: use trailing slash to avoid /Use matching /Users
+                    if [[ -n "$resolved_loc" ]] && [[ "${resolved_home}/" == "${resolved_loc}/"* || "${resolved_loc}/" == "${resolved_home}/"* ]]; then
+                        if [[ "$is_writable" == "true" ]]; then
+                            writable_home=true
+                            mount_info="explicit mount: ${current_loc} writable=true"
+                        fi
+                    fi
+                    mount_info="${mount_info:+${mount_info}; }${current_loc}:writable=${is_writable}"
+                fi
+            done <<< "$mount_block"
+        else
+            writable_home=true
+            mount_info="mounts section exists but no explicit entries (default behavior)"
+        fi
+    fi
+
+    if $writable_home; then
+        report_result "$id" "VM Boundary" \
+            "Home directory mounted WRITABLE in Colima VM — container escape exposes all host files" "WARN" "4.1" \
+            "Remediation: Edit ${config_path} and set restrictive mounts:
+  mounts:
+    - location: ${HOME}
+      writable: false
+    - location: $(pwd)
+      writable: true
+  Then restart: colima stop && colima start"
+        # TP3-028: Audit log
+        integrity_audit_log "vm_boundary_warning" "mount_info=${mount_info}, config=${config_path}" || true
+    else
+        report_result "$id" "VM Boundary" \
+            "Colima VM mounts are restrictive (${mount_info})" "PASS" "4.1"
+    fi
+}
+
 # --- §4 Container Isolation Checks (T024) ---
 
+# CIS Docker Benchmark 5.x (non-root user) — also covered by docker-bench-security
 check_container_root() {
     local id="CHK-CONTAINER-ROOT"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local user
-    user=$(run_as_user docker inspect "$container_id" --format '{{.Config.User}}' 2>/dev/null) || true
+    user=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{.Config.User}}' 2>/dev/null) || true
     if [[ -n "$user" && "$user" != "0" && "$user" != "root" ]]; then
         report_result "$id" "Container Security" "Container runs as non-root (${user})" "PASS" "4.3"
     else
@@ -672,16 +772,17 @@ check_container_root() {
     fi
 }
 
+# CIS Docker Benchmark 5.13 (read-only rootfs) — also covered by docker-bench-security
 check_container_readonly() {
     local id="CHK-CONTAINER-READONLY"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local readonly_fs
-    readonly_fs=$(run_as_user docker inspect "$container_id" --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null) || true
+    readonly_fs=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{.HostConfig.ReadonlyRootfs}}' 2>/dev/null) || true
     if [[ "$readonly_fs" == "true" ]]; then
         report_result "$id" "Container Security" "Container filesystem is read-only" "PASS" "4.3"
     else
@@ -690,16 +791,17 @@ check_container_readonly() {
     fi
 }
 
+# CIS Docker Benchmark 5.4 (restrict capabilities) — also covered by docker-bench-security
 check_container_caps() {
     local id="CHK-CONTAINER-CAPS"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local cap_drop
-    cap_drop=$(run_as_user docker inspect "$container_id" --format '{{.HostConfig.CapDrop}}' 2>/dev/null) || true
+    cap_drop=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{.HostConfig.CapDrop}}' 2>/dev/null) || true
     if echo "$cap_drop" | grep -qi "all"; then
         report_result "$id" "Container Security" "All capabilities dropped" "PASS" "4.3"
     else
@@ -708,16 +810,17 @@ check_container_caps() {
     fi
 }
 
+# CIS Docker Benchmark 5.5 (no privileged) — also covered by docker-bench-security
 check_container_privileged() {
     local id="CHK-CONTAINER-PRIVILEGED"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local privileged
-    privileged=$(run_as_user docker inspect "$container_id" --format '{{.HostConfig.Privileged}}' 2>/dev/null) || true
+    privileged=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{.HostConfig.Privileged}}' 2>/dev/null) || true
     if [[ "$privileged" == "false" ]]; then
         report_result "$id" "Container Security" "Container is not privileged" "PASS" "4.3"
     else
@@ -726,16 +829,17 @@ check_container_privileged() {
     fi
 }
 
+# CIS Docker Benchmark 5.32 (no docker.sock mount) — also covered by docker-bench-security
 check_docker_socket() {
     local id="CHK-DOCKER-SOCKET"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local mounts
-    mounts=$(run_as_user docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
+    mounts=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
     if echo "$mounts" | grep -q "docker.sock"; then
         report_result "$id" "Container Security" "Docker socket is mounted — host escape possible" "FAIL" "4.3" \
             "Remove /var/run/docker.sock volume mount immediately"
@@ -747,13 +851,13 @@ check_docker_socket() {
 check_secrets_env() {
     local id="CHK-SECRETS-ENV"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local env_vars
-    env_vars=$(run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
+    env_vars=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
     if echo "$env_vars" | grep -qiE 'ENCRYPTION_KEY=|PASSWORD=|SECRET=|TOKEN=.*[a-zA-Z0-9]{8}|API_KEY='; then
         report_result "$id" "Container Security" "Secrets found in container environment" "WARN" "4.3" \
             "Use Docker secrets instead of environment variables — see §4.3"
@@ -762,16 +866,16 @@ check_secrets_env() {
     fi
 }
 
-check_colima_mounts() {
+# CIS Docker Benchmark 5.6 (sensitive host dirs) — partially covered by docker-bench-securitycheck_colima_mounts() {
     local id="CHK-COLIMA-MOUNTS"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local mounts
-    mounts=$(run_as_user docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
+    mounts=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{json .Mounts}}' 2>/dev/null) || true
     if echo "$mounts" | grep -qE '"/Users/|"/home/|"/root"'; then
         report_result "$id" "Container Security" "Home directory mounted in container" "WARN" "4.3" \
             "Consider using named Docker volumes instead"
@@ -780,16 +884,17 @@ check_colima_mounts() {
     fi
 }
 
+# CIS Docker Benchmark 5.10 (no host network) — also covered by docker-bench-security
 check_container_network() {
     local id="CHK-CONTAINER-NETWORK"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.5"
         return
     fi
     local net_mode
-    net_mode=$(run_as_user docker inspect "$container_id" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null) || true
+    net_mode=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null) || true
     if [[ "$net_mode" == "host" ]]; then
         report_result "$id" "Container Security" "Container uses host network — no isolation" "FAIL" "4.5" \
             "Use bridge networking, not --network host — see §4.5"
@@ -798,16 +903,17 @@ check_container_network() {
     fi
 }
 
+# CIS Docker Benchmark 5.11/5.12 (memory/CPU limits) — also covered by docker-bench-security
 check_container_resources() {
     local id="CHK-CONTAINER-RESOURCES"
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Container Security" "No n8n container running" "SKIP" "4.3"
         return
     fi
     local mem_limit
-    mem_limit=$(run_as_user docker inspect "$container_id" --format '{{.HostConfig.Memory}}' 2>/dev/null) || true
+    mem_limit=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{.HostConfig.Memory}}' 2>/dev/null) || true
     if [[ "$mem_limit" == "0" || -z "$mem_limit" ]]; then
         report_result "$id" "Container Security" "No memory limit set — resource exhaustion possible" "WARN" "4.3" \
             "Set deploy.resources.limits.memory in docker-compose.yml — see §4.3"
@@ -824,13 +930,13 @@ check_n8n_bind() {
     deployment=$(detect_deployment)
     if [[ "$deployment" == "containerized" ]]; then
         local container_id
-        container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+        container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
         if [[ -z "$container_id" ]]; then
             report_result "$id" "n8n Platform" "No n8n container running" "SKIP" "5.1"
             return
         fi
         local port_binding
-        port_binding=$(run_as_user docker port "$container_id" 5678 2>/dev/null) || true
+        port_binding=$(integrity_run_with_timeout 30 run_as_user docker port "$container_id" 5678 2>/dev/null) || true
         if echo "$port_binding" | grep -qE "^(127\.0\.0\.1|\[::1\]):"; then
             report_result "$id" "n8n Platform" "n8n bound to localhost (container)" "PASS" "5.1"
         elif [[ -z "$port_binding" ]]; then
@@ -896,9 +1002,9 @@ _get_n8n_env() {
     deployment=$(detect_deployment)
     if [[ "$deployment" == "containerized" ]]; then
         local container_id
-        container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+        container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
         if [[ -n "$container_id" ]]; then
-            run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null
+            integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null
             return
         fi
     elif [[ "$deployment" == "bare-metal" ]]; then
@@ -1249,13 +1355,13 @@ check_cred_env_visible() {
     if [[ "$deployment" == "containerized" ]]; then
         # Reuse CHK-SECRETS-ENV logic — check container env for secrets
         local container_id
-        container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+        container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
         if [[ -z "$container_id" ]]; then
             report_result "$id" "Data Security" "No n8n container running" "SKIP" "7.1"
             return
         fi
         local env_vars
-        env_vars=$(run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
+        env_vars=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
         if echo "$env_vars" | grep -qiE 'ENCRYPTION_KEY=[a-fA-F0-9]{8}|PASSWORD=[^ ]{4}|_SECRET=[a-zA-Z0-9]{8}'; then
             report_result "$id" "Data Security" "Secrets visible in container environment" "WARN" "7.1" \
                 "Use Docker secrets instead of environment variables — see §4.3"
@@ -1291,14 +1397,14 @@ check_docker_inspect_secrets() {
         return
     fi
     local container_id
-    container_id=$(run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
+    container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
     if [[ -z "$container_id" ]]; then
         report_result "$id" "Data Security" "No n8n container running" "SKIP" "7.1"
         return
     fi
     # Check if docker inspect reveals actual secret values in environment
     local env_output
-    env_output=$(run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
+    env_output=$(integrity_run_with_timeout 30 run_as_user docker inspect "$container_id" --format '{{json .Config.Env}}' 2>/dev/null) || true
     local has_secrets
     has_secrets=$(echo "$env_output" | grep -ciE 'N8N_ENCRYPTION_KEY=[a-fA-F0-9]{16}|JWT_SECRET=[a-zA-Z0-9]{16}') || true
     if [[ "$has_secrets" -gt 0 ]]; then
@@ -2297,11 +2403,11 @@ check_openclaw_n8n_creds() {
 
     # Check if N8N_ENCRYPTION_KEY is set in Docker environment
     local enc_key
-    enc_key=$(docker exec openclaw-n8n printenv N8N_ENCRYPTION_KEY 2>/dev/null || echo "")
+    enc_key=$(integrity_run_with_timeout 30 docker exec openclaw-n8n printenv N8N_ENCRYPTION_KEY 2>/dev/null || echo "")
 
     if [[ -z "$enc_key" ]]; then
         # Check if it's loaded via Docker secrets instead
-        if docker exec openclaw-n8n test -f /run/secrets/n8n_encryption_key 2>/dev/null; then
+        if integrity_run_with_timeout 30 docker exec openclaw-n8n test -f /run/secrets/n8n_encryption_key 2>/dev/null; then
             report_result "$id" "OpenClaw Agent" \
                 "n8n encryption key loaded via Docker secret" "PASS" "11.5"
         else
@@ -2763,6 +2869,7 @@ main() {
 
     # §4.1 Container Runtime
     run_check check_colima_running
+    run_check check_colima_vm_mounts
 
     # §4 Container Isolation checks (T024) — containerized only
     if [[ "$deployment" == "containerized" ]]; then

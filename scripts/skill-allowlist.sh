@@ -39,9 +39,27 @@ USAGE
 
 ensure_allowlist() {
     if [[ ! -f "$INTEGRITY_ALLOWLIST" ]]; then
-        echo '{"skills":[]}' | jq '.' > "$INTEGRITY_ALLOWLIST"
-        chmod 600 "$INTEGRITY_ALLOWLIST"
+        local initial='{"skills":[]}'
+        integrity_sign_state_file "$initial" "$INTEGRITY_ALLOWLIST"
     fi
+}
+
+# FR-008: Read allowlist data, verifying HMAC signature first
+read_allowlist() {
+    ensure_allowlist
+    if ! integrity_verify_state_file "$INTEGRITY_ALLOWLIST"; then
+        log_error "Skill allowlist signature invalid — possible tampering"
+        log_error "  Re-approve skills with: make skillallow-add NAME=<skill>"
+        return 1
+    fi
+    jq -c '.' "$INTEGRITY_ALLOWLIST" 2>/dev/null
+}
+
+# FR-007: Write allowlist data with HMAC signature
+write_allowlist() {
+    local data="$1"
+    integrity_sign_state_file "$data" "$INTEGRITY_ALLOWLIST"
+    integrity_audit_log "skill_allowlist_update" "allowlist updated"
 }
 
 find_skill_file() {
@@ -79,10 +97,10 @@ do_add() {
     local content_hash
     content_hash=$(integrity_compute_sha256 "$skill_file")
 
-    ensure_allowlist
-
     local allowlist
-    allowlist=$(jq '.' "$INTEGRITY_ALLOWLIST")
+    if ! allowlist=$(read_allowlist); then
+        exit 1
+    fi
 
     # Check if already exists — update hash if so
     local exists
@@ -93,64 +111,51 @@ do_add() {
             --arg n "$name" \
             --arg h "$content_hash" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '.skills = [.skills[] | if .name == $n then .content_hash = $h | .approved_at = $ts else . end]')
+            'del(.signature) | .skills = [.skills[] | if .name == $n then .content_hash = $h | .approved_at = $ts else . end]')
         log_info "Updated: ${name} → ${content_hash:0:16}..."
     else
         allowlist=$(echo "$allowlist" | jq \
             --arg n "$name" \
             --arg h "$content_hash" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '.skills += [{"name": $n, "content_hash": $h, "approved_at": $ts}]')
+            'del(.signature) | .skills += [{"name": $n, "content_hash": $h, "approved_at": $ts}]')
         log_info "Added: ${name} → ${content_hash:0:16}..."
     fi
 
-    # Atomic write
-    local tmpfile
-    tmpfile=$(mktemp "${INTEGRITY_ALLOWLIST}.XXXXXX")
-    if echo "$allowlist" | jq '.' > "$tmpfile"; then
-        chmod 600 "$tmpfile"
-        mv "$tmpfile" "$INTEGRITY_ALLOWLIST"
-    else
-        rm -f "$tmpfile"
-        log_error "Failed to write allowlist"
-        exit 1
-    fi
+    write_allowlist "$allowlist"
+    integrity_audit_log "skill_add" "${name} (${content_hash:0:16}...)"
 }
 
 do_remove() {
     local name="$1"
 
-    ensure_allowlist
+    local allowlist
+    if ! allowlist=$(read_allowlist); then
+        exit 1
+    fi
 
     local exists
-    exists=$(jq --arg n "$name" '[.skills[] | select(.name == $n)] | length' "$INTEGRITY_ALLOWLIST")
+    exists=$(echo "$allowlist" | jq --arg n "$name" '[.skills[] | select(.name == $n)] | length')
 
     if [[ "$exists" -eq 0 ]]; then
         log_warn "Skill not in allowlist: ${name}"
         return
     fi
 
-    local allowlist
-    allowlist=$(jq --arg n "$name" '.skills = [.skills[] | select(.name != $n)]' "$INTEGRITY_ALLOWLIST")
-
-    local tmpfile
-    tmpfile=$(mktemp "${INTEGRITY_ALLOWLIST}.XXXXXX")
-    if echo "$allowlist" | jq '.' > "$tmpfile"; then
-        chmod 600 "$tmpfile"
-        mv "$tmpfile" "$INTEGRITY_ALLOWLIST"
-    else
-        rm -f "$tmpfile"
-        log_error "Failed to write allowlist"
-        exit 1
-    fi
-
+    allowlist=$(echo "$allowlist" | jq --arg n "$name" 'del(.signature) | .skills = [.skills[] | select(.name != $n)]')
+    write_allowlist "$allowlist"
+    integrity_audit_log "skill_remove" "${name}"
     log_info "Removed: ${name}"
 }
 
 do_check() {
     log_step "Checking installed skills against allowlist"
 
-    ensure_allowlist
+    # FR-008: Verify allowlist signature before trusting
+    if ! read_allowlist >/dev/null 2>&1; then
+        log_error "Skill allowlist signature verification failed"
+        return 1
+    fi
 
     local total=0
     local passed=0

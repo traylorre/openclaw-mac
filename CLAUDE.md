@@ -4,6 +4,9 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
 
+- Bash 5.x (POSIX-compatible subset per Constitution VI) + jq (JSON manipulation), openssl (AES-256-GCM encryption, HMAC signing), shasum (SHA-256 checksums), macOS chflags (filesystem flags), Docker CLI (container inspection), fswatch (filesystem monitoring) (012-security-hardening-phase2)
+- Filesystem — JSON state files (~/.openclaw/), JSONL audit log, encrypted session files (012-security-hardening-phase2)
+
 - Bash 5.x (POSIX-compatible subset for scripts), JSON (manifest and config files), jq (JSON manipulation) + macOS chflags (filesystem immutability), OpenClaw v2026.3.13 (sandbox mode), fswatch (filesystem monitoring via Homebrew), launchd (process supervision), macOS Keychain (HMAC key storage) (011-workspace-integrity)
 - Filesystem — `~/.openclaw/manifest.json` (signed integrity manifest), `~/.openclaw/skill-allowlist.json`, `~/.openclaw/lock-state.json`, `~/.openclaw/integrity-monitor-heartbeat.json` (011-workspace-integrity)
 
@@ -47,11 +50,9 @@ Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
 
+- 012-security-hardening-phase2: Added Bash 5.x (POSIX-compatible subset per Constitution VI) + jq (JSON manipulation), openssl (AES-256-GCM encryption, HMAC signing), shasum (SHA-256 checksums), macOS chflags (filesystem flags), Docker CLI (container inspection), fswatch (filesystem monitoring)
+
 - 011-workspace-integrity: Added Bash 5.x (POSIX-compatible subset for scripts), JSON (manifest and config files), jq (JSON manipulation) + macOS chflags (filesystem immutability), OpenClaw v2026.3.13 (sandbox mode), fswatch (filesystem monitoring via Homebrew), launchd (process supervision), macOS Keychain (HMAC key storage)
-
-- 010-linkedin-automation: Added JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions) + OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama)
-
-- 009-nomoop: Added Bash 5.x (POSIX-compatible subset per constitution) + jq (JSON manifest manipulation), shasum (checksums), macOS CLI tools (security, launchctl, defaults)
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
