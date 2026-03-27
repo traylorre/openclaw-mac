@@ -216,9 +216,6 @@ main() {
     # 014: Ollama model baseline capture
     capture_ollama_baseline
 
-    # 014 T034: Behavioral baseline capture
-    capture_behavioral_baseline
-
     integrity_audit_log "deploy" "manifest created with $(jq '.files | length' "$INTEGRITY_MANIFEST" 2>/dev/null) files"
     log_info "Deploy complete. Run 'sudo make integrity-lock' to set immutable flags."
 }
@@ -374,82 +371,6 @@ capture_ollama_baseline() {
 
     log_info "Ollama baseline captured: model=${model}, digest=${digest:0:20}..."
     integrity_audit_log "ollama_deploy" "model=${model}, digest=${digest:0:20}"
-}
-
-# --- 014 T034: Behavioral Baseline Capture ---
-
-capture_behavioral_baseline() {
-    local baseline_file="${HOME}/.openclaw/behavioral-baseline.json"
-
-    # Need n8n API key from Keychain
-    local api_key
-    api_key=$(security find-generic-password -a "openclaw" -s "n8n-api-key" -w 2>/dev/null)
-    if [[ -z "$api_key" ]]; then
-        log_info "No n8n API key in Keychain — skipping behavioral baseline"
-        return 0
-    fi
-
-    # Check if n8n is reachable
-    if ! curl -s --max-time 5 "http://localhost:5678/healthz" &>/dev/null; then
-        log_info "n8n not reachable — skipping behavioral baseline"
-        return 0
-    fi
-
-    log_step "Capturing behavioral baseline"
-
-    # Fetch recent execution history via n8n REST API
-    local _prev_exit_trap _cred_tmpfile exec_output
-    _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
-    _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
-    trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
-
-    exec_output=$(curl -s --config "$_cred_tmpfile" \
-        "http://localhost:5678/api/v1/executions?limit=250&status=success" --max-time 15 2>/dev/null) || true
-
-    rm -f "$_cred_tmpfile"
-    if [[ -n "$_prev_exit_trap" ]]; then
-        eval "$_prev_exit_trap"
-    else
-        trap - EXIT
-    fi
-
-    if [[ -z "$exec_output" ]] || ! echo "$exec_output" | jq -e '.data' &>/dev/null; then
-        log_warn "Could not fetch execution history — behavioral baseline not established"
-        return 0
-    fi
-
-    # Aggregate: count executions per workflow name
-    local freq
-    freq=$(echo "$exec_output" | jq -c '
-        [.data[] | .workflowData.name // "unknown"] |
-        group_by(.) | map({key: .[0], value: length}) |
-        from_entries
-    ' 2>/dev/null)
-
-    if [[ -z "$freq" || "$freq" == "null" ]]; then
-        freq="{}"
-    fi
-
-    # Write baseline
-    local baseline
-    baseline=$(jq -n \
-        --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson freq "$freq" \
-        '{
-            baseline_date: $date,
-            webhook_call_frequency: $freq,
-            skill_invocation_frequency: null,
-            last_comparison_date: null,
-            deviation_threshold: 200
-        }')
-
-    echo "$baseline" | jq '.' > "$baseline_file"
-    chmod 600 "$baseline_file"
-
-    local wf_count
-    wf_count=$(echo "$freq" | jq 'length')
-    log_info "Behavioral baseline established: ${wf_count} workflows tracked"
-    integrity_audit_log "behavioral_baseline" "workflows=${wf_count}"
 }
 
 neutralize_git_hooks() {
