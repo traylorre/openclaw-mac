@@ -1,6 +1,8 @@
 {
+  "_status": "future",
+  "_note": "Deferred to future milestone. Do not import into n8n.",
   "id": "feed-discovery",
-  "name": "feed-discovery",
+  "name": "[FUTURE] feed-discovery",
   "nodes": [
     {
       "parameters": {

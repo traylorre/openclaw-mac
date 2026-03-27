@@ -51,6 +51,8 @@ On the OpenClaw side, the skill that calls n8n webhooks computes the HMAC signat
 
 ## R-005: Playwright in n8n Docker
 
+**Status: Future**
+
 **Decision**: Use the `n8n-nodes-playwright` community node installed in a custom Docker image extending the official n8n image.
 
 **Rationale**: The community node provides a dedicated Playwright node with operations for navigate, screenshot, extract text, click, and execute custom JavaScript. It supports headless Chromium in Docker. Requires a custom Dockerfile that installs system dependencies (~1GB additional disk for browser binaries). This is preferable to raw Code node usage because it provides structured operations and error handling.
@@ -106,6 +108,8 @@ On the OpenClaw side, the skill that calls n8n webhooks computes the HMAC signat
 
 ## R-010: Defensive CDP Anti-Detection Strategy
 
+**Status: Future**
+
 **Decision**: Implement multiple anti-detection layers for Playwright CDP feed browsing: randomized session timing, human-like scroll patterns, configurable session duration caps, no form interactions during discovery, and stealth browser configuration.
 
 **Rationale**: LinkedIn uses behavioral fingerprinting (click patterns, scroll speed, session timing), device fingerprinting (CDP-controlled Chrome has detectable signatures), and new-account throttling. Passive browsing (scrolling, reading) has the lowest detection risk because it generates no write signals (no typing, clicking buttons, or form submissions). The defensive layers mimic natural browsing behavior:
@@ -122,6 +126,8 @@ On the OpenClaw side, the skill that calls n8n webhooks computes the HMAC signat
 - Full CDP avoidance (API-only): Would eliminate US2 entirely. The API cannot discover feed content — this is the core gap that CDP fills.
 
 ## R-011: Playwright LinkedIn Session Management
+
+**Status: Future**
 
 **Decision**: Use Playwright `storageState` JSON (Option B) stored as a Docker volume-mounted file. Initial login performed manually in a headed, non-incognito browser. A health check at the start of each discovery session verifies the session is valid before browsing.
 
@@ -140,6 +146,8 @@ On the OpenClaw side, the skill that calls n8n webhooks computes the HMAC signat
 - Cookie injection (`li_at` + `JSESSIONID` only): Fragile — LinkedIn may add required cookies. Misses localStorage state.
 
 ## R-012: Feed Data Prompt Injection Defense
+
+**Status: Future**
 
 **Decision**: Three-layer defense: (1) input sanitization before any LLM processing, (2) separate extraction agent with no tools/skills processes sanitized content and produces structured facts, (3) main agent generates comment suggestions from structured facts only, never raw LinkedIn text. Human approval gate (already in spec) is the fourth layer.
 
@@ -194,6 +202,8 @@ On the OpenClaw side, the skill that calls n8n webhooks computes the HMAC signat
 - Reverse proxy (nginx): True centralization but adds infrastructure. Over-engineering for localhost.
 
 ## R-015: Scheduled Action Queue for Engagement Timing
+
+**Status: Future**
 
 **Decision**: Implement a scheduled action queue. When the operator approves engagement actions (likes, comments), each action gets a scheduled timestamp spread across the day's active hours. A periodic action-runner workflow (every 5-10 minutes) checks the queue and executes actions whose timestamp has passed.
 

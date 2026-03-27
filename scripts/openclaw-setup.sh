@@ -15,7 +15,6 @@ readonly REPO_ROOT
 refuse_sudo
 
 readonly AGENT_NAME="linkedin-persona"
-readonly EXTRACTOR_NAME="feed-extractor"
 readonly OPENCLAW_DIR="${HOME}/.openclaw"
 readonly OPENCLAW_CONFIG="${OPENCLAW_DIR}/openclaw.json"
 
@@ -155,12 +154,6 @@ create_agents() {
         openclaw agents add "${AGENT_NAME}" --non-interactive --workspace "${OPENCLAW_DIR}/agents/${AGENT_NAME}"
     fi
 
-    if [[ -d "${OPENCLAW_DIR}/agents/${EXTRACTOR_NAME}" ]]; then
-        log_info "Agent '${EXTRACTOR_NAME}' already exists"
-    else
-        log_info "Creating agent: ${EXTRACTOR_NAME}"
-        openclaw agents add "${EXTRACTOR_NAME}" --non-interactive --workspace "${OPENCLAW_DIR}/agents/${EXTRACTOR_NAME}"
-    fi
 }
 
 # --- T004: Configure LLM Providers ---
@@ -274,58 +267,30 @@ generate_hmac_secret() {
 # --- Deploy Workspace Files ---
 deploy_workspace_files() {
     local src_main="${REPO_ROOT}/openclaw"
-    local src_extractor="${REPO_ROOT}/openclaw-extractor"
     # OpenClaw workspace files live at the agent root, NOT in agent/ subdir
     local dst_main="${OPENCLAW_DIR}/agents/${AGENT_NAME}"
-    local dst_extractor="${OPENCLAW_DIR}/agents/${EXTRACTOR_NAME}"
 
     if [[ ! -d "$src_main" ]]; then
         log_warn "Workspace templates not found at ${src_main}"
         return 1
     fi
 
-    # Deploy main agent workspace
+    # Deploy main agent workspace (active skills only)
     if [[ -d "$dst_main" ]]; then
         log_info "Deploying workspace files to ${dst_main}"
         cp "${src_main}"/*.md "$dst_main/"
-        if [[ -d "${src_main}/skills" ]]; then
-            mkdir -p "${dst_main}/skills"
-            cp -Rp "${src_main}/skills/"* "${dst_main}/skills/"
-        fi
-        log_info "  Deployed: $(find "${src_main}" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ') md files + skills/"
+        mkdir -p "${dst_main}/skills"
+        for skill in linkedin-post linkedin-activity token-status; do
+            if [[ -d "${src_main}/skills/${skill}" ]]; then
+                cp -Rp "${src_main}/skills/${skill}" "${dst_main}/skills/"
+            fi
+        done
+        log_info "  Deployed: $(find "${src_main}" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ') md files + active skills"
     else
         log_warn "Agent directory not found: ${dst_main}"
         log_warn "Run 'openclaw agents add ${AGENT_NAME}' first"
         return 1
     fi
-
-    # Deploy extraction agent workspace
-    if [[ -d "$dst_extractor" ]]; then
-        log_info "Deploying workspace files to ${dst_extractor}"
-        cp "${src_extractor}"/*.md "$dst_extractor/"
-        log_info "  Deployed: $(find "${src_extractor}" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ') md files (zero skills — Rule of Two)"
-    else
-        log_warn "Agent directory not found: ${dst_extractor}"
-        return 1
-    fi
-}
-
-# --- Docker Build ---
-build_docker_image() {
-    if ! command -v docker &>/dev/null; then
-        log_warn "Docker not found — skipping image build"
-        return 1
-    fi
-
-    local dockerfile="${REPO_ROOT}/docker/n8n-playwright.Dockerfile"
-    if [[ ! -f "$dockerfile" ]]; then
-        log_warn "Dockerfile not found at ${dockerfile}"
-        return 1
-    fi
-
-    log_info "Building custom n8n Docker image with Playwright support..."
-    docker build -t openclaw-n8n:latest -f "$dockerfile" "$REPO_ROOT"
-    log_info "Image built: openclaw-n8n:latest"
 }
 
 # --- Summary ---
@@ -399,7 +364,6 @@ main() {
     run_step "Configure inbound hooks" configure_hooks
     run_step "Generate HMAC secret" generate_hmac_secret
     run_step "Deploy workspace files" deploy_workspace_files
-    run_step "Build Docker image" build_docker_image
 
     print_summary
 }

@@ -53,7 +53,7 @@ openclaw channels add whatsapp
 # Scan QR code when prompted
 ```
 
-### 4. Build Custom n8n Docker Image
+### 4. Build Custom n8n Docker Image [FUTURE -- Not needed for US1]
 
 ```bash
 # Build n8n image with Playwright support
@@ -84,7 +84,7 @@ echo "N8N_WEBHOOK_SECRET=$WEBHOOK_SECRET" >> ~/.openclaw/.env
 docker exec -u node openclaw-n8n n8n import:workflow --separate --input=/workflows/
 
 # Set up n8n Custom Variables via API for operating configuration
-# (discovery schedule, volume limits, quiet hours, warmup mode)
+# (volume limits, quiet hours, warmup mode)
 ```
 
 ### 7. Configure LinkedIn OAuth
@@ -136,7 +136,6 @@ make audit
 | `openclaw/SOUL.md` | Persona voice template |
 | `openclaw/AGENTS.md` | Operating rules template |
 | `openclaw/BOOT.md` | Restart recovery sequence |
-| `docker/n8n-playwright.Dockerfile` | Custom n8n image with Playwright |
 | `scripts/hardening-audit.sh` | Extended with CHK-OPENCLAW-* checks |
 
 ## Smoke Test

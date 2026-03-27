@@ -5,19 +5,19 @@
 
 ## Summary
 
-Deploy OpenClaw as a native Bun/Node process on the hardened macOS host, configure it for LinkedIn presence management via n8n workflow orchestration. The system uses LinkedIn's official Share API for content operations (posting, commenting, liking), Playwright CDP for passive feed discovery, and HMAC-signed webhooks for trust boundary enforcement between agent and orchestrator. All content requires human approval via chat (Telegram/WhatsApp). LinkedIn credentials are isolated in n8n — the agent never accesses them. The hardening audit is extended with agent-specific checks.
+Deploy OpenClaw as a native Bun/Node process on the hardened macOS host, configure it for LinkedIn presence management via n8n workflow orchestration. The system uses LinkedIn's official Share API for content operations (posting) and HMAC-signed webhooks for trust boundary enforcement between agent and orchestrator. All content requires human approval via chat (Telegram/WhatsApp). LinkedIn credentials are isolated in n8n — the agent never accesses them. The hardening audit is extended with agent-specific checks.
 
 ## Technical Context
 
 **Language/Version**: JavaScript/TypeScript (Bun runtime for OpenClaw), Bash 5.x (POSIX-compatible subset for scripts and audit checks), JSON (n8n workflow definitions)
-**Primary Dependencies**: OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), Playwright (via n8n-nodes-playwright community node), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama)
+**Primary Dependencies**: OpenClaw (self-hosted AI agent), n8n v2.13.0 (Docker), LinkedIn Share API (OAuth 2.0), LLM providers (Gemini, Anthropic, Ollama)
 **Storage**: OpenClaw SQLite + sqlite-vec (conversation history), n8n Docker volume (execution history, credentials, workflow state), filesystem (workspace files, pending drafts JSON, manifest checksums)
 **Testing**: shellcheck (bash scripts), manual end-to-end verification (chat → draft → approve → post), hardening-audit.sh (audit framework)
 **Target Platform**: macOS (Apple Silicon Mac Mini, Tahoe/Sonoma), hardened per M2 baseline
 **Project Type**: Integration/deployment — deploying and configuring existing tools, writing n8n workflows, extending audit scripts, creating OpenClaw skills and workspace files
 **Performance Goals**: Content draft generation <30s, API post publishing <10s, feed discovery session <5 minutes
 **Constraints**: LinkedIn API 150 requests/member/day, OAuth token 60-day expiry with manual re-auth, free-tier LLM usage, no inbound ports (polling mode), single Mac Mini (no redundancy)
-**Scale/Scope**: Single agent, single LinkedIn account, 1-3 posts + 5-10 comments + 10-20 likes per day
+**Scale/Scope**: Single agent, single LinkedIn account, 1-3 posts per day
 
 ## Constitution Check
 
@@ -26,7 +26,7 @@ Deploy OpenClaw as a native Bun/Node process on the hardened macOS host, configu
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | I. Documentation-Is-the-Product | **PASS** | Repo output remains documentation + scripts + configuration. OpenClaw is deployed, not shipped. New artifacts: audit extensions, workspace templates, n8n workflow configs, hardening observations doc. |
-| II. Threat-Model Driven (NON-NEGOTIABLE) | **PASS** | All controls traced to named threats: malicious ClawHub skills (credential isolation), workspace file tampering (integrity checksums), unauthorized webhook callers (HMAC — proves identity + integrity + replay protection per R-003), adversarial LinkedIn feed content (indirect prompt injection — three-layer defense per R-012: input sanitization → quarantined extraction agent → structured data only to main agent). Extended threat model: add "adversarial content in scraped LinkedIn feed data" and "indirect prompt injection via social media posts" to existing adversary list. OWASP LLM01:2025 (#1 risk) explicitly addressed. |
+| II. Threat-Model Driven (NON-NEGOTIABLE) | **PASS** | All controls traced to named threats: malicious ClawHub skills (credential isolation), workspace file tampering (integrity checksums), unauthorized webhook callers (HMAC — proves identity + integrity + replay protection per R-003). |
 | III. Free-First with Cost Transparency | **PASS** | OpenClaw (free, open-source), n8n community edition (free), LinkedIn Share API (free), Gemini free tier (primary), Ollama (free, local), Playwright (free). Anthropic is pay-as-you-go fallback only — marked accordingly. |
 | IV. Cite Canonical Sources (NON-NEGOTIABLE) | **PASS** | Security recommendations cite: NIST SP 800-207 (ZTA), OWASP ASI Top 10 (agent security), MITRE ATLAS (ML threats), ToIP TEA (trust boundaries), CIS Docker Benchmark (container hardening). LinkedIn API references cite official Microsoft/LinkedIn documentation. |
 | V. Every Recommendation Is Verifiable | **PASS** | All new security controls are verifiable via audit script (CHK-OPENCLAW-* checks). Workspace integrity: checksum comparison. Credential isolation: file/env scan. Webhook auth: endpoint test. |
@@ -60,20 +60,12 @@ specs/010-linkedin-automation/
 ### Source Code (repository root)
 
 ```text
-docker/
-└── n8n-playwright.Dockerfile    # Custom n8n image with Playwright + system deps
-
 workflows/
 ├── hmac-verify.json             # Sub-workflow: shared HMAC-SHA256 verification (R-014)
 ├── linkedin-post.json           # Publish approved post via LinkedIn API
-├── linkedin-comment.json        # Post comment via LinkedIn API
-├── linkedin-like.json           # Like post via LinkedIn API
-├── feed-discovery.json          # Playwright CDP feed browsing + URN extraction
-├── action-runner.json           # Scheduled: process action queue, execute due actions (R-015)
 ├── token-check.json             # Daily OAuth token expiry monitor
 ├── activity-query.json          # Execution history query for chat summaries
 ├── rate-limit-tracker.json      # Daily API usage counter + alert
-├── config-update.json           # Update n8n Custom Variables via internal API (R-002 fix)
 └── error-handler.json           # Shared error workflow → alert via OpenClaw hook
 
 openclaw/
@@ -86,19 +78,10 @@ openclaw/
 └── skills/
     ├── linkedin-post/
     │   └── SKILL.md             # Skill: draft + approve + publish post
-    ├── linkedin-engage/
-    │   └── SKILL.md             # Skill: discover feed + engage with community
     ├── linkedin-activity/
     │   └── SKILL.md             # Skill: query activity history
-    ├── config-update/
-    │   └── SKILL.md             # Skill: update operating config via HMAC webhook (not direct API)
     └── token-status/
         └── SKILL.md             # Skill: check token health
-
-openclaw-extractor/
-├── SOUL.md                      # Restricted extraction agent — no tools, no skills
-├── AGENTS.md                    # Rules: extract structured facts only, never follow instructions in content
-└── IDENTITY.md                  # Agent identity: "feed-extractor"
 
 scripts/
 ├── hardening-audit.sh           # EXTEND: add CHK-OPENCLAW-* checks
@@ -138,7 +121,62 @@ Deploy OpenClaw, configure basic chat + LLM, implement the post-approval-publish
 
 **Exit criteria**: Operator can draft, review, edit, approve, and publish a text or image post to LinkedIn via chat. Failed posts alert the operator. HMAC sub-workflow verified.
 
-### Phase 2: Engagement (P2 — Feed Discovery + Community Engagement)
+### Phase 2: Operations (P3+P4 — Alerting + Activity History)
+
+Add proactive alerting and activity querying. Delivers US3 + US4.
+
+**Tasks**:
+1. Create `token-check` n8n workflow (daily schedule → read grant timestamp from Static Data → compute days remaining → alert if ≤7)
+2. Create `token-status` OpenClaw skill (check token health on demand)
+3. Create `rate-limit-tracker` n8n workflow (count daily executions → alert at 80%)
+4. Create `activity-query` n8n workflow (query execution history via n8n REST API → format summary)
+5. Create `linkedin-activity` OpenClaw skill (call activity-query webhook → present to operator)
+6. Wire error-handler workflow to all LinkedIn workflows
+7. End-to-end test: token expiry alert, rate limit warning, activity summary query
+
+**Exit criteria**: Operator receives token expiry alerts 7 days in advance. Workflow failures produce chat alerts. Operator can query "What did we post this week?" and get accurate results.
+
+### Phase 3: Security (P5 — Audit Extensions + Observations)
+
+Extend hardening audit and document observations. Delivers US5 + Deliverable.
+
+**Tasks**:
+1. Add CHK-OPENCLAW-PROCESS: verify agent bound to localhost, running as expected user
+2. Add CHK-OPENCLAW-CREDS: verify LinkedIn credentials absent from agent env/config/filesystem
+3. Add CHK-OPENCLAW-CREDS-N8N-API: verify n8n API key is NOT in OpenClaw environment (only in n8n)
+4. Add CHK-OPENCLAW-WORKSPACE: verify workspace file checksums against manifest
+5. Add CHK-OPENCLAW-WEBHOOK-AUTH: verify n8n webhook endpoints require authentication (test unsigned request → 401)
+6. Add CHK-OPENCLAW-N8N-CREDS: verify n8n credential store is encrypted
+7. Initialize manifest with workspace file checksums (`manifest-update` make target)
+8. Create `docs/HARDENING-OBSERVATIONS.md` — document what works, workarounds, limitations
+9. Update `docs/HARDENING.md` with agent deployment section
+10. Create `workflow-sync.sh` for n8n workflow export/import version control
+11. Run full audit, verify all checks pass
+12. End-to-end test: modify workspace file → run audit → detect tampering
+
+**Exit criteria**: `make audit` passes with all new CHK-OPENCLAW-* checks. Hardening observations documented. Workflow sync operational.
+
+## Complexity Tracking
+
+No constitution violations to justify. All decisions align with existing principles.
+
+## Risk Register
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Indirect prompt injection via LinkedIn feed content | HIGH — manipulated comment suggestions, subtle misinformation | Three-layer defense (R-012): input sanitization → quarantined extraction agent (Rule of Two) → human approval. OWASP LLM01:2025 #1 risk. |
+| OpenClaw pending drafts lost on crash (not SIGUSR1) | MEDIUM — operator must re-request draft | Persist drafts to filesystem (pending-drafts.json). BOOT.md recovery re-prompts on restart. |
+| n8n API key exposed in OpenClaw environment | HIGH — privilege escalation, full n8n admin access | Config updates routed through HMAC-signed webhook (R-002 fix). n8n API key never in agent environment. Audit check CHK-OPENCLAW-CREDS-N8N-API verifies. |
+| Gemini free tier rate-limited during peak usage | LOW — falls back to Anthropic (paid) | Multi-provider fallback is automatic. Monitor Anthropic costs. |
+| WhatsApp Baileys library breaks on protocol update | MEDIUM if WhatsApp chosen — chat channel goes down | Recommend Telegram (official Bot API). Document WhatsApp as alternative with fragility caveat. |
+| n8n execution history pruned before M4 migration | LOW — lose activity history | EXECUTIONS_DATA_MAX_AGE=2880 (120 days). M4 replaces with Qdrant+Mem0. |
+| HMAC sub-workflow adds latency | LOW — negligible for this volume | Internal workflow call <50ms. Acceptable for 10-20 actions/day. |
+
+## Future Scope
+
+The following features are deferred to a future milestone.
+
+### US2: Feed Discovery + Community Engagement
 
 Add Playwright feed discovery with prompt injection defense, API-based engagement with scheduled action queue. Delivers US2.
 
@@ -168,59 +206,50 @@ Add Playwright feed discovery with prompt injection defense, API-based engagemen
 
 **Exit criteria**: Operator can discover feed content, review suggestions, approve engagement actions, and see comments/likes appear on LinkedIn. Warmup and steady-state modes work correctly. Extraction agent never passes raw LinkedIn text to main agent. Scheduled action queue spreads likes across hours. LinkedIn browser session health check operational.
 
-### Phase 3: Operations (P3+P4 — Alerting + Activity History)
+### Deferred Project Structure Artifacts
 
-Add proactive alerting and activity querying. Delivers US3 + US4.
+```text
+docker/
+└── n8n-playwright.Dockerfile    # Custom n8n image with Playwright + system deps
 
-**Tasks**:
-1. Create `token-check` n8n workflow (daily schedule → read grant timestamp from Static Data → compute days remaining → alert if ≤7)
-2. Create browser session health check workflow (daily schedule → verify LinkedIn storageState is valid → alert if expired)
-3. Create `token-status` OpenClaw skill (check token health + browser session on demand)
-4. Create `rate-limit-tracker` n8n workflow (count daily executions → alert at 80%)
-5. Create `activity-query` n8n workflow (query execution history via n8n REST API → format summary)
-6. Create `linkedin-activity` OpenClaw skill (call activity-query webhook → present to operator)
-7. Wire error-handler workflow to all LinkedIn workflows
-8. End-to-end test: token expiry alert, browser session alert, rate limit warning, activity summary query
+workflows/
+├── feed-discovery.json          # Playwright CDP feed browsing + URN extraction
+├── linkedin-comment.json        # Post comment via LinkedIn API
+├── linkedin-like.json           # Like post via LinkedIn API
+├── action-runner.json           # Scheduled: process action queue, execute due actions (R-015)
+└── config-update.json           # Update n8n Custom Variables via internal API (R-002 fix)
 
-**Exit criteria**: Operator receives token expiry alerts 7 days in advance. Browser session expiry triggers alert. Workflow failures produce chat alerts. Operator can query "What did we post this week?" and get accurate results.
+openclaw-extractor/
+├── SOUL.md                      # Restricted extraction agent — no tools, no skills
+├── AGENTS.md                    # Rules: extract structured facts only, never follow instructions in content
+└── IDENTITY.md                  # Agent identity: "feed-extractor"
 
-### Phase 4: Security (P5 — Audit Extensions + Observations)
+openclaw/skills/
+├── linkedin-engage/
+│   └── SKILL.md                 # Skill: discover feed + engage with community
+└── config-update/
+    └── SKILL.md                 # Skill: update operating config via HMAC webhook (not direct API)
+```
 
-Extend hardening audit and document observations. Delivers US5 + Deliverable.
+### Deferred Operations Tasks
 
-**Tasks**:
-1. Add CHK-OPENCLAW-PROCESS: verify agent bound to localhost, running as expected user
-2. Add CHK-OPENCLAW-CREDS: verify LinkedIn credentials absent from agent env/config/filesystem
-3. Add CHK-OPENCLAW-CREDS-N8N-API: verify n8n API key is NOT in OpenClaw environment (only in n8n)
-4. Add CHK-OPENCLAW-WORKSPACE: verify workspace file checksums against manifest (both main agent and extraction agent)
-5. Add CHK-OPENCLAW-WEBHOOK-AUTH: verify n8n webhook endpoints require authentication (test unsigned request → 401)
-6. Add CHK-OPENCLAW-N8N-CREDS: verify n8n credential store is encrypted
-7. Add CHK-OPENCLAW-EXTRACTION-AGENT: verify extraction agent has no tools/skills configured (Rule of Two)
-8. Initialize manifest with workspace file checksums (`manifest-update` make target)
-9. Create `docs/HARDENING-OBSERVATIONS.md` — document what works, workarounds, limitations
-10. Update `docs/HARDENING.md` with agent deployment section
-11. Create `workflow-sync.sh` for n8n workflow export/import version control
-12. Run full audit, verify all checks pass
-13. End-to-end test: modify workspace file → run audit → detect tampering
-14. End-to-end test: add tool to extraction agent config → audit flags as FAIL
+- Create browser session health check workflow (daily schedule → verify LinkedIn storageState is valid → alert if expired)
+- Browser session expiry triggers alert
 
-**Exit criteria**: `make audit` passes with all new CHK-OPENCLAW-* checks. Hardening observations documented. Workflow sync operational. Extraction agent isolation verified by audit.
+### Deferred Security/Audit Tasks
 
-## Complexity Tracking
+- CHK-OPENCLAW-EXTRACTION-AGENT: verify extraction agent has no tools/skills configured (Rule of Two)
+- End-to-end test: add tool to extraction agent config → audit flags as FAIL
+- Extraction agent isolation verified by audit
 
-No constitution violations to justify. All decisions align with existing principles.
-
-## Risk Register
+### Deferred Risks
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| CDP feed discovery triggers LinkedIn account restriction | HIGH — blocks US2, may require project re-evaluation | Defensive anti-detection (Phase 2), warmup mode, low-volume passive browsing only, human-like scheduling via action queue (R-015) |
-| Indirect prompt injection via LinkedIn feed content | HIGH — manipulated comment suggestions, subtle misinformation | Three-layer defense (R-012): input sanitization → quarantined extraction agent (Rule of Two) → human approval. OWASP LLM01:2025 #1 risk. |
+| CDP feed discovery triggers LinkedIn account restriction | HIGH — blocks US2, may require project re-evaluation | Defensive anti-detection, warmup mode, low-volume passive browsing only, human-like scheduling via action queue (R-015) |
 | LinkedIn browser session expires unexpectedly | MEDIUM — feed discovery silently fails | Session health check before each discovery (R-011). Daily session health workflow. Alert operator for manual re-login. |
 | LinkedIn DOM changes break Playwright selectors | MEDIUM — breaks feed discovery until selectors updated | Isolate DOM mapping in configurable selectors, not hardcoded. Monitor for breakage. |
-| OpenClaw pending drafts lost on crash (not SIGUSR1) | MEDIUM — operator must re-request draft | Persist drafts to filesystem (pending-drafts.json). BOOT.md recovery re-prompts on restart. |
-| n8n API key exposed in OpenClaw environment | HIGH — privilege escalation, full n8n admin access | Config updates routed through HMAC-signed webhook (R-002 fix). n8n API key never in agent environment. Audit check CHK-OPENCLAW-CREDS-N8N-API verifies. |
-| Gemini free tier rate-limited during peak usage | LOW — falls back to Anthropic (paid) | Multi-provider fallback is automatic. Monitor Anthropic costs. |
-| WhatsApp Baileys library breaks on protocol update | MEDIUM if WhatsApp chosen — chat channel goes down | Recommend Telegram (official Bot API). Document WhatsApp as alternative with fragility caveat. |
-| n8n execution history pruned before M4 migration | LOW — lose activity history | EXECUTIONS_DATA_MAX_AGE=2880 (120 days). M4 replaces with Qdrant+Mem0. |
-| HMAC sub-workflow adds latency | LOW — negligible for this volume | Internal workflow call <50ms. Acceptable for 10-20 actions/day. |
+
+### Deferred Scale/Scope
+
+- 5-10 comments + 10-20 likes per day (requires US2)

@@ -37,9 +37,8 @@ Foundation laid for TEA integration in M3/M5.
 ## Milestone 3: LinkedIn Automation (`v0.3.0-linkedin`)
 
 **Goal**: Deploy OpenClaw on hardened macOS and configure it for
-LinkedIn presence management. Hybrid approach: LinkedIn API for
-posting/engagement, Playwright CDP for feed discovery, human-operated
-connection requests.
+LinkedIn content publishing. API-based posting with human approval,
+chat-based operator interaction.
 
 ### Deploy and configure
 
@@ -47,7 +46,6 @@ connection requests.
 - [ ] Configure multi-provider LLM: Gemini (primary), Anthropic (secondary), Ollama (embeddings/fallback)
 - [ ] Configure chat interface (Telegram or WhatsApp — built into OpenClaw)
 - [ ] Add LinkedIn Share API as n8n workflow (OAuth token held by n8n, not OpenClaw)
-- [ ] Add Playwright CDP as n8n workflow (feed browsing, post URN collection)
 - [ ] Wire n8n execution history as AI-queryable activity log via webhook
 
 ### Security and trust boundaries
@@ -67,8 +65,8 @@ connection requests.
 - [ ] Which activities are not possible under hardened deployment
 
 **Demo**: Operator messages OpenClaw via Telegram, LLM drafts
-content, human approves, n8n workflow posts to LinkedIn and engages
-with community. Agent never touches LinkedIn credentials directly.
+content, human approves, n8n workflow posts to LinkedIn. Agent never
+touches LinkedIn credentials directly.
 
 ---
 
@@ -81,7 +79,7 @@ with community. Agent never touches LinkedIn credentials directly.
 **Defense layers implemented**:
 
 - **Prevent**: `chflags uchg` immutable flags on 49 protected files (kernel-enforced)
-- **Contain**: OpenClaw sandbox — read-only workspace, tool deny lists, zero-tool extraction agent
+- **Contain**: OpenClaw sandbox — read-only workspace, tool deny lists
 - **Detect**: Pre-launch attestation (HMAC-signed manifest, checksums, env vars, symlinks, skill allowlist, platform version, pending-drafts schema) + continuous fswatch monitoring with signed heartbeat
 - **Verify**: 8 new CHK-OPENCLAW-* audit checks in hardening-audit.sh
 
@@ -133,8 +131,7 @@ Operator (Telegram / WhatsApp)
   └── OpenClaw (native Bun/Node process)
         ├── LLM providers: Gemini (primary) / Anthropic / Ollama
         ├── n8n (Docker) — multi-step workflow orchestration
-        │     ├── LinkedIn API — credentials held HERE, not by agent
-        │     └── Playwright — CDP feed discovery + URN capture
+        │     └── LinkedIn API — credentials held HERE, not by agent
         ├── Qdrant v1.13.0 (Docker) — vector memory (M4)
         └── Mem0 (Docker) — memory middleware + Ollama embeddings (M4)
 

@@ -17,9 +17,7 @@ services:
     #   2. docker compose pull n8n
     #   3. docker compose up -d --no-deps n8n
     #   4. Re-run hardening audit to verify
-    # M3: Custom image with Playwright for LinkedIn feed discovery
-    # Original: n8nio/n8n:2.13.0
-    image: openclaw-n8n:latest
+    image: docker.n8n.io/n8nio/n8n:2.13.0
     container_name: openclaw-n8n
 
     # Load OPENCLAW_WEBHOOK_SECRET from repo-root .env (hmac-keygen.sh writes there)
@@ -35,13 +33,10 @@ services:
       - "127.0.0.1:5678:5678"
 
     # Read-only root filesystem (FR-041)
-    # M3: Playwright requires writable dirs for browser profile and cache
     read_only: true
     tmpfs:
       - /tmp
       - /var/tmp
-      - /home/node/.cache:uid=1000,gid=1000
-      - /home/node/.local:uid=1000,gid=1000
 
     # Persistent data only — no host directory mounts (FR-058)
     # NOTE: Never mount /var/run/docker.sock (SC-017)
@@ -49,8 +44,6 @@ services:
       - n8n_data:/home/node/.n8n
       - ./n8n-entrypoint.sh:/entrypoint.sh:ro
       - ../../n8n/workflows:/tmp/workflows:ro
-      # M3: Playwright browser session persistence (storageState JSON)
-      - browser_profile:/data/browser-profile
 
     # Docker secrets — NOT environment variables (FR-058, FR-090)
     secrets:
@@ -91,8 +84,6 @@ services:
       - EXECUTIONS_DATA_SAVE_ON_SUCCESS=all
       # M3: 120-day retention for activity log until M4 (Qdrant+Mem0) replaces
       - EXECUTIONS_DATA_MAX_AGE=2880
-      # M3: Community node n8n-nodes-playwright is symlinked into ~/.n8n/nodes/
-      # by the entrypoint script on first boot (see n8n-entrypoint.sh)
       # M3: OPENCLAW_WEBHOOK_SECRET loaded via env_file (repo-root .env)
       # Do NOT duplicate here — environment: overrides env_file: and compose
       # interpolation would resolve to empty if the host shell lacks the var.
@@ -136,4 +127,3 @@ services:
 
 volumes:
   n8n_data:       # Persists workflows, credentials, execution logs
-  browser_profile: # M3: Playwright LinkedIn session (storageState JSON)

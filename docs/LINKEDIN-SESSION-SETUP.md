@@ -1,5 +1,7 @@
 # LinkedIn Browser Session Setup
 
+> **Status: Future** — This feature is deferred to a future milestone.
+
 This document describes how to create and maintain the Playwright browser
 session used for LinkedIn feed discovery.
 

@@ -76,50 +76,6 @@ The shared secret is stored in:
 
 ---
 
-## Webhook: Publish Comment
-
-**Path**: `/webhook/linkedin-comment`
-**Purpose**: Post a comment on a LinkedIn post
-
-**Request**:
-```json
-{
-  "action": "publish_comment",
-  "draft_id": "uuid",
-  "target_urn": "urn:li:activity:123456789",
-  "text": "Comment content..."
-}
-```
-
-**Response**: Same structure as Publish Post, with `linkedin_comment_urn` instead of `linkedin_post_urn`.
-
----
-
-## Webhook: Like Post
-
-**Path**: `/webhook/linkedin-like`
-**Purpose**: Like a LinkedIn post (single action, executed by action-runner)
-
-**Request**:
-```json
-{
-  "action": "like_post",
-  "target_urn": "urn:li:activity:123456789"
-}
-```
-
-**Response**:
-```json
-{
-  "status": "liked",
-  "target_urn": "urn:li:activity:123456789"
-}
-```
-
-**Note on batch likes**: The skill does NOT call this webhook directly for batches. Instead, it schedules each like into the action queue (n8n Workflow Static Data) with a computed `scheduled_at` timestamp spread across the day's active hours. The `action-runner` workflow (every 5 min) processes the queue and calls this webhook for each due action. This prevents burst patterns.
-
----
-
 ## Webhook: Config Update
 
 **Path**: `/webhook/config-update`
@@ -146,41 +102,6 @@ The shared secret is stored in:
 ```
 
 **Security note**: This webhook uses n8n's internal API to update Custom Variables. The n8n API key exists only inside the n8n environment — it is never exposed to OpenClaw. The OpenClaw `config-update` skill calls this HMAC-signed webhook, not the n8n REST API directly.
-
----
-
-## Webhook: Feed Discovery
-
-**Path**: `/webhook/feed-discovery`
-**Purpose**: Trigger a Playwright CDP feed browsing session
-
-**Request**:
-```json
-{
-  "action": "discover_feed",
-  "topics": ["autonomous racing", "F1", "motorsport technology"],
-  "max_posts": 10,
-  "session_duration_minutes": 5
-}
-```
-
-**Response**:
-```json
-{
-  "status": "completed",
-  "posts_found": 8,
-  "posts": [
-    {
-      "urn": "urn:li:activity:123456789",
-      "author_name": "Jane Smith",
-      "author_headline": "VP Engineering at RaceTech",
-      "content_snippet": "Exciting developments in autonomous...",
-      "post_url": "https://www.linkedin.com/feed/update/...",
-      "topics_matched": ["autonomous racing"]
-    }
-  ]
-}
-```
 
 ---
 
@@ -242,5 +163,88 @@ The shared secret is stored in:
   "grant_date": "2026-02-01",
   "expiry_date": "2026-04-02",
   "alert_needed": false
+}
+```
+
+---
+
+## Future
+
+The following contracts are deferred to a future milestone.
+
+### Webhook: Publish Comment
+
+**Path**: `/webhook/linkedin-comment`
+**Purpose**: Post a comment on a LinkedIn post
+
+**Request**:
+```json
+{
+  "action": "publish_comment",
+  "draft_id": "uuid",
+  "target_urn": "urn:li:activity:123456789",
+  "text": "Comment content..."
+}
+```
+
+**Response**: Same structure as Publish Post, with `linkedin_comment_urn` instead of `linkedin_post_urn`.
+
+---
+
+### Webhook: Like Post
+
+**Path**: `/webhook/linkedin-like`
+**Purpose**: Like a LinkedIn post (single action, executed by action-runner)
+
+**Request**:
+```json
+{
+  "action": "like_post",
+  "target_urn": "urn:li:activity:123456789"
+}
+```
+
+**Response**:
+```json
+{
+  "status": "liked",
+  "target_urn": "urn:li:activity:123456789"
+}
+```
+
+**Note on batch likes**: The skill does NOT call this webhook directly for batches. Instead, it schedules each like into the action queue (n8n Workflow Static Data) with a computed `scheduled_at` timestamp spread across the day's active hours. The `action-runner` workflow (every 5 min) processes the queue and calls this webhook for each due action. This prevents burst patterns.
+
+---
+
+### Webhook: Feed Discovery
+
+**Path**: `/webhook/feed-discovery`
+**Purpose**: Trigger a Playwright CDP feed browsing session
+
+**Request**:
+```json
+{
+  "action": "discover_feed",
+  "topics": ["autonomous racing", "F1", "motorsport technology"],
+  "max_posts": 10,
+  "session_duration_minutes": 5
+}
+```
+
+**Response**:
+```json
+{
+  "status": "completed",
+  "posts_found": 8,
+  "posts": [
+    {
+      "urn": "urn:li:activity:123456789",
+      "author_name": "Jane Smith",
+      "author_headline": "VP Engineering at RaceTech",
+      "content_snippet": "Exciting developments in autonomous...",
+      "post_url": "https://www.linkedin.com/feed/update/...",
+      "topics_matched": ["autonomous racing"]
+    }
+  ]
 }
 ```

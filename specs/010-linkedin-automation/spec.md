@@ -29,30 +29,6 @@ Content types include text posts, article/URL shares, and image posts. For image
 
 ---
 
-### User Story 2 — Operator Engages with Community Content (Priority: P2)
-
-The system discovers relevant posts in the LinkedIn feed (industry conversations, community discussions about autonomous racing, F1, motorsport technology). Discovery runs on a configurable schedule defined by the operator. The system presents summaries of discovered posts to the operator via chat with suggested comments. The operator can approve, edit, or skip each suggestion. Approved comments and likes are posted via the official API.
-
-The operator controls discovery behavior through a persistent configuration: topics to watch, discovery schedule, quiet hours (when not to send notifications), and volume limits. The operator can also trigger discovery on demand via chat ("scan the feed now").
-
-**Why this priority**: A thought leader who only broadcasts but never engages is a billboard, not a community member. Engagement drives organic growth and relationship-building. This is the second most important capability after posting.
-
-**Independent Test**: Can be tested by triggering a feed discovery session, reviewing the presented posts and suggested comments, approving one, and confirming the comment appears on LinkedIn. Delivers value: active community participation.
-
-**Acceptance Scenarios**:
-
-1. **Given** the system has discovered relevant feed posts, **When** it presents them to the operator, **Then** each post summary includes the author, a snippet, and a suggested comment.
-2. **Given** a suggested comment is presented, **When** the operator approves it, **Then** the comment is posted to the correct LinkedIn post via the API.
-3. **Given** a suggested comment is presented, **When** the operator edits it before approving, **Then** the edited version is posted.
-4. **Given** a post is presented, **When** the operator requests "like only", **Then** the system likes the post without commenting.
-5. **Given** feed discovery finds no relevant posts, **When** the system reports to the operator, **Then** it suggests broadening topics or checking back later.
-6. **Given** the operator has configured quiet hours (e.g., 10pm-7am), **When** discovery runs during quiet hours, **Then** results are queued and presented when the next active period begins.
-7. **Given** the operator sends "scan the feed now" via chat, **When** the system receives the message, **Then** it triggers an immediate discovery session regardless of schedule.
-8. **Given** the system is in warmup mode, **When** discovery presents posts for engagement, **Then** each like requires individual operator approval (no batch likes).
-9. **Given** the system is in steady-state mode, **When** the operator approves a batch of likes (e.g., "like all 8"), **Then** the system likes all specified posts with randomized timing.
-
----
-
 ### User Story 3 — System Alerts on Credential Expiry and Failures (Priority: P3)
 
 The system monitors the health of its integrations — particularly the LinkedIn API credential lifecycle (OAuth tokens expire every 60 days). It alerts the operator via chat when the token is approaching expiry (7 days before), when a workflow fails, or when an unusual condition is detected (e.g., rate limit approaching, API errors). The operator can then take action (re-authorize, investigate, adjust posting volume).
@@ -104,7 +80,6 @@ The existing hardening audit is extended with new checks that verify the agent d
 ### Edge Cases
 
 - What happens when the operator approves a post but the API returns an error? The system retries once, then alerts the operator with the error details. The post is saved for later retry.
-- What happens when feed discovery finds posts but the agent cannot generate relevant comments? The system presents the posts without comment suggestions and asks the operator if they want to engage manually.
 - What happens when the LinkedIn account is restricted or flagged? The system classifies API errors by type: 401 (token expired — prompt re-auth), 429 (rate limited — reduce volume), 403 (account restricted or permission error — halt all automated activity and alert operator). On 403, all automated activity stops until the operator manually investigates and re-enables it via configuration.
 - What happens when the LLM provider is unavailable? The system falls back to the next configured provider. If all providers are unavailable, it alerts the operator and queues the request.
 - What happens when the operator sends a chat message while a workflow is in progress? The system processes messages sequentially and informs the operator if there is a pending operation.
@@ -119,7 +94,7 @@ The existing hardening audit is extended with new checks that verify the agent d
 
 - **FR-001**: The system MUST provide a chat interface for the operator to interact with the agent (content requests, approvals, activity queries).
 - **FR-002**: The system MUST generate content drafts using the configured LLM, informed by the persona's knowledge base, voice definition, and operating rules.
-- **FR-003**: The system MUST NOT publish any content (posts or comments) to LinkedIn without explicit operator approval via chat. During warmup mode, likes also require individual approval. In steady-state mode, likes may be batch-approved.
+- **FR-003**: The system MUST NOT publish any content (posts or comments) to LinkedIn without explicit operator approval via chat.
 - **FR-004**: The system MUST publish approved content to LinkedIn using the official API (text posts, article shares, image shares, comments, likes).
 - **FR-005**: The system MUST support image posts, accepting images from the operator via chat and handling the upload process transparently.
 
@@ -128,19 +103,9 @@ The existing hardening audit is extended with new checks that verify the agent d
 - **FR-006**: The system MUST isolate LinkedIn credentials from the agent process — the agent triggers actions but never accesses, stores, or transmits LinkedIn authentication tokens.
 - **FR-007**: The system MUST authenticate all communication between the agent and the workflow orchestrator to prevent unauthorized localhost processes from triggering LinkedIn actions.
 
-#### Feed Discovery and Engagement
-
-- **FR-008**: The system MUST discover relevant LinkedIn feed content for community engagement (posts about autonomous racing, F1, motorsport technology).
-- **FR-009**: All browser-based feed discovery MUST be designed defensively to minimize bot detection risk per the documented anti-detection strategy: human-like browsing patterns, randomized session timing, configurable session duration, and no form interactions during discovery. Validated by SC-009. (Note: FR-009 applies to Playwright browsing sessions; FR-010 applies to all API-based actions.)
-- **FR-010**: The system MUST randomize the timing of all automated actions (posts, comments, likes) to avoid detectable mechanical patterns. Engagement actions approved in batch MUST be spread across the day's active hours via a scheduled action queue, not executed in a burst.
-- **FR-024**: The system MUST defend against indirect prompt injection (OWASP LLM01:2025) in content ingested from external feeds. Untrusted feed content MUST be sanitized (strip hidden text, zero-width characters, encoded payloads) and then processed through a restricted extraction process that produces structured facts only — never forwarding raw external text to the primary agent. The operator approval gate provides a final defense layer.
-- **FR-025**: The system MUST manage the browser session used for feed discovery as a credential: monitor session health before each discovery session, alert the operator when the session expires, and provide documented procedures for manual re-login. Browser sessions MUST NOT be created via headless or incognito browsers (sessions expire within ~1 hour).
-
 #### Operational Configuration
 
-- **FR-011**: The system MUST support an operator-editable configuration that controls: discovery schedule, topics to watch, quiet hours, volume limits per action type, and warmup/steady-state mode selection. This configuration MUST persist across system restarts.
-- **FR-012**: The system MUST support a warmup operating mode with reduced volumes and stricter approval gates (all actions including likes require individual approval, lower daily limits). The operator transitions to steady-state mode via configuration when the account is established.
-- **FR-013**: The system MUST support on-demand discovery triggered by the operator via chat, in addition to scheduled discovery.
+- **FR-011**: The system MUST support an operator-editable configuration that controls: quiet hours, volume limits per action type, and warmup/steady-state mode selection. This configuration MUST persist across system restarts.
 
 #### Alerting and Monitoring
 
@@ -164,14 +129,10 @@ The existing hardening audit is extended with new checks that verify the agent d
 ### Key Entities
 
 - **Content Draft**: A piece of content (post, comment, article share, image post) generated by the agent, pending operator review. Has a lifecycle: drafted → presented → approved/rejected/edited → published/discarded. Persists across agent restarts.
-- **Feed Discovery Result**: A relevant LinkedIn post found during feed browsing, including post identifier, author, content summary, and suggested engagement actions.
 - **Activity Record**: A log entry for any action taken by the system — posts published, comments made, likes given, feed sessions conducted, alerts sent. Includes timestamp, action type, target, and outcome.
 - **Persona Configuration**: The set of files defining the agent's voice, knowledge, operating rules, and boundaries. Version-controlled and integrity-checked.
-- **Credential Lifecycle State**: The current status of the LinkedIn API credential — valid (with expiry date), approaching expiry, expired, or revoked. Covers both the OAuth API token (60-day expiry, manual re-auth) and the browser session used for feed discovery (variable expiry, manual re-login).
-- **Operating Configuration**: The operator-defined parameters controlling system behavior — discovery schedule, topics, quiet hours, volume limits, warmup/steady-state mode. Persists across restarts. Editable without restarting the system.
-- **Browser Session State**: The authenticated browser session used for feed discovery. Created via manual headed browser login (not headless/incognito). Health-checked before each discovery session. Expires independently of OAuth tokens. Operator alerted on expiry for manual re-login.
-- **Scheduled Action**: An engagement action (like, comment) approved by the operator and queued for execution at a computed future time. Actions are spread across the day's active hours to prevent burst patterns. Processed by a periodic runner.
-- **Extraction Result**: Structured facts extracted from feed content by the restricted extraction process. Contains author, topic, key claims, sentiment, and relevance score. The primary agent receives only this structured output — never raw external content. This is the data boundary enforced by FR-024.
+- **Credential Lifecycle State**: The current status of the LinkedIn API credential — valid (with expiry date), approaching expiry, expired, or revoked. Covers the OAuth API token (60-day expiry, manual re-auth).
+- **Operating Configuration**: The operator-defined parameters controlling system behavior — quiet hours, volume limits, warmup/steady-state mode. Persists across restarts. Editable without restarting the system.
 
 ## Success Criteria
 
@@ -180,12 +141,11 @@ The existing hardening audit is extended with new checks that verify the agent d
 - **SC-001**: Operator can go from content request to published LinkedIn post in under 5 minutes (including draft generation, review, and approval).
 - **SC-002**: The hardening audit verifies that LinkedIn credentials are architecturally isolated from the agent process — credentials are absent from the agent's environment, config files, and accessible filesystem paths.
 - **SC-003**: All content published to LinkedIn has been explicitly approved by a human operator — zero unapproved posts.
-- **SC-004**: The system publishes 1-3 posts per day and engages with 5-10 community posts per day, with timing randomized across configurable active hours.
+- **SC-004**: The system publishes 1-3 posts per day, with timing randomized across configurable active hours.
 - **SC-005**: The operator is alerted at least 7 days before credential expiry, with zero instances of the system silently stopping due to expired credentials.
 - **SC-006**: The existing hardening audit is extended with agent-specific checks that all pass.
 - **SC-007**: Activity history is queryable via chat — the operator can retrieve a summary of the past 7 days of activity in under 30 seconds.
 - **SC-008**: When the primary LLM provider is unavailable, the system automatically falls back to the secondary provider with no operator intervention required.
-- **SC-009**: Feed discovery sessions complete without triggering LinkedIn account restrictions over a 30-day observation period.
 - **SC-010**: Workspace file integrity checks detect unauthorized modifications within one audit cycle.
 - **SC-011**: Pending content drafts survive agent restarts — the operator is re-prompted with any drafts that were awaiting approval.
 
@@ -202,7 +162,6 @@ The existing hardening audit is extended with new checks that verify the agent d
 - The primary LLM provider's free tier provides sufficient capacity for LinkedIn content generation volumes (1-3 posts + 5-10 comments per day).
 - Connection requests are entirely human-operated and out of scope for this system.
 - Persistent memory (vector store + memory middleware) is out of scope for this milestone — activity logging uses the workflow orchestrator's built-in execution history.
-- If browser-based feed discovery proves incompatible with the hardened macOS deployment, the project scope may require fundamental re-evaluation (not just a workaround).
 
 ## Scope Boundaries
 
@@ -210,14 +169,12 @@ The existing hardening audit is extended with new checks that verify the agent d
 
 - Agent deployment and configuration (native process, multi-provider LLM, chat interface)
 - Content generation (text, article, image), human approval workflow, and API-based publishing
-- Feed discovery via browser automation for post identifiers, built defensively for anti-detection
-- Community engagement (commenting, liking) via official API
 - Credential isolation architecture and webhook authentication
 - Activity logging via orchestrator execution history
 - Hardening audit extensions for agent-specific checks
 - OAuth token lifecycle management and expiry alerting
 - Timing randomization for all automated actions
-- Operator-editable configuration (discovery schedule, topics, volumes, quiet hours, warmup mode)
+- Operator-editable configuration (volumes, quiet hours, warmup mode)
 - Warmup mode with stricter approval gates and reduced volumes
 - Pending draft persistence across restarts
 
@@ -243,3 +200,69 @@ The existing hardening audit is extended with new checks that verify the agent d
 - **M2 (Security Baseline)**: macOS hardening and audit framework must be in place.
 - **Benefactor inputs**: LinkedIn account, developer app, chat platform choice, content direction, and target community context.
 - **LinkedIn API availability**: The Share on LinkedIn self-serve product must remain available with current capabilities.
+
+## Future Scope
+
+The following features are deferred to a future milestone.
+
+### User Story 2 — Operator Engages with Community Content (Priority: P2)
+
+The system discovers relevant posts in the LinkedIn feed (industry conversations, community discussions about autonomous racing, F1, motorsport technology). Discovery runs on a configurable schedule defined by the operator. The system presents summaries of discovered posts to the operator via chat with suggested comments. The operator can approve, edit, or skip each suggestion. Approved comments and likes are posted via the official API.
+
+The operator controls discovery behavior through a persistent configuration: topics to watch, discovery schedule, quiet hours (when not to send notifications), and volume limits. The operator can also trigger discovery on demand via chat ("scan the feed now").
+
+**Why this priority**: A thought leader who only broadcasts but never engages is a billboard, not a community member. Engagement drives organic growth and relationship-building. This is the second most important capability after posting.
+
+**Independent Test**: Can be tested by triggering a feed discovery session, reviewing the presented posts and suggested comments, approving one, and confirming the comment appears on LinkedIn. Delivers value: active community participation.
+
+**Acceptance Scenarios**:
+
+1. **Given** the system has discovered relevant feed posts, **When** it presents them to the operator, **Then** each post summary includes the author, a snippet, and a suggested comment.
+2. **Given** a suggested comment is presented, **When** the operator approves it, **Then** the comment is posted to the correct LinkedIn post via the API.
+3. **Given** a suggested comment is presented, **When** the operator edits it before approving, **Then** the edited version is posted.
+4. **Given** a post is presented, **When** the operator requests "like only", **Then** the system likes the post without commenting.
+5. **Given** feed discovery finds no relevant posts, **When** the system reports to the operator, **Then** it suggests broadening topics or checking back later.
+6. **Given** the operator has configured quiet hours (e.g., 10pm-7am), **When** discovery runs during quiet hours, **Then** results are queued and presented when the next active period begins.
+7. **Given** the operator sends "scan the feed now" via chat, **When** the system receives the message, **Then** it triggers an immediate discovery session regardless of schedule.
+8. **Given** the system is in warmup mode, **When** discovery presents posts for engagement, **Then** each like requires individual operator approval (no batch likes).
+9. **Given** the system is in steady-state mode, **When** the operator approves a batch of likes (e.g., "like all 8"), **Then** the system likes all specified posts with randomized timing.
+
+### Deferred Functional Requirements
+
+#### Feed Discovery and Engagement
+
+- **FR-008**: The system MUST discover relevant LinkedIn feed content for community engagement (posts about autonomous racing, F1, motorsport technology).
+- **FR-009**: All browser-based feed discovery MUST be designed defensively to minimize bot detection risk per the documented anti-detection strategy: human-like browsing patterns, randomized session timing, configurable session duration, and no form interactions during discovery. Validated by SC-009. (Note: FR-009 applies to Playwright browsing sessions; FR-010 applies to all API-based actions.)
+- **FR-010**: The system MUST randomize the timing of all automated actions (posts, comments, likes) to avoid detectable mechanical patterns. Engagement actions approved in batch MUST be spread across the day's active hours via a scheduled action queue, not executed in a burst.
+- **FR-024**: The system MUST defend against indirect prompt injection (OWASP LLM01:2025) in content ingested from external feeds. Untrusted feed content MUST be sanitized (strip hidden text, zero-width characters, encoded payloads) and then processed through a restricted extraction process that produces structured facts only — never forwarding raw external text to the primary agent. The operator approval gate provides a final defense layer.
+- **FR-025**: The system MUST manage the browser session used for feed discovery as a credential: monitor session health before each discovery session, alert the operator when the session expires, and provide documented procedures for manual re-login. Browser sessions MUST NOT be created via headless or incognito browsers (sessions expire within ~1 hour).
+
+#### Operational Configuration (Deferred)
+
+- **FR-012**: The system MUST support a warmup operating mode with reduced volumes and stricter approval gates (all actions including likes require individual approval, lower daily limits). The operator transitions to steady-state mode via configuration when the account is established.
+- **FR-013**: The system MUST support on-demand discovery triggered by the operator via chat, in addition to scheduled discovery.
+
+### Deferred Key Entities
+
+- **Feed Discovery Result**: A relevant LinkedIn post found during feed browsing, including post identifier, author, content summary, and suggested engagement actions.
+- **Browser Session State**: The authenticated browser session used for feed discovery. Created via manual headed browser login (not headless/incognito). Health-checked before each discovery session. Expires independently of OAuth tokens. Operator alerted on expiry for manual re-login.
+- **Scheduled Action**: An engagement action (like, comment) approved by the operator and queued for execution at a computed future time. Actions are spread across the day's active hours to prevent burst patterns. Processed by a periodic runner.
+- **Extraction Result**: Structured facts extracted from feed content by the restricted extraction process. Contains author, topic, key claims, sentiment, and relevance score. The primary agent receives only this structured output — never raw external content. This is the data boundary enforced by FR-024.
+
+### Deferred Success Criteria
+
+- **SC-004 (engagement)**: The system engages with 5-10 community posts per day, with timing randomized across configurable active hours.
+- **SC-009**: Feed discovery sessions complete without triggering LinkedIn account restrictions over a 30-day observation period.
+
+### Deferred Scope Items
+
+- Feed discovery via browser automation for post identifiers, built defensively for anti-detection
+- Community engagement (commenting, liking) via official API
+
+### Deferred Assumptions
+
+- If browser-based feed discovery proves incompatible with the hardened macOS deployment, the project scope may require fundamental re-evaluation (not just a workaround).
+
+### Deferred Edge Cases
+
+- What happens when feed discovery finds posts but the agent cannot generate relevant comments? The system presents the posts without comment suggestions and asks the operator if they want to engage manually.
