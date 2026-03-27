@@ -149,7 +149,7 @@ run_pipeline() {
     local pipeline_errors=0
 
     # Step 1: Run audit once (JSON), derive text summary
-    printf "${CYAN}[1/3]${NC} Running audit...\n"
+    printf "%s[1/3]%s Running audit...\n" "$CYAN" "$NC"
     if [[ -x "$AUDIT_SCRIPT" ]]; then
         "$AUDIT_SCRIPT" --json > "$json_file" 2>&1 || true
         # Generate human-readable text log from JSON
@@ -170,7 +170,7 @@ run_pipeline() {
     # Step 1b: Drift detection — compare against previous audit
     if [[ -f "$json_file" ]] && jq empty "$json_file" 2>/dev/null; then
         local previous_audit
-        previous_audit=$(ls -t "${LOG_DIR}"/audit-*.json 2>/dev/null | grep -v "$json_file" | head -1) || true
+        previous_audit=$(find "${LOG_DIR}" -maxdepth 1 -name "audit-*.json" -not -name "$(basename "$json_file")" -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1) || true
         if [[ -n "$previous_audit" && -f "$previous_audit" ]]; then
             printf "  Comparing against previous audit: %s\n" "$(basename "$previous_audit")"
             local drift_file="${LOG_DIR}/drift-${timestamp}.txt"
@@ -236,18 +236,18 @@ run_pipeline() {
 
     # Step 2: Optional auto-fix
     if [[ "$MODE" == "auto-fix" ]]; then
-        printf "${CYAN}[2/3]${NC} Running auto-fix (SAFE checks only)...\n"
+        printf "%s[2/3]%s Running auto-fix (SAFE checks only)...\n" "$CYAN" "$NC"
         if [[ -x "$FIX_SCRIPT" ]]; then
             local fix_json="${LOG_DIR}/fix-${timestamp}.json"
             if ! "$FIX_SCRIPT" --auto --json --audit-file "$json_file" > "$fix_json" 2>&1; then
-                printf "  ${RED}WARN${NC}  Fix script exited with errors\n"
+                printf "  %sWARN%s  Fix script exited with errors\n" "$RED" "$NC"
                 pipeline_errors=$((pipeline_errors + 1))
             fi
 
             # Re-audit after fixes (single run)
             printf "  Re-auditing after fixes...\n"
             if ! "$AUDIT_SCRIPT" --json > "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>&1; then
-                printf "  ${RED}WARN${NC}  Post-fix re-audit exited with errors\n"
+                printf "  %sWARN%s  Post-fix re-audit exited with errors\n" "$RED" "$NC"
             fi
             if [[ -f "${LOG_DIR}/audit-${timestamp}-post-fix.json" ]] && jq empty "${LOG_DIR}/audit-${timestamp}-post-fix.json" 2>/dev/null; then
                 {
@@ -263,14 +263,14 @@ run_pipeline() {
             pipeline_errors=$((pipeline_errors + 1))
         fi
     else
-        printf "${CYAN}[2/3]${NC} Auto-fix skipped (use --auto-fix to enable)\n"
+        printf "%s[2/3]%s Auto-fix skipped (use --auto-fix to enable)\n" "$CYAN" "$NC"
     fi
 
     # Step 3: Notify
-    printf "${CYAN}[3/3]${NC} Sending notifications...\n"
+    printf "%s[3/3]%s Sending notifications...\n" "$CYAN" "$NC"
     if [[ -x "$NOTIFY_SCRIPT" ]]; then
         if ! "$NOTIFY_SCRIPT" --log-dir "$LOG_DIR" 2>&1; then
-            printf "  ${RED}WARN${NC}  Notify script exited with errors\n"
+            printf "  %sWARN%s  Notify script exited with errors\n" "$RED" "$NC"
             pipeline_errors=$((pipeline_errors + 1))
         fi
     else
