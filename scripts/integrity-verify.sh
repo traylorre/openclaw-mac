@@ -1184,6 +1184,95 @@ check_permissions() {
     fi
 }
 
+# --- 014 T034: Behavioral Baseline Comparison ---
+
+check_behavioral_baseline() {
+    local baseline_file="${HOME}/.openclaw/behavioral-baseline.json"
+
+    if [[ ! -f "$baseline_file" ]]; then
+        warn "Behavioral baseline not established — run integrity-deploy.sh"
+        return
+    fi
+
+    # Need n8n API key from Keychain
+    local api_key
+    api_key=$(security find-generic-password -a "openclaw" -s "n8n-api-key" -w 2>/dev/null)
+    if [[ -z "$api_key" ]]; then
+        log_info "No n8n API key — skipping behavioral baseline comparison"
+        return
+    fi
+
+    # Check if n8n is reachable
+    if ! curl -s --max-time 5 "http://localhost:5678/healthz" &>/dev/null; then
+        log_info "n8n not reachable — skipping behavioral baseline comparison"
+        return
+    fi
+
+    log_step "Comparing behavioral baseline"
+
+    # Fetch current execution frequency
+    local _prev_exit_trap _cred_tmpfile exec_output
+    _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
+    _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
+    trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
+
+    exec_output=$(curl -s --config "$_cred_tmpfile" \
+        "http://localhost:5678/api/v1/executions?limit=250&status=success" --max-time 15 2>/dev/null) || true
+
+    rm -f "$_cred_tmpfile"
+    if [[ -n "$_prev_exit_trap" ]]; then
+        eval "$_prev_exit_trap"
+    else
+        trap - EXIT
+    fi
+
+    if [[ -z "$exec_output" ]] || ! echo "$exec_output" | jq -e '.data' &>/dev/null; then
+        warn "Could not fetch execution history for baseline comparison"
+        return
+    fi
+
+    # Aggregate current frequency
+    local current_freq
+    current_freq=$(echo "$exec_output" | jq -c '
+        [.data[] | .workflowData.name // "unknown"] |
+        group_by(.) | map({key: .[0], value: length}) |
+        from_entries
+    ' 2>/dev/null)
+
+    # Load baseline
+    local baseline_freq threshold
+    baseline_freq=$(jq -c '.webhook_call_frequency // {}' "$baseline_file" 2>/dev/null)
+    threshold=$(jq -r '.deviation_threshold // 200' "$baseline_file" 2>/dev/null)
+
+    # Compare: check each workflow's execution count deviation
+    local deviations=0
+    local wf_name
+    for wf_name in $(echo "$baseline_freq" | jq -r 'keys[]' 2>/dev/null); do
+        local baseline_count current_count
+        baseline_count=$(echo "$baseline_freq" | jq -r --arg k "$wf_name" '.[$k] // 0')
+        current_count=$(echo "$current_freq" | jq -r --arg k "$wf_name" '.[$k] // 0')
+
+        if [[ "$baseline_count" -gt 0 ]]; then
+            local pct=$(( (current_count * 100) / baseline_count ))
+            if [[ $pct -gt $threshold ]]; then
+                warn "Behavioral deviation: ${wf_name} — ${current_count} executions vs baseline ${baseline_count} (${pct}%)"
+                deviations=$((deviations + 1))
+            fi
+        fi
+    done
+
+    # Update last_comparison_date
+    local updated
+    updated=$(jq --arg d "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '.last_comparison_date = $d' "$baseline_file")
+    echo "$updated" | jq '.' > "$baseline_file"
+
+    if [[ $deviations -eq 0 ]]; then
+        log_info "Behavioral baseline comparison: no deviations detected"
+    else
+        warn "Behavioral baseline: ${deviations} workflow(s) exceeded ${threshold}% deviation threshold"
+    fi
+}
+
 # --- TP3-015: Container Verification Orchestration Wrapper (FR-P3-036/037/038) ---
 _run_container_checks() {
     log_step "Container & Orchestration Integrity Checks"
@@ -1287,6 +1376,9 @@ main() {
 
     # Phase 4 T043: Permission verification (advisory)
     check_permissions
+
+    # 014 T034: Behavioral baseline comparison (advisory)
+    check_behavioral_baseline
 
     # 012 Phase 3: Container & Orchestration Integrity (replaces check_n8n_workflows)
     _run_container_checks

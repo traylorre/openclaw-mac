@@ -22,7 +22,9 @@ behavior, or configure trust boundaries.
 | `~/.openclaw/agents/linkedin-persona/SOUL.md` | Agent persona | `uchg` immutable, manifest hash | Immutable, checksum matches | — |
 | `~/.openclaw/agents/linkedin-persona/AGENTS.md` | Operating rules, approval gates | `uchg` immutable, manifest hash | Immutable, checksum matches | — |
 | `~/.openclaw/agents/linkedin-persona/TOOLS.md` | Available skills, credential boundaries | `uchg` immutable, manifest hash | Immutable, checksum matches | — |
-| `workflows/*.json` (6 active) | n8n automation definitions | Mode 644 (repo), manifest checksum | Checksums match manifest | — |
+| `~/.openclaw/container-security-config.json` | Container attestation config | Mode 600, HMAC-signed | Signature valid | — |
+| `~/.openclaw/container-verify-state.json` | Container verification state | Mode 600, HMAC-signed | Signature valid | — |
+| `workflows/*.json` (11 files) | n8n automation definitions | Mode 644 (repo), manifest checksum | Checksums match manifest | — |
 | `scripts/templates/docker-compose.yml` | Container config, port bindings, env vars | Mode 644, manifest checksum | Checksum matches manifest | — |
 | `scripts/templates/n8n-entrypoint.sh` | Container startup script | Mode 644, manifest checksum | Checksum matches manifest | — |
 

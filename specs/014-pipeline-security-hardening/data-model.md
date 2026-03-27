@@ -118,11 +118,11 @@ Operational baseline for agent behavior used to detect anomalies.
 **Attributes**:
 - `baseline_date`: When the baseline was established
 - `webhook_call_frequency`: Expected calls per day by webhook path
-- `skill_invocation_frequency`: Expected invocations per day by skill name
+- `skill_invocation_frequency`: Expected invocations per day by skill name (initially null; populated when OpenClaw agent produces skill invocation logs)
 - `last_comparison_date`: When the baseline was last compared against actual behavior
 - `deviation_threshold`: Percentage deviation that triggers an alert
 
-**Persistence**: `~/.openclaw/behavioral-baseline.json` (created by integrity-deploy.sh)
+**Persistence**: `~/.openclaw/behavioral-baseline.json` (created by integrity-deploy.sh at deployment-time, compared by integrity-verify.sh at launch-time)
 
 **Relationships**:
 - Compared against actual n8n execution history during integrity-verify.sh

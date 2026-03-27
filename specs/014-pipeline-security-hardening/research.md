@@ -100,10 +100,10 @@ Our pinned version (2026.3.13) patches all 8. **Current version is patched.**
 | ASI03 | Identity & Privilege Abuse | Credential isolation (agent never holds LinkedIn tokens), HMAC authentication | Keychain HMAC key accessible to same-user processes (ADV-001) |
 | ASI04 | Agentic Supply Chain | Skill allowlist, version pinning, container image digest verification | OpenClaw binary has no signature verification; community nodes can read env vars |
 | ASI05 | Unexpected Code Execution | Sandbox mode (deny exec, process, browser tools), NODES_EXCLUDE for n8n | Code Node sandbox bypassed 3 times (n8n CVEs) |
-| ASI06 | Memory & Context Poisoning | Not applicable in M3 (no persistent memory). Deferred to M4 (Qdrant/Mem0) | When M4 is implemented, memory integrity checks needed |
+| ASI06 | Memory & Context Poisoning | Partially applicable. OpenClaw SQLite conversation history and n8n Workflow Static Data are persistent memory surfaces. Controls: Docker volume isolation, manifest integrity for workspace files | SQLite conversation DB has no integrity verification; n8n Static Data protected only by container isolation. Full memory integrity checks deferred to M4 (Qdrant/Mem0) |
 | ASI07 | Insecure Inter-Agent Communication | HMAC-SHA256 webhook auth with replay protection (5-min timestamp window) | n8n-to-OpenClaw callbacks are unsigned (acceptable for localhost alerts) |
 | ASI08 | Cascading Failures | Human approval gate prevents automated cascading; daily post limit; rate limit monitoring | No circuit breaker between agent and n8n |
-| ASI09 | Human-Agent Trust Exploitation | Operator reviews each post; time-delayed approval possible via quiet hours | Subtle bias in LLM output may pass human review |
+| ASI09 | Human-Agent Trust Exploitation | Process control: Operator reviews each post; time-delayed approval possible via quiet hours. Technical proxy: sandbox mode prevents agent from posting directly, enforcing the human gate architecturally | Subtle bias in LLM output may pass human review. Process control not verifiable by automation |
 | ASI10 | Rogue Agents | Behavioral baseline monitoring (webhook frequency, skill invocations); audit logging | No continuous behavioral analysis beyond frequency tracking |
 
 **Note on naming**: "ASI01-ASI10" are local identifiers for convenience. The official OWASP project is "OWASP Top 10 for Agentic Applications" (released December 10, 2025 by the OWASP GenAI Security Project).

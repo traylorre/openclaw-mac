@@ -80,7 +80,7 @@ The operator uses a documented procedure to update pipeline dependencies (n8n Do
 
 ### User Story 5 — Operator Configures Defense-in-Depth Controls (Priority: P5)
 
-The operator enables and verifies all five layers of defense (Prevent, Contain, Detect, Respond, Recover) for the LinkedIn automation pipeline. Each layer has specific controls that are independently verifiable. The controls are documented with their NIST AI RMF function mappings (Govern, Map, Measure, Manage) and MITRE ATLAS technique IDs where applicable.
+The operator enables and verifies all five layers of defense (Prevent, Contain, Detect, Respond, Recover) for the LinkedIn automation pipeline. Each layer has specific controls that are independently verifiable. The controls are documented with their NIST Cybersecurity Framework (CSF) function mappings (Protect, Detect, Respond, Recover) and MITRE ATLAS technique IDs where applicable.
 
 **Why this priority**: Defense in depth is the architectural pattern that survives when individual components are compromised. Each layer provides independent protection. The Recover layer ensures the pipeline can return to a known-good state after compromise.
 
@@ -189,7 +189,7 @@ The operator configures automated LinkedIn OAuth token refresh using the 365-day
 - **CVE Record**: A known vulnerability with CVE identifier, CVSS score, affected component, affected version range, patched version, and verification status.
 - **Sensitive File Entry**: A file in the pipeline with path, protection type (permissions, immutability, HMAC signature), expected state, and verification status.
 - **ASI Control Mapping**: An OWASP ASI risk (ASI01-ASI10) mapped to pipeline controls, each with a verification method and residual risk assessment.
-- **Defense Layer**: One of five defense-in-depth layers (Prevent, Contain, Detect, Respond, Recover) with independently verifiable controls. Each layer maps to NIST AI RMF functions and MITRE ATLAS techniques where applicable.
+- **Defense Layer**: One of five defense-in-depth layers (Prevent, Contain, Detect, Respond, Recover) with independently verifiable controls. Each layer maps to NIST CSF functions and MITRE ATLAS techniques where applicable.
 - **Token Lifecycle State**: LinkedIn API credential status including access token (60-day TTL), refresh token (365-day TTL), grant timestamp, and days remaining.
 
 ## Success Criteria
