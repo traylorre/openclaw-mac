@@ -20,7 +20,6 @@ OPENCLAW_DIR := $(HOME)/.openclaw
 	agents-setup agents-teardown \
 	hmac-setup hmac-teardown \
 	hooks-setup hooks-teardown \
-	docker-image-setup docker-image-teardown \
 	manifest-update manifest-clean \
 	workflow-export workflow-import workflow-clean \
 	m3-teardown \
@@ -232,21 +231,14 @@ agents-setup: ## M3: Create agents and deploy workspace files
 	fi
 	@[ -d "$(OPENCLAW_DIR)/agents/linkedin-persona" ] || \
 		openclaw agents add linkedin-persona --non-interactive --workspace "$(OPENCLAW_DIR)/agents/linkedin-persona"
-	@[ -d "$(OPENCLAW_DIR)/agents/feed-extractor" ] || \
-		openclaw agents add feed-extractor --non-interactive --workspace "$(OPENCLAW_DIR)/agents/feed-extractor"
 	@if [ -d "$(OPENCLAW_DIR)/agents/linkedin-persona" ]; then \
 		cp openclaw/*.md $(OPENCLAW_DIR)/agents/linkedin-persona/; \
 		mkdir -p $(OPENCLAW_DIR)/agents/linkedin-persona/skills; \
-		cp -Rp openclaw/skills/* $(OPENCLAW_DIR)/agents/linkedin-persona/skills/; \
+		cp -Rp openclaw/skills/linkedin-post openclaw/skills/linkedin-activity openclaw/skills/token-status \
+			$(OPENCLAW_DIR)/agents/linkedin-persona/skills/; \
 		echo "  Deployed workspace files to linkedin-persona"; \
 	else \
 		echo "  ERROR: linkedin-persona agent dir not found"; exit 1; \
-	fi
-	@if [ -d "$(OPENCLAW_DIR)/agents/feed-extractor" ]; then \
-		cp openclaw-extractor/*.md $(OPENCLAW_DIR)/agents/feed-extractor/; \
-		echo "  Deployed workspace files to feed-extractor"; \
-	else \
-		echo "  ERROR: feed-extractor agent dir not found"; exit 1; \
 	fi
 	@echo "Done. Undo: make agents-teardown"
 
@@ -254,8 +246,6 @@ agents-teardown: ## M3: Remove agent directories and workspace files
 	@echo "Removing M3 agents..."
 	@openclaw agents delete linkedin-persona --force 2>/dev/null && echo "  Deregistered linkedin-persona from openclaw.json" || true
 	@rm -rf $(OPENCLAW_DIR)/agents/linkedin-persona && echo "  Removed linkedin-persona directory" || true
-	@openclaw agents delete feed-extractor --force 2>/dev/null && echo "  Deregistered feed-extractor from openclaw.json" || true
-	@rm -rf $(OPENCLAW_DIR)/agents/feed-extractor && echo "  Removed feed-extractor directory" || true
 	@echo "Done."
 
 hmac-setup: ## M3: Generate and distribute HMAC shared secret
@@ -304,18 +294,13 @@ hooks-teardown: ## M3: Remove hook config from openclaw.json and .env
 	fi
 	@echo "Done."
 
-docker-image-setup: ## M3: Build custom n8n image with Playwright
-	docker build -t openclaw-n8n:latest -f docker/n8n-playwright.Dockerfile .
-	@echo "Built openclaw-n8n:latest. Undo: make docker-image-teardown"
-
-docker-image-teardown: ## M3: Remove custom n8n Docker image
-	@docker rmi openclaw-n8n:latest 2>/dev/null && echo "Removed openclaw-n8n:latest" || echo "Image not found"
-	@echo "Note: If n8n is running this image, stop first: make gateway-teardown"
+## docker-image-setup/teardown: Deferred to future (US2 feed discovery).
+## See archive/us2-future/docker/n8n-playwright.Dockerfile
 
 manifest-update: ## M3: Update workspace file checksums in manifest.json
 	@echo "Computing SHA-256 checksums for workspace files..."
 	@MANIFEST='{"files":[]}'; \
-	for agent_dir in $(OPENCLAW_DIR)/agents/linkedin-persona $(OPENCLAW_DIR)/agents/feed-extractor; do \
+	for agent_dir in $(OPENCLAW_DIR)/agents/linkedin-persona; do \
 		if [ -d "$$agent_dir" ]; then \
 			for f in $$agent_dir/*.md; do \
 				if [ -f "$$f" ]; then \
@@ -357,7 +342,7 @@ m3-teardown: ## M3: Remove ALL M3 artifacts (agents, secrets, image, manifest, w
 	@echo "M3 Full Teardown"
 	@echo "================"
 	@echo "Removes: agents, workspace files, HMAC secrets, hook config,"
-	@echo "Docker image, manifest, and imported workflows."
+	@echo "manifest, and imported workflows."
 	@echo "Does NOT remove: Bun, OpenClaw, Ollama (shared tools)."
 	@echo ""
 	@read -p "Continue? [y/N] " confirm && [ "$$confirm" = "y" ] || { echo "Aborted."; exit 1; }
@@ -366,7 +351,6 @@ m3-teardown: ## M3: Remove ALL M3 artifacts (agents, secrets, image, manifest, w
 	@$(MAKE) --no-print-directory hooks-teardown
 	@$(MAKE) --no-print-directory hmac-teardown
 	@$(MAKE) --no-print-directory agents-teardown
-	@$(MAKE) --no-print-directory docker-image-teardown
 	@$(MAKE) --no-print-directory ollama-model-teardown
 	@echo ""
 	@echo "M3 teardown complete. Shared tools (Bun, OpenClaw, Ollama) left in place."

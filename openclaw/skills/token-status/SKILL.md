@@ -1,6 +1,6 @@
 ---
 name: token-status
-description: Check LinkedIn OAuth token and browser session health
+description: Check LinkedIn OAuth token health
 requires:
   env:
     - N8N_WEBHOOK_SECRET
@@ -41,10 +41,6 @@ OAuth Token: [valid/expiring_soon/expired]
   Granted: [date]
   Expires: [date]
 
-Browser Session: [valid/expired/unknown]
-  Last verified: [date]
-
-[If expiring_soon]: ⚠️ Token expires in [N] days. Please re-authorize soon.
-[If expired]: ❌ Token has expired. Please re-authorize to resume posting.
-[If session expired]: ⚠️ Browser session expired. Please re-login for feed discovery.
+[If expiring_soon]: Token expires in [N] days. Please re-authorize soon.
+[If expired]: Token has expired. Please re-authorize to resume posting.
 ```

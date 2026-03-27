@@ -1,5 +1,7 @@
 # Operating Rules: Feed Extraction Agent
 
+> **Status: Future** — This feature is deferred to a future milestone.
+
 ## Rule of Two Enforcement (R-012)
 
 This agent satisfies ONLY condition (A) of the Rule of Two:
