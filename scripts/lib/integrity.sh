@@ -438,52 +438,27 @@ integrity_audit_log() {
     fi
 
     local operator="${SUDO_USER:-$(whoami)}"
-    local _audit_lockdir="${INTEGRITY_AUDIT_LOG}.lock"
+    # fd-based exclusive lock via perl flock (kernel-level, auto-releases on process exit)
+    local _audit_lockfile="${INTEGRITY_AUDIT_LOG}.lock"
     local _audit_lock_acquired=false
 
+    # Open lock fd (fd 9)
+    exec 9>"$_audit_lockfile"
+
+    # Acquire exclusive lock with timeout (20 retries x 0.2s = 4s max)
     local _lock_attempt
     for _lock_attempt in $(seq 1 20); do
-        if mkdir "$_audit_lockdir" 2>/dev/null; then
-            echo "${BASHPID:-$$} $(ps -o lstart= -p "${BASHPID:-$$}" 2>/dev/null)" > "$_audit_lockdir/pid" 2>/dev/null
+        if perl -e 'use Fcntl qw(:flock); open(my $fh, ">&=", 9) or die; flock($fh, LOCK_EX|LOCK_NB) or exit 1' 2>/dev/null; then
             _audit_lock_acquired=true
-            # FR-013: Signal trap for lock cleanup (INT/TERM only — explicit release handles normal path)
-            # shellcheck disable=SC2064
-            trap "rm -f '${_audit_lockdir}/pid' 2>/dev/null; rmdir '${_audit_lockdir}' 2>/dev/null || true" INT TERM
             break
-        fi
-        # PID-based stale detection (FR-029)
-        if [[ -d "$_audit_lockdir" ]]; then
-            if [[ -f "$_audit_lockdir/pid" ]] && [[ -s "$_audit_lockdir/pid" ]]; then
-                local _lock_pid _lock_start _current_start
-                read -r _lock_pid _lock_start < "$_audit_lockdir/pid" 2>/dev/null || true
-                if [[ -n "$_lock_pid" ]]; then
-                    _current_start=$(ps -o lstart= -p "$_lock_pid" 2>/dev/null || true)
-                    if [[ -z "$_current_start" ]] || [[ "$_current_start" != *"$_lock_start"* ]]; then
-                        # PID not running or recycled — stale lock
-                        if _integrity_validate_lock_path "$_audit_lockdir"; then
-                            rm -rf "$_audit_lockdir"
-                        fi
-                        continue
-                    fi
-                fi
-            else
-                # Missing/empty PID file — stale after 30s
-                local _lock_age
-                _lock_age=$(( $(date +%s) - $(stat -f '%m' "$_audit_lockdir" 2>/dev/null || echo 0) ))
-                if [[ $_lock_age -gt 30 ]]; then
-                    if _integrity_validate_lock_path "$_audit_lockdir"; then
-                        rm -rf "$_audit_lockdir"
-                    fi
-                    continue
-                fi
-            fi
         fi
         sleep 0.2
     done
 
-    # If lock acquisition failed after all retries, warn but still write (audit log must not be lost)
     if ! $_audit_lock_acquired; then
-        echo "WARNING: audit log lock acquisition failed after 5 retries — writing without lock" >&2
+        exec 9>&-
+        echo "ERROR: audit log lock acquisition failed after 20 retries — refusing to write (hash chain protection)" >&2
+        return 1
     fi
 
     # FR-014b: Compute hash of previous entry for hash chain
@@ -531,12 +506,10 @@ integrity_audit_log() {
         sync
     fi
 
-    # Release lock and clear trap
+    # Release lock by closing fd (kernel auto-releases flock on fd close)
     if $_audit_lock_acquired; then
-        rm -f "$_audit_lockdir/pid" 2>/dev/null
-        rmdir "$_audit_lockdir" 2>/dev/null || true
+        exec 9>&-
         _audit_lock_acquired=false
-        trap - INT TERM 2>/dev/null || true
     fi
 
     return "$_write_rc"
