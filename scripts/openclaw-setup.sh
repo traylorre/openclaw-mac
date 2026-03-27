@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/common.sh
+# shellcheck source=lib/common.sh disable=SC1091
 source "${SCRIPT_DIR}/lib/common.sh"
 
 REPO_ROOT="$(resolve_repo_root "$SCRIPT_DIR")"
@@ -292,7 +292,7 @@ deploy_workspace_files() {
             mkdir -p "${dst_main}/skills"
             cp -Rp "${src_main}/skills/"* "${dst_main}/skills/"
         fi
-        log_info "  Deployed: $(ls "${src_main}"/*.md | wc -l | tr -d ' ') md files + skills/"
+        log_info "  Deployed: $(find "${src_main}" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ') md files + skills/"
     else
         log_warn "Agent directory not found: ${dst_main}"
         log_warn "Run 'openclaw agents add ${AGENT_NAME}' first"
@@ -303,7 +303,7 @@ deploy_workspace_files() {
     if [[ -d "$dst_extractor" ]]; then
         log_info "Deploying workspace files to ${dst_extractor}"
         cp "${src_extractor}"/*.md "$dst_extractor/"
-        log_info "  Deployed: $(ls "${src_extractor}"/*.md | wc -l | tr -d ' ') md files (zero skills — Rule of Two)"
+        log_info "  Deployed: $(find "${src_extractor}" -maxdepth 1 -name '*.md' | wc -l | tr -d ' ') md files (zero skills — Rule of Two)"
     else
         log_warn "Agent directory not found: ${dst_extractor}"
         return 1
