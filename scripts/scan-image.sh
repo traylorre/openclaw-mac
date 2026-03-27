@@ -29,16 +29,36 @@ main() {
         exit 3
     fi
 
-    # T3B-010 step 2: Version check
+    # T035: Exact version match + binary SHA-256 verification (FR-015)
     local grype_version
     grype_version=$(grype version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+
+    local config
+    config=$(integrity_read_container_config)
+    local pinned_grype_hash
+    pinned_grype_hash=$(echo "$config" | jq -r '.pinned_grype_hash // empty')
+
     if [[ -n "$grype_version" ]]; then
-        if ! [[ "$grype_version" == "${EXPECTED_GRYPE_VERSION}"* ]]; then
-            log_warn "Grype version ${grype_version} differs from expected ${EXPECTED_GRYPE_VERSION}.x"
-            log_warn "  Vulnerability database may be stale. Update: brew upgrade grype"
+        local grype_binary_hash
+        grype_binary_hash=$(shasum -a 256 "$(which grype)" | awk '{print $1}')
+
+        if [[ -n "$pinned_grype_hash" ]]; then
+            if [[ "$grype_binary_hash" != "$pinned_grype_hash" ]]; then
+                log_error "tool_integrity_failed: Grype binary hash mismatch"
+                log_error "  pinned: ${pinned_grype_hash:0:16}..."
+                log_error "  actual: ${grype_binary_hash:0:16}..."
+                integrity_audit_log "tool_integrity_failed" "tool=grype, pinned=${pinned_grype_hash:0:16}, actual=${grype_binary_hash:0:16}" || true
+                exit 1
+            fi
+            log_info "Grype binary hash verified: ${grype_binary_hash:0:12}..."
         else
-            log_info "Grype version: ${grype_version}"
+            # Trust-on-first-use
+            log_info "No pinned grype hash — trust-on-first-use: storing ${grype_binary_hash:0:12}..."
+            config=$(echo "$config" | jq --arg h "$grype_binary_hash" '.pinned_grype_hash = $h')
+            integrity_write_container_config "$config"
+            integrity_audit_log "supply_chain_tofu" "tool=grype, hash=${grype_binary_hash:0:12}" || true
         fi
+        log_info "Grype version: ${grype_version}"
     fi
 
     # Ensure Grype can reach Docker (Colima uses non-standard socket)
@@ -51,7 +71,7 @@ main() {
     fi
 
     # Check image exists
-    if ! docker image inspect "$IMAGE_NAME" &>/dev/null; then
+    if ! integrity_run_with_timeout 10 docker image inspect "$IMAGE_NAME" &>/dev/null; then
         log_warn "Image '${IMAGE_NAME}' not found locally — skipping scan"
         exit 3
     fi
@@ -63,23 +83,44 @@ main() {
 
     # FR-3B-011: Run scan with --fail-on high (includes critical)
     local scan_rc=0
-    grype "$IMAGE_NAME" --fail-on high -o json > "$json_file" 2>/dev/null || scan_rc=$?
+    integrity_run_with_timeout 300 grype "$IMAGE_NAME" --fail-on high -o json > "$json_file" 2>/dev/null || scan_rc=$?
 
     # Grype exit codes: 0 = no findings above threshold, 1 = error, 2 = findings above threshold
     if [[ $scan_rc -eq 0 ]]; then
-        # No CVEs above threshold
-        local total
-        total=$(jq '.matches | length' "$json_file" 2>/dev/null || echo 0)
+        # T036/T037: Replace || echo 0 with _integrity_validate_json() + fallback warning (FR-011, FR-039)
+        local _parse_fallback=false
+        local total json_content
+        json_content=$(cat "$json_file")
+        total=$(_integrity_validate_json '.matches | length' "$json_content" "grype_total" 2>/dev/null \
+            ) || { log_warn "json_parse_fallback: scan-image total defaulted to 0"; total=0; _parse_fallback=true; }
+        if $_parse_fallback; then
+            log_warn "WARN: No high/critical CVEs found but JSON parse fallback occurred — results may be unreliable"
+            log_info "  Report: ${json_file}"
+            exit 2
+        fi
         log_info "PASS: No high/critical CVEs found (${total} total matches at lower severities)"
         log_info "  Report: ${json_file}"
         exit 0
     elif [[ $scan_rc -eq 2 ]]; then
         # Findings above threshold (--fail-on triggered)
-        local total high critical
-        total=$(jq '.matches | length' "$json_file" 2>/dev/null || echo 0)
-        critical=$(jq '[.matches[] | select(.vulnerability.severity == "Critical")] | length' "$json_file" 2>/dev/null || echo 0)
-        high=$(jq '[.matches[] | select(.vulnerability.severity == "High")] | length' "$json_file" 2>/dev/null || echo 0)
+        # T037: JSON fallback warning (FR-011, FR-039)
+        local _parse_fallback=false
+        local total high critical json_content
+        json_content=$(cat "$json_file")
+        if ! _integrity_validate_json '.matches // error("missing .matches")' "$json_content" "grype" >/dev/null 2>&1; then
+            log_error "Grype JSON output missing .matches field"
+            exit 1
+        fi
+        total=$(_integrity_validate_json '.matches | length' "$json_content" "grype_total" 2>/dev/null \
+            ) || { log_warn "json_parse_fallback: scan-image total defaulted to 0"; total=0; _parse_fallback=true; }
+        critical=$(_integrity_validate_json '[.matches[] | select(.vulnerability.severity == "Critical")] | length' "$json_content" "grype_critical" 2>/dev/null \
+            ) || { log_warn "json_parse_fallback: scan-image critical defaulted to 0"; critical=0; _parse_fallback=true; }
+        high=$(_integrity_validate_json '[.matches[] | select(.vulnerability.severity == "High")] | length' "$json_content" "grype_high" 2>/dev/null \
+            ) || { log_warn "json_parse_fallback: scan-image high defaulted to 0"; high=0; _parse_fallback=true; }
 
+        if $_parse_fallback; then
+            log_warn "json_parse_fallback: scan-image counts may be unreliable"
+        fi
         log_error "FAIL: ${total} CVEs found (${critical} critical, ${high} high)"
 
         # FR-3B-012: Per-finding detail for high/critical

@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=lib/integrity.sh
+source "${SCRIPT_DIR}/lib/integrity.sh"
 
 REPO_ROOT="$(resolve_repo_root "$SCRIPT_DIR")"
 readonly REPO_ROOT
@@ -33,12 +35,12 @@ USAGE
 check_container() {
     require_command docker "Install Docker via Colima: brew install colima docker"
 
-    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+    if ! integrity_run_with_timeout 30 docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
         log_error "Container '${CONTAINER_NAME}' is not running"
         log_error "Start it with: docker compose up -d"
         # Show container status for debugging
         log_debug "All running containers:"
-        docker ps --format '{{.Names}}\t{{.Status}}' 2>/dev/null | while read -r line; do
+        integrity_run_with_timeout 30 docker ps --format '{{.Names}}\t{{.Status}}' 2>/dev/null | while read -r line; do
             log_debug "  ${line}"
         done
         exit 1
@@ -66,23 +68,23 @@ export_workflows() {
 
     if [[ "$dry_run" == "true" ]]; then
         local count
-        count=$(docker exec -u node "$CONTAINER_NAME" n8n list:workflow 2>/dev/null | wc -l | tr -d ' ')
+        count=$(integrity_run_with_timeout 30 docker exec -u node "$CONTAINER_NAME" n8n list:workflow 2>/dev/null | wc -l | tr -d ' ')
         log_info "Would export ${count} workflow(s) — dry run, no files changed"
         return 0
     fi
 
     # Export to tmpfs inside container, then pipe each file out via exec.
     # docker cp fails on read-only containers (read_only: true in compose).
-    docker exec -u node "$CONTAINER_NAME" \
+    integrity_run_with_timeout 30 docker exec -u node "$CONTAINER_NAME" \
         n8n export:workflow --all --separate --output="${tmp_dir}/"
 
     # List exported files and copy each via stdout pipe
-    docker exec "$CONTAINER_NAME" sh -c "ls ${tmp_dir}/*.json 2>/dev/null" | while IFS= read -r remote_path; do
+    integrity_run_with_timeout 30 docker exec "$CONTAINER_NAME" sh -c "ls ${tmp_dir}/*.json 2>/dev/null" | while IFS= read -r remote_path; do
         local name
         name=$(basename "$remote_path")
-        docker exec "$CONTAINER_NAME" cat "$remote_path" > "${WORKFLOWS_DIR}/${name}"
+        integrity_run_with_timeout 30 docker exec "$CONTAINER_NAME" cat "$remote_path" > "${WORKFLOWS_DIR}/${name}"
     done
-    docker exec "$CONTAINER_NAME" rm -rf "$tmp_dir"
+    integrity_run_with_timeout 30 docker exec "$CONTAINER_NAME" rm -rf "$tmp_dir"
 
     # List exported files
     local count=0
@@ -140,14 +142,14 @@ import_workflows() {
         local name
         name=$(basename "$f")
         log_debug "  Importing: ${name}"
-        cat "$f" | docker exec -i "$CONTAINER_NAME" sh -c "cat > /tmp/${name}"
-        if docker exec -u node "$CONTAINER_NAME" \
+        cat "$f" | integrity_run_with_timeout 30 docker exec -i "$CONTAINER_NAME" sh -c "cat > /tmp/${name}"
+        if integrity_run_with_timeout 30 docker exec -u node "$CONTAINER_NAME" \
             n8n import:workflow --input="/tmp/${name}" 2>&1; then
             imported=$((imported + 1))
         else
             log_warn "Import of ${name} returned errors (see above)"
         fi
-        docker exec "$CONTAINER_NAME" rm -f "/tmp/${name}"
+        integrity_run_with_timeout 30 docker exec "$CONTAINER_NAME" rm -f "/tmp/${name}"
     done
 
     log_info "Imported ${imported}/${count} workflow(s)"
@@ -184,17 +186,26 @@ activate_workflows() {
 
     local activated=0
     local failed=0
+
+    # T034: Fix credential exposure — use temp file instead of -H header (FR-026, FR-025)
+    local _prev_exit_trap
+    _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
+    local _cred_tmpfile
+    _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
+    trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
+
     for f in "${sorted_files[@]}"; do
         local wf_id
         wf_id=$(python3 -c "import json; print(json.load(open('$f')).get('id',''))" 2>/dev/null) || continue
         [[ -z "$wf_id" ]] && continue
 
         # Deactivate then activate to ensure webhook registration
-        curl -s -X POST -H "X-N8N-API-KEY: ${api_key}" \
+        # T034: Safe dispatch — no credential in process args (FR-026)
+        curl -s -X POST --config "$_cred_tmpfile" \
             "http://localhost:5678/api/v1/workflows/${wf_id}/deactivate" >/dev/null 2>&1
 
         local result
-        result=$(curl -s -X POST -H "X-N8N-API-KEY: ${api_key}" \
+        result=$(curl -s -X POST --config "$_cred_tmpfile" \
             "http://localhost:5678/api/v1/workflows/${wf_id}/activate" 2>&1)
 
         if echo "$result" | grep -q '"active":true\|"active": true'; then
@@ -205,6 +216,14 @@ activate_workflows() {
             log_warn "  Failed to activate: ${wf_id}"
         fi
     done
+
+    rm -f "$_cred_tmpfile"
+    # Restore original EXIT trap
+    if [[ -n "$_prev_exit_trap" ]]; then
+        eval "$_prev_exit_trap"
+    else
+        trap - EXIT
+    fi
 
     if [[ $failed -eq 0 ]]; then
         log_info "Activated ${activated} workflow(s)"

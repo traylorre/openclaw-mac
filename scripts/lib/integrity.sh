@@ -22,6 +22,62 @@ readonly INTEGRITY_KEYCHAIN_ACCOUNT="openclaw"
 readonly INTEGRITY_MANIFEST_VERSION=1
 # shellcheck disable=SC2034
 readonly INTEGRITY_GRACE_MINUTES=5
+readonly INTEGRITY_TMP_DIR="${HOME}/.openclaw/tmp"
+
+# --- Phase 4B T001: Trap save/restore helpers (FR-010) ---
+_integrity_save_err_trap() {
+    _SAVED_ERR_TRAP=$(trap -p ERR 2>/dev/null || true)
+}
+_integrity_restore_err_trap() {
+    if [[ -n "${_SAVED_ERR_TRAP:-}" ]]; then
+        eval "$_SAVED_ERR_TRAP"
+    else
+        trap - ERR 2>/dev/null || true
+    fi
+    unset _SAVED_ERR_TRAP
+}
+
+# --- Phase 4B T002: Lock path validator (FR-044) ---
+_integrity_validate_lock_path() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        echo "CRITICAL: empty lock path passed to rm -rf" >&2
+        return 1
+    fi
+    if [[ "$path" != *"integrity-audit.log.lock"* ]]; then
+        echo "CRITICAL: unexpected lock path: ${path}" >&2
+        return 1
+    fi
+    return 0
+}
+
+# --- Phase 4: Secure temp directory initialization (T003, FR-006, FR-027) ---
+_integrity_init_tmp_dir() {
+    # Validate ~/.openclaw/ and parents are not symlinks
+    local dir="${HOME}/.openclaw"
+    while [[ "$dir" != "/" && "$dir" != "$HOME" ]]; do
+        if [[ -L "$dir" ]]; then
+            echo "CRITICAL: directory_symlink_detected: ${dir} -> $(readlink "$dir")" >&2
+            return 1
+        fi
+        dir=$(dirname "$dir")
+    done
+
+    if [[ ! -d "$INTEGRITY_TMP_DIR" ]]; then
+        mkdir -p "$INTEGRITY_TMP_DIR"
+        chmod 700 "$INTEGRITY_TMP_DIR"
+    fi
+
+    # Verify mode is 700
+    local mode
+    mode=$(stat -f '%Lp' "$INTEGRITY_TMP_DIR" 2>/dev/null)
+    if [[ "$mode" != "700" ]]; then
+        chmod 700 "$INTEGRITY_TMP_DIR"
+    fi
+}
+# Initialize on source
+_INTEGRITY_INIT_OK=false
+_integrity_init_tmp_dir && _INTEGRITY_INIT_OK=true
 
 # --- Protected File List (FR-004) ---
 # All file categories requiring integrity protection.
@@ -98,6 +154,23 @@ _integrity_protected_file_patterns() {
         [[ -f "$f" ]] && echo "$f"
     done
 
+    # --- Phase 4: Expanded Protection Surface (T037-T039, FR-017/018/019) ---
+
+    # T037: VCS configuration (FR-017) — always include
+    if [[ -f "${repo_root}/.git/config" ]]; then
+        echo "${repo_root}/.git/config"
+    fi
+
+    # T038: n8n workflow definitions (FR-018) — existence-gated
+    if [[ -d "${repo_root}/n8n/workflows" ]]; then
+        find "${repo_root}/n8n/workflows" -maxdepth 1 -name "*.json" -type f 2>/dev/null
+    fi
+
+    # T039: Agent constitution (FR-019) — existence-gated
+    if [[ -f "${repo_root}/.specify/memory/constitution.md" ]]; then
+        echo "${repo_root}/.specify/memory/constitution.md"
+    fi
+
     # LaunchAgent plists (templates + deployed)
     find "${repo_root}/scripts/launchd" -name "*.plist" -type f 2>/dev/null
     find "${repo_root}/scripts/templates" -name "*.plist" -type f 2>/dev/null
@@ -163,13 +236,23 @@ integrity_check_symlinks() {
 # --- HMAC Manifest Signing (FR-016) ---
 
 integrity_get_signing_key() {
-    security find-generic-password \
+    local key
+    key=$(security find-generic-password \
         -a "${INTEGRITY_KEYCHAIN_ACCOUNT}" \
         -s "${INTEGRITY_KEYCHAIN_SERVICE}" \
-        -w 2>/dev/null
+        -w 2>/dev/null)
+    if [[ -z "$key" ]]; then
+        echo "CRITICAL: HMAC key unavailable — Keychain locked or key missing" >&2
+        return 1
+    fi
+    echo "$key"
 }
 
 integrity_sign_manifest() {
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        echo "CRITICAL: integrity library not initialized" >&2
+        return 1
+    fi
     local manifest_body="$1"
     local key
     key=$(integrity_get_signing_key)
@@ -177,7 +260,15 @@ integrity_sign_manifest() {
         log_error "No manifest signing key in Keychain. Run: make integrity-keygen"
         return 1
     fi
-    echo -n "$manifest_body" | openssl dgst -sha256 -hmac "$key" -hex 2>/dev/null | awk '{print $NF}'
+    # T018: Mitigate key exposure — key through temp file (FR-023, RD-015)
+    local _hmac_keyfile
+    _hmac_keyfile=$(mktemp "${INTEGRITY_TMP_DIR}/hmac-XXXXXX")
+    chmod 600 "$_hmac_keyfile"
+    printf '%s' "$key" > "$_hmac_keyfile"
+    local _hmac_key_val
+    _hmac_key_val=$(cat "$_hmac_keyfile")
+    rm -f "$_hmac_keyfile"
+    echo -n "$manifest_body" | openssl dgst -sha256 -hmac "$_hmac_key_val" -hex 2>/dev/null | awk '{print $NF}'
 }
 
 integrity_verify_signature() {
@@ -286,6 +377,10 @@ integrity_is_locked() {
 # All state files use the same HMAC key as the manifest.
 
 integrity_sign_state_file() {
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        echo "CRITICAL: integrity library not initialized" >&2
+        return 1
+    fi
     local json_data="$1"
     local output_file="$2"
 
@@ -299,16 +394,13 @@ integrity_sign_state_file() {
     local signed
     signed=$(echo "$json_data" | jq --arg sig "$sig" '. + {signature: $sig}')
 
-    # ADV-011: Atomic write (mktemp + mv)
-    local tmpfile
-    tmpfile=$(mktemp "${output_file}.XXXXXX")
-    if echo "$signed" | jq '.' > "$tmpfile"; then
-        chmod 600 "$tmpfile"
-        mv "$tmpfile" "$output_file"
-    else
-        rm -f "$tmpfile"
+    # T047: Use safe atomic write (FR-005)
+    local content
+    content=$(echo "$signed" | jq '.')
+    if ! _integrity_safe_atomic_write "$output_file" "$content"; then
         return 1
     fi
+    chmod 600 "$output_file"
 }
 
 integrity_verify_state_file() {
@@ -332,31 +424,67 @@ integrity_verify_state_file() {
 # Append-only log for all privileged operations. Survives lock/unlock cycles.
 
 integrity_audit_log() {
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        echo "CRITICAL: integrity library not initialized" >&2
+        return 1
+    fi
     local action="$1"
     local details="${2:-}"
+
+    # T010: Action validation (FR-023)
+    if ! [[ "$action" =~ ^[a-z][a-z0-9_]{2,48}$ ]]; then
+        echo "ERROR: Invalid audit log action: ${action}" >&2
+        return 1
+    fi
+
     local operator="${SUDO_USER:-$(whoami)}"
     local _audit_lockdir="${INTEGRITY_AUDIT_LOG}.lock"
-
-    # Serialize concurrent writers with mkdir lock (atomic on all filesystems)
-    # flock is not available on macOS; mkdir is the portable alternative
     local _audit_lock_acquired=false
+
     local _lock_attempt
-    for _lock_attempt in 1 2 3 4 5; do
+    for _lock_attempt in $(seq 1 20); do
         if mkdir "$_audit_lockdir" 2>/dev/null; then
+            echo "${BASHPID:-$$} $(ps -o lstart= -p "${BASHPID:-$$}" 2>/dev/null)" > "$_audit_lockdir/pid" 2>/dev/null
             _audit_lock_acquired=true
+            # FR-013: Signal trap for lock cleanup (INT/TERM only — explicit release handles normal path)
+            # shellcheck disable=SC2064
+            trap "rm -f '${_audit_lockdir}/pid' 2>/dev/null; rmdir '${_audit_lockdir}' 2>/dev/null || true" INT TERM
             break
         fi
-        # Check for stale lock (older than 10 seconds)
+        # PID-based stale detection (FR-029)
         if [[ -d "$_audit_lockdir" ]]; then
-            local lock_age
-            lock_age=$(( $(date +%s) - $(stat -f '%m' "$_audit_lockdir" 2>/dev/null || echo 0) ))
-            if [[ $lock_age -gt 10 ]]; then
-                rmdir "$_audit_lockdir" 2>/dev/null
-                continue
+            if [[ -f "$_audit_lockdir/pid" ]] && [[ -s "$_audit_lockdir/pid" ]]; then
+                local _lock_pid _lock_start _current_start
+                read -r _lock_pid _lock_start < "$_audit_lockdir/pid" 2>/dev/null || true
+                if [[ -n "$_lock_pid" ]]; then
+                    _current_start=$(ps -o lstart= -p "$_lock_pid" 2>/dev/null || true)
+                    if [[ -z "$_current_start" ]] || [[ "$_current_start" != *"$_lock_start"* ]]; then
+                        # PID not running or recycled — stale lock
+                        if _integrity_validate_lock_path "$_audit_lockdir"; then
+                            rm -rf "$_audit_lockdir"
+                        fi
+                        continue
+                    fi
+                fi
+            else
+                # Missing/empty PID file — stale after 30s
+                local _lock_age
+                _lock_age=$(( $(date +%s) - $(stat -f '%m' "$_audit_lockdir" 2>/dev/null || echo 0) ))
+                if [[ $_lock_age -gt 30 ]]; then
+                    if _integrity_validate_lock_path "$_audit_lockdir"; then
+                        rm -rf "$_audit_lockdir"
+                    fi
+                    continue
+                fi
             fi
         fi
-        sleep 0.1
+        sleep 0.2
     done
+
+    # If lock acquisition failed after all retries, warn but still write (audit log must not be lost)
+    if ! $_audit_lock_acquired; then
+        echo "WARNING: audit log lock acquisition failed after 5 retries — writing without lock" >&2
+    fi
 
     # FR-014b: Compute hash of previous entry for hash chain
     local prev_hash="GENESIS"
@@ -387,11 +515,28 @@ integrity_audit_log() {
         log_error "  Action: ${action}, Details: ${details}" >&2
         _write_rc=1
     fi
-    chmod 600 "$INTEGRITY_AUDIT_LOG" 2>/dev/null || true
+    if ! chmod 600 "$INTEGRITY_AUDIT_LOG" 2>/dev/null; then
+        log_error "Failed to set permissions on audit log" >&2
+        _write_rc=1
+    fi
 
-    # Release lock
+    # T016: F_FULLFSYNC with explicit fallback (FR-041)
+    if command -v python3 &>/dev/null; then
+        python3 -c "import os,fcntl,sys; fd=os.open(sys.argv[1],os.O_RDONLY); fcntl.fcntl(fd,51); os.close(fd)" "$INTEGRITY_AUDIT_LOG" 2>/dev/null || {
+            log_error "F_FULLFSYNC failed, falling back to sync" >&2
+            sync
+        }
+    else
+        log_error "python3 not available for F_FULLFSYNC, falling back to sync" >&2
+        sync
+    fi
+
+    # Release lock and clear trap
     if $_audit_lock_acquired; then
+        rm -f "$_audit_lockdir/pid" 2>/dev/null
         rmdir "$_audit_lockdir" 2>/dev/null || true
+        _audit_lock_acquired=false
+        trap - INT TERM 2>/dev/null || true
     fi
 
     return "$_write_rc"
@@ -505,7 +650,11 @@ integrity_is_in_grace_period() {
     fi
 
     local unlock_epoch grace_end
-    unlock_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$entry" +%s 2>/dev/null || echo 0)
+    unlock_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$entry" +%s 2>/dev/null)
+    if [[ -z "$unlock_epoch" ]]; then
+        log_error "Failed to parse unlock timestamp: ${entry}" >&2
+        return 1
+    fi
     grace_end=$((unlock_epoch + INTEGRITY_GRACE_MINUTES * 60))
 
     if [[ "$now_epoch" -lt "$grace_end" ]]; then
@@ -543,19 +692,101 @@ integrity_check_env_vars() {
         violations=$((violations + 1))
     fi
 
-    # TMPDIR must be system default or unset (FR-035)
+    # T011: TMPDIR validation with .. rejection and canonicalization (FR-021, FR-022)
     if [[ -n "${TMPDIR:-}" ]]; then
-        case "$TMPDIR" in
-            /tmp|/tmp/|/private/tmp|/private/tmp/|/var/folders/*)
-                ;; # macOS default locations are safe
-            *)
-                log_error "TMPDIR override detected: ${TMPDIR} (expected /tmp, /private/tmp, or /var/folders/*)"
+        # FR-021: Reject paths containing .. as a component
+        if [[ "$TMPDIR" == *".."* ]]; then
+            log_error "TMPDIR contains path traversal component (..): ${TMPDIR}"
+            violations=$((violations + 1))
+        elif ! [[ "$TMPDIR" =~ ^(/tmp|/private/tmp|/var/folders/[a-zA-Z0-9_+]{2}/[^/]+/T)(/.*)?$ ]]; then
+            log_error "TMPDIR override detected: ${TMPDIR} (does not match allowed macOS paths)"
+            violations=$((violations + 1))
+        else
+            # FR-022: Canonicalize and re-validate
+            local _canonical_tmpdir
+            _canonical_tmpdir=$(cd "$TMPDIR" 2>/dev/null && pwd -P) || true
+            if [[ -n "$_canonical_tmpdir" ]] && ! [[ "$_canonical_tmpdir" =~ ^(/tmp|/private/tmp|/var/folders/[a-zA-Z0-9_+]{2}/[^/]+/T)(/.*)?$ ]]; then
+                log_error "TMPDIR canonical path does not match allowed paths: ${_canonical_tmpdir} (original: ${TMPDIR})"
                 violations=$((violations + 1))
-                ;;
-        esac
+            fi
+        fi
     fi
 
-    return "$violations"
+    [[ $violations -gt 0 ]] && return 1 || return 0
+}
+
+# --- Phase 4 T040: Permission verification (FR-020, FR-028, FR-041) ---
+_integrity_check_permissions() {
+    local repo_root="$1"
+    local violations=0
+
+    # Check secret files for mode 600
+    local secrets_dir="${repo_root}/scripts/templates/secrets"
+    if [[ -d "$secrets_dir" ]]; then
+        while IFS= read -r secret_file; do
+            [[ -z "$secret_file" ]] && continue
+            local mode
+            mode=$(stat -f '%Lp' "$secret_file" 2>/dev/null)
+
+            # T040/FR-041: Check if bind-mounted in Docker — use 640 if so
+            local expected_mode="600"
+            if [[ -f "${repo_root}/scripts/templates/docker-compose.yml" ]]; then
+                if grep -qF "$(basename "$secret_file")" "${repo_root}/scripts/templates/docker-compose.yml" 2>/dev/null; then
+                    expected_mode="640"
+                fi
+            fi
+
+            if [[ "$mode" != "$expected_mode" ]]; then
+                echo "secret_file_overly_permissive: ${secret_file} (mode=${mode}, expected=${expected_mode})" >&2
+                violations=$((violations + 1))
+            fi
+        done < <(find "$secrets_dir" -type f 2>/dev/null)
+    fi
+
+    # Check audit directories for mode 700
+    local audit_dirs=(
+        "${HOME}/.openclaw/logs"
+        "${HOME}/.openclaw/reports"
+    )
+    for adir in "${audit_dirs[@]}"; do
+        if [[ -d "$adir" ]]; then
+            local mode
+            mode=$(stat -f '%Lp' "$adir" 2>/dev/null)
+            if [[ "$mode" != "700" ]]; then
+                echo "audit_data_world_readable: ${adir} (mode=${mode}, expected=700)" >&2
+                violations=$((violations + 1))
+            fi
+        fi
+    done
+
+    [[ $violations -gt 0 ]] && return 1 || return 0
+}
+
+# --- Phase 4 T041: Docker socket permission check (FR-034) ---
+_integrity_check_docker_socket() {
+    local socket_path
+    socket_path="${HOME}/.colima/default/docker.sock"
+
+    if [[ ! -S "$socket_path" ]]; then
+        # Try to resolve from Docker context
+        socket_path=$(integrity_docker_socket_path 2>/dev/null)
+    fi
+
+    if [[ -z "$socket_path" ]] || [[ ! -S "$socket_path" ]]; then
+        return 0  # No socket found — nothing to check
+    fi
+
+    local mode owner
+    mode=$(stat -f '%Lp' "$socket_path" 2>/dev/null)
+    owner=$(stat -f '%Su' "$socket_path" 2>/dev/null)
+    local current_user
+    current_user=$(whoami)
+
+    if [[ "$mode" != "600" ]] || [[ "$owner" != "$current_user" ]]; then
+        echo "docker_socket_permissions: ${socket_path} (mode=${mode}, owner=${owner}, expected=600/${current_user})" >&2
+        return 1
+    fi
+    return 0
 }
 
 # --- Heartbeat (FR-024, ADV-004) ---
@@ -589,7 +820,10 @@ integrity_check_heartbeat() {
     local ts now_epoch hb_epoch
     ts=$(jq -r '.timestamp' "$INTEGRITY_HEARTBEAT" 2>/dev/null)
     now_epoch=$(date +%s)
-    hb_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null || echo 0)
+    hb_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ts" +%s 2>/dev/null)
+    if [[ -z "$hb_epoch" ]]; then
+        return 1  # Cannot determine heartbeat age
+    fi
 
     local age=$((now_epoch - hb_epoch))
     if [[ "$age" -gt "$max_age_seconds" ]]; then
@@ -648,10 +882,11 @@ integrity_discover_container() {
         pattern="${pattern:-n8n}"
     fi
 
-    # Validate pattern against safe characters (prevent Docker filter injection)
-    if ! [[ "$pattern" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
-        echo "Invalid container name pattern: ${pattern}" >&2
-        return 1
+    # T012: Validate container name pattern (FR-025)
+    if ! _integrity_validate_container_name "$pattern"; then
+        # Migration: invalid config value → fall back to default "n8n"
+        echo "WARNING: Container name pattern failed validation, falling back to 'n8n'" >&2
+        pattern="n8n"
     fi
 
     # Check Docker availability
@@ -661,7 +896,8 @@ integrity_discover_container() {
     fi
 
     local ids
-    ids=$(docker ps -q --filter "name=${pattern}" 2>/dev/null)
+    # T004: Timeout-bounded docker ps (FR-003)
+    ids=$(integrity_run_with_timeout 10 docker ps -q --filter "name=${pattern}" 2>/dev/null)
 
     if [[ -z "$ids" ]]; then
         echo "No container matching '${pattern}' is running" >&2
@@ -711,7 +947,8 @@ integrity_capture_container_snapshot() {
     fi
 
     local snapshot
-    snapshot=$(docker inspect "$cid" --format '{{json .}}' 2>/dev/null)
+    # T003: Timeout-bounded docker inspect (FR-002)
+    snapshot=$(integrity_run_with_timeout 30 docker inspect "$cid" --format '{{json .}}' 2>/dev/null)
     local rc=$?
 
     if [[ $rc -ne 0 ]] || [[ -z "$snapshot" ]]; then
@@ -809,7 +1046,7 @@ integrity_capture_container_baseline() {
     # n8n version — trap "no such container" explicitly
     local n8n_version=""
     local exec_output
-    exec_output=$(docker exec "$cid" n8n --version 2>&1)
+    exec_output=$(integrity_run_with_timeout 10 docker exec "$cid" n8n --version 2>&1)
     local rc=$?
     if [[ $rc -ne 0 ]]; then
         if echo "$exec_output" | grep -qi "no such container"; then
@@ -834,10 +1071,23 @@ integrity_capture_container_baseline() {
         echo "Warning: No n8n API key in Keychain (n8n-api-key) — cannot enumerate credentials" >&2
         cred_enum_failed=true
     else
+        # T044: Fix credential exposure — use temp file (FR-026)
+        # T030: Credential trap protection (FR-015, FR-025)
+        local _prev_exit_trap
+        _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
+        local _cred_tmpfile
+        _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
+        trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
         local api_response
-        api_response=$(curl -s --config - \
-            "http://localhost:5678/api/v1/credentials" --max-time 10 \
-            <<< "header = \"X-N8N-API-KEY: ${api_key}\"")
+        api_response=$(curl -s --config "$_cred_tmpfile" \
+            "http://localhost:5678/api/v1/credentials" --max-time 10)
+        rm -f "$_cred_tmpfile"
+        # Restore original EXIT trap
+        if [[ -n "$_prev_exit_trap" ]]; then
+            eval "$_prev_exit_trap"
+        else
+            trap - EXIT
+        fi
         if [[ -z "$api_response" ]]; then
             echo "Warning: n8n API returned empty response — is n8n running?" >&2
             cred_enum_failed=true
@@ -864,12 +1114,12 @@ integrity_capture_container_baseline() {
     # (container doesn't have jq)
     local nodes_json='[]'
     local pkg_output
-    pkg_output=$(docker exec "$cid" sh -c '
+    pkg_output=$(integrity_run_with_timeout 30 docker exec "$cid" sh -c '
         for f in /home/node/.n8n/nodes/node_modules/n8n-nodes-*/package.json; do
             [ -f "$f" ] && cat "$f" && printf "\n---PKG_DELIMITER---\n"
         done' 2>/dev/null)
     rc=$?
-    if [[ $rc -ne 0 ]] && ! docker ps -q --filter "id=${cid}" 2>/dev/null | grep -q .; then
+    if [[ $rc -ne 0 ]] && ! integrity_run_with_timeout 5 docker ps -q --filter "id=${cid}" 2>/dev/null | grep -q .; then
         echo "CRITICAL: Container disappeared during node enumeration" >&2
         integrity_audit_log "container_disappeared" "during node enum, cid=${cid:0:12}" || true
         return 1
@@ -882,8 +1132,13 @@ integrity_capture_container_baseline() {
         while IFS= read -r line; do
             if [[ "$line" == "---PKG_DELIMITER---" ]]; then
                 if [[ -n "$block" ]]; then
+                    # T013: Validate each segment as JSON before extraction (FR-012)
                     local pname pver
-                    pname=$(echo "$block" | jq -r '.name // empty' 2>/dev/null)
+                    pname=$(_integrity_validate_json '.name // error("missing .name")' "$block" "community_node_parse" 2>/dev/null) || {
+                        echo "WARNING: Skipping invalid community node block (${block:0:200})" >&2
+                        block=""
+                        continue
+                    }
                     pver=$(echo "$block" | jq -r '.version // empty' 2>/dev/null)
                     if [[ -n "$pname" ]]; then
                         tmp_nodes=$(echo "$tmp_nodes" | jq --arg n "$pname" --arg v "$pver" \
@@ -1027,7 +1282,8 @@ integrity_write_verify_state() {
 integrity_docker_socket_path() {
     # Resolve from active Docker context (supports non-default Colima profiles)
     local ctx_host
-    ctx_host=$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)
+    # T005: Timeout-bounded docker context inspect (FR-009)
+    ctx_host=$(integrity_run_with_timeout 5 docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)
     if [[ -n "$ctx_host" ]]; then
         echo "$ctx_host" | sed 's|unix://||'
         return 0
@@ -1050,29 +1306,202 @@ integrity_docker_socket_path() {
     return 1
 }
 
-# --- T3B-002: macOS-compatible timeout (no GNU timeout on macOS) ---
+# --- Phase 4B T006: Safe atomic write with trap preservation (FR-010, FR-011, FR-012) ---
+_integrity_safe_atomic_write() {
+    local target_file="$1"
+    local content="$2"
+
+    # Check init guard
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        echo "CRITICAL: integrity library not initialized" >&2
+        return 1
+    fi
+
+    # Save caller's ERR trap
+    _integrity_save_err_trap
+
+    # Validate target parent is not a symlink
+    local target_dir
+    target_dir=$(dirname "$target_file")
+    if [[ -L "$target_dir" ]]; then
+        _integrity_restore_err_trap
+        echo "CRITICAL: directory_symlink_detected: ${target_dir}" >&2
+        return 1
+    fi
+
+    # Save and set umask 077 (FR-011)
+    local _prev_umask
+    _prev_umask=$(umask)
+    umask 077
+
+    # Create temp file in secure directory
+    local tmpfile
+    tmpfile=$(mktemp "${INTEGRITY_TMP_DIR}/atomic-XXXXXX")
+
+    # Restore umask immediately
+    umask "$_prev_umask"
+
+    # RETURN trap for cleanup (function-scoped in Bash 5.x)
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmpfile' 2>/dev/null" RETURN
+
+    # Post-creation symlink check
+    if [[ -L "$tmpfile" ]]; then
+        _integrity_restore_err_trap
+        echo "CRITICAL: symlink_attack_detected on temp file: ${tmpfile}" >&2
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    # Write content
+    if ! printf '%s' "$content" > "$tmpfile"; then
+        _integrity_restore_err_trap
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    # Atomic move to target
+    if ! mv "$tmpfile" "$target_file"; then
+        _integrity_restore_err_trap
+        rm -f "$tmpfile"
+        return 1
+    fi
+
+    # Success — clear cleanup trap (FR-012: file is now at target, don't delete it)
+    trap - RETURN
+
+    # Restore caller's ERR trap
+    _integrity_restore_err_trap
+
+    return 0
+}
+
+# --- Phase 4 T005: Safe credential write for curl config (FR-026) ---
+_integrity_safe_credential_write() {
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        echo "CRITICAL: integrity library not initialized" >&2
+        return 1
+    fi
+    local api_key="$1"
+    local tmpconf
+    tmpconf=$(mktemp "${INTEGRITY_TMP_DIR}/curl-XXXXXX")
+    chmod 600 "$tmpconf"
+
+    # Post-creation symlink check
+    if [[ -L "$tmpconf" ]]; then
+        rm -f "$tmpconf"
+        return 1
+    fi
+
+    # Write curl config format
+    printf 'header = "X-N8N-API-KEY: %s"\n' "$api_key" > "$tmpconf"
+
+    # Return path — caller is responsible for cleanup via trap
+    echo "$tmpconf"
+    return 0
+}
+
+# --- Phase 4B T014: JSON validation with separated stderr (FR-026) ---
+_integrity_validate_json() {
+    local jq_expr="$1"
+    local input="$2"
+    local context="${3:-unknown}"
+
+    local result
+    local jq_rc=0
+    result=$(echo "$input" | jq -e "$jq_expr" 2>/dev/null) || jq_rc=$?
+
+    if [[ $jq_rc -ne 0 ]]; then
+        # Re-run to capture diagnostic stderr
+        local jq_err
+        jq_err=$(echo "$input" | jq -e "$jq_expr" 2>&1 >/dev/null) || true
+        echo "json_validation_failed: context=${context}, expr=${jq_expr}, error=${jq_err:0:200}" >&2
+        return 1
+    fi
+
+    echo "$result"
+    return 0
+}
+
+# --- Phase 4 T012: Container name validation (FR-025) ---
+_integrity_validate_container_name() {
+    local name="$1"
+    if [[ "$name" =~ ^[a-zA-Z][a-zA-Z0-9_-]{0,63}$ ]]; then
+        return 0
+    fi
+    echo "Invalid container name pattern: ${name}" >&2
+    return 1
+}
+
+# --- T3B-002 / Phase 4 T006: Process group isolation timeout (FR-007, FR-008, FR-009) ---
 integrity_run_with_timeout() {
     local timeout_secs="$1"; shift
+
+    # Enable job control for process group creation
+    set -m 2>/dev/null
 
     "$@" &
     local cmd_pid=$!
 
-    # Watchdog: kill command after timeout
-    ( sleep "$timeout_secs"; kill "$cmd_pid" 2>/dev/null ) &
+    # T010: Verify process group creation (FR-017, FR-018)
+    local _use_pgid_kill=true
+    local _cmd_pgid
+    _cmd_pgid=$(ps -o pgid= -p "$cmd_pid" 2>/dev/null | tr -d ' ')
+    if [[ "$_cmd_pgid" != "$cmd_pid" ]]; then
+        echo "WARNING: set -m did not create new process group (PGID=$_cmd_pgid, PID=$cmd_pid), falling back to pkill -P" >&2
+        _use_pgid_kill=false
+    fi
+
+    # Restore job control before launching watchdog (so watchdog is in parent's group)
+    set +m 2>/dev/null
+
+    # Watchdog: SIGTERM → grace period → SIGKILL on the entire process group
+    if $_use_pgid_kill; then
+        (
+            sleep "$timeout_secs"
+            kill -TERM -"$cmd_pid" 2>/dev/null
+            sleep 2
+            kill -KILL -"$cmd_pid" 2>/dev/null
+        ) &
+    else
+        (
+            sleep "$timeout_secs"
+            pkill -TERM -P "$cmd_pid" 2>/dev/null; kill -TERM "$cmd_pid" 2>/dev/null
+            sleep 2
+            pkill -KILL -P "$cmd_pid" 2>/dev/null; kill -KILL "$cmd_pid" 2>/dev/null
+        ) &
+    fi
     local watchdog_pid=$!
 
-    # Wait for command to finish
+    # Wait for command to finish (may be killed by watchdog)
     wait "$cmd_pid" 2>/dev/null
     local rc=$?
 
-    # Check if watchdog is still running (command finished before timeout)
+    # Determine if timeout occurred: if command was killed by signal (rc > 128)
+    # and the process is no longer running, check if watchdog initiated it
     if kill -0 "$watchdog_pid" 2>/dev/null; then
-        # Command finished first — cancel watchdog
+        # Watchdog still alive — command finished before timeout
         kill "$watchdog_pid" 2>/dev/null
-        wait "$watchdog_pid" 2>/dev/null
+        wait "$watchdog_pid" 2>/dev/null || true
     else
-        # Watchdog finished first — timeout occurred
+        # Watchdog already exited — it fired the kill, this was a timeout
         rc=124
+    fi
+
+    # If command was killed by signal (rc > 128) and we haven't set 124, it was a timeout
+    if [[ $rc -gt 128 && $rc -ne 124 ]]; then
+        # Check if it was our watchdog that killed it
+        if ! kill -0 "$cmd_pid" 2>/dev/null; then
+            rc=124
+        fi
+    fi
+
+    # Clean up any escapees
+    if [[ $rc -eq 124 ]]; then
+        if $_use_pgid_kill && pgrep -g "$cmd_pid" &>/dev/null; then
+            echo "WARNING: Process group escapees detected after timeout (pgid=$cmd_pid)" >&2
+            kill -KILL -"$cmd_pid" 2>/dev/null || true
+        fi
     fi
 
     return "$rc"

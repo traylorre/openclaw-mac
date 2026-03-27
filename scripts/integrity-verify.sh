@@ -65,9 +65,18 @@ warn() {
     WARNINGS=$((WARNINGS + 1))
 }
 
+# Phase 4 T017: fail() with severity parameter (FR-003)
 fail() {
-    log_error "$1"
-    ERRORS=$((ERRORS + 1))
+    local severity="${1:-WARNING}"
+    local msg="$2"
+    if [[ "$severity" == "CRITICAL" ]]; then
+        log_error "CRITICAL: ${msg}"
+        ERRORS=$((ERRORS + 1))
+        _CASCADE_ABORT=true
+    else
+        log_error "${msg}"
+        ERRORS=$((ERRORS + 1))
+    fi
 }
 
 # --- 1. Manifest Signature Verification (FR-016) ---
@@ -75,15 +84,15 @@ check_manifest_signature() {
     log_step "Verifying manifest signature"
 
     if [[ ! -f "$INTEGRITY_MANIFEST" ]]; then
-        fail "Manifest not found: ${INTEGRITY_MANIFEST}"
-        fail "  Run 'make integrity-deploy' to create it"
+        fail WARNING "Manifest not found: ${INTEGRITY_MANIFEST}"
+        fail WARNING "  Run 'make integrity-deploy' to create it"
         return
     fi
 
     if integrity_verify_signature "$INTEGRITY_MANIFEST"; then
         log_info "Manifest HMAC signature valid"
     else
-        fail "Manifest signature verification failed — possible tampering"
+        fail WARNING "Manifest signature verification failed — possible tampering"
     fi
 }
 
@@ -107,7 +116,7 @@ check_file_checksums() {
         total=$((total + 1))
 
         if [[ ! -f "$path" ]]; then
-            fail "Protected file missing: ${path}"
+            fail WARNING "Protected file missing: ${path}"
             missing=$((missing + 1))
             continue
         fi
@@ -119,7 +128,7 @@ check_file_checksums() {
             passed=$((passed + 1))
             log_debug "OK: ${path}"
         else
-            fail "Checksum mismatch: ${path}"
+            fail WARNING "Checksum mismatch: ${path}"
             log_error "  expected: ${sha256_expected:0:16}..."
             log_error "  actual:   ${sha256_actual:0:16}..."
             failed=$((failed + 1))
@@ -136,7 +145,7 @@ check_symlinks() {
     if integrity_check_symlinks "$REPO_ROOT"; then
         log_info "No symlinks detected"
     else
-        fail "Symlinks found in protected paths — see errors above"
+        fail WARNING "Symlinks found in protected paths — see errors above"
     fi
 }
 
@@ -147,7 +156,7 @@ check_env_vars() {
     if integrity_check_env_vars; then
         log_info "No dangerous environment variables set"
     else
-        fail "Dangerous environment variables detected — see errors above"
+        fail WARNING "Dangerous environment variables detected — see errors above"
     fi
 }
 
@@ -173,7 +182,7 @@ check_platform_version() {
     if [[ "$manifest_version" == "$current_version" ]]; then
         log_info "Platform version matches: ${current_version}"
     else
-        fail "Platform version mismatch"
+        fail WARNING "Platform version mismatch"
         log_error "  manifest: ${manifest_version}"
         log_error "  current:  ${current_version}"
     fi
@@ -190,7 +199,7 @@ check_pending_drafts() {
 
     # Must be valid JSON
     if ! jq empty "$PENDING_DRAFTS" 2>/dev/null; then
-        fail "pending-drafts.json is not valid JSON"
+        fail WARNING "pending-drafts.json is not valid JSON"
         return
     fi
 
@@ -198,7 +207,7 @@ check_pending_drafts() {
     local type
     type=$(jq -r 'type' "$PENDING_DRAFTS" 2>/dev/null)
     if [[ "$type" != "array" ]]; then
-        fail "pending-drafts.json must be a JSON array, got: ${type}"
+        fail WARNING "pending-drafts.json must be a JSON array, got: ${type}"
         return
     fi
 
@@ -211,7 +220,7 @@ check_pending_drafts() {
         # Check required fields exist
         for field in id type content status created_at; do
             if [[ $(echo "$entry" | jq --arg f "$field" 'has($f)') != "true" ]]; then
-                fail "pending-drafts entry missing required field: ${field}"
+                fail WARNING "pending-drafts entry missing required field: ${field}"
                 violations=$((violations + 1))
             fi
         done
@@ -222,7 +231,7 @@ check_pending_drafts() {
             keys - $allowed | .[]
         ' 2>/dev/null)
         if [[ -n "$extra_keys" ]]; then
-            fail "pending-drafts entry has unexpected keys: ${extra_keys}"
+            fail WARNING "pending-drafts entry has unexpected keys: ${extra_keys}"
             violations=$((violations + 1))
         fi
 
@@ -230,7 +239,7 @@ check_pending_drafts() {
         local content_len
         content_len=$(echo "$entry" | jq -r '.content | length' 2>/dev/null)
         if [[ "$content_len" -gt "$max_content_length" ]]; then
-            fail "pending-drafts content exceeds ${max_content_length} chars (got ${content_len})"
+            fail WARNING "pending-drafts content exceeds ${max_content_length} chars (got ${content_len})"
             violations=$((violations + 1))
         fi
 
@@ -238,7 +247,7 @@ check_pending_drafts() {
         local id_val
         id_val=$(echo "$entry" | jq -r '.id // empty' 2>/dev/null)
         if [[ -n "$id_val" ]] && ! echo "$id_val" | grep -qE '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
-            fail "pending-drafts entry has non-UUID id: ${id_val:0:40}"
+            fail WARNING "pending-drafts entry has non-UUID id: ${id_val:0:40}"
             violations=$((violations + 1))
         fi
 
@@ -248,7 +257,7 @@ check_pending_drafts() {
         case "$status_val" in
             draft|presented|approved|rejected|published|failed) ;;
             *)
-                fail "pending-drafts entry has invalid status: ${status_val}"
+                fail WARNING "pending-drafts entry has invalid status: ${status_val}"
                 violations=$((violations + 1))
                 ;;
         esac
@@ -259,7 +268,7 @@ check_pending_drafts() {
         case "$type_val" in
             post|comment|like|share|article) ;;
             *)
-                fail "pending-drafts entry has invalid type: ${type_val}"
+                fail WARNING "pending-drafts entry has invalid type: ${type_val}"
                 violations=$((violations + 1))
                 ;;
         esac
@@ -268,7 +277,7 @@ check_pending_drafts() {
         local created_val
         created_val=$(echo "$entry" | jq -r '.created_at // empty' 2>/dev/null)
         if [[ -n "$created_val" ]] && ! echo "$created_val" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'; then
-            fail "pending-drafts entry has invalid created_at format: ${created_val}"
+            fail WARNING "pending-drafts entry has invalid created_at format: ${created_val}"
             violations=$((violations + 1))
         fi
     done < <(jq -c '.[]' "$PENDING_DRAFTS" 2>/dev/null)
@@ -362,7 +371,7 @@ check_audit_chain() {
         entry_count=$(wc -l < "$INTEGRITY_AUDIT_LOG" | tr -d ' ')
         log_info "Audit log chain valid (${entry_count} entries)"
     else
-        fail "Audit log hash chain integrity violation — possible tampering"
+        fail WARNING "Audit log hash chain integrity violation — possible tampering"
     fi
 }
 
@@ -377,7 +386,7 @@ check_skill_allowlist() {
 
     # FR-008: Verify allowlist HMAC signature before trusting entries
     if ! integrity_verify_state_file "$INTEGRITY_ALLOWLIST"; then
-        fail "Skill allowlist signature invalid — possible tampering"
+        fail WARNING "Skill allowlist signature invalid — possible tampering"
         return
     fi
 
@@ -414,13 +423,13 @@ check_skill_allowlist() {
             "$INTEGRITY_ALLOWLIST" 2>/dev/null)
 
         if [[ -z "$approved_hash" ]]; then
-            fail "Unapproved skill: ${name} (not in allowlist)"
+            fail WARNING "Unapproved skill: ${name} (not in allowlist)"
             unapproved=$((unapproved + 1))
         elif [[ "$content_hash" == "$approved_hash" ]]; then
             log_debug "Skill OK: ${name}"
             passed=$((passed + 1))
         else
-            fail "Skill hash mismatch: ${name}"
+            fail WARNING "Skill hash mismatch: ${name}"
             log_error "  allowlist: ${approved_hash:0:16}..."
             log_error "  installed: ${content_hash:0:16}..."
             failed=$((failed + 1))
@@ -442,6 +451,40 @@ check_skill_allowlist() {
 # Script-level state for container ID pinning (FR-P3-036)
 _CONTAINER_PINNED_CID=""
 _CONTAINER_SNAPSHOT=""
+
+# Phase 4 T016: Trust tier constants (FR-001)
+_CASCADE_ABORT=false
+_INITIAL_IMAGE_DIGEST=""
+
+# Phase 4 T018: Container liveness gate (FR-002)
+_verify_container_alive() {
+    if [[ -z "$_CONTAINER_PINNED_CID" ]]; then
+        return 1
+    fi
+    local alive
+    alive=$(integrity_run_with_timeout 5 docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null)
+    local rc=$?
+    if [[ $rc -eq 124 ]]; then
+        # Timeout — daemon unresponsive
+        fail CRITICAL "Docker daemon unresponsive (timeout on container liveness check)"
+        return 1
+    fi
+    if [[ -z "$alive" ]]; then
+        fail CRITICAL "container_vanished: pinned CID ${_CONTAINER_PINNED_CID:0:12} no longer running"
+        integrity_audit_log "container_vanished" "cid=${_CONTAINER_PINNED_CID:0:12}" || true
+        return 1
+    fi
+    # Check paused state from snapshot
+    if [[ -n "$_CONTAINER_SNAPSHOT" ]]; then
+        local paused
+        paused=$(echo "$_CONTAINER_SNAPSHOT" | jq -r '.State.Paused // false')
+        if [[ "$paused" == "true" ]]; then
+            fail CRITICAL "container_paused: pinned CID ${_CONTAINER_PINNED_CID:0:12} is paused"
+            return 1
+        fi
+    fi
+    return 0
+}
 
 # --- TP3-011: Container Image Integrity (FR-P3-001/003, US1) ---
 check_container_image() {
@@ -468,7 +511,7 @@ check_container_image() {
         cid=$(integrity_discover_container 2>/dev/null)
     fi
     if [[ -z "$cid" ]]; then
-        fail "Orchestration container not running — cannot verify"
+        fail CRITICAL "Orchestration container not running — cannot verify"
         return 1
     fi
     _CONTAINER_PINNED_CID="$cid"
@@ -476,7 +519,7 @@ check_container_image() {
     # Atomic snapshot (FR-P3-012b)
     _CONTAINER_SNAPSHOT=$(integrity_capture_container_snapshot "$cid")
     if [[ -z "$_CONTAINER_SNAPSHOT" ]]; then
-        fail "Failed to inspect container ${cid:0:12}"
+        fail CRITICAL "Failed to inspect container ${cid:0:12}"
         _CONTAINER_PINNED_CID=""
         return 1
     fi
@@ -486,13 +529,16 @@ check_container_image() {
     actual_digest=$(echo "$_CONTAINER_SNAPSHOT" | jq -r '.Image // empty')
 
     if [[ "$actual_digest" != "$expected_digest" ]]; then
-        fail "Container image digest mismatch"
+        fail CRITICAL "Container image digest mismatch"
         log_error "  expected: ${expected_digest:0:24}..."
         log_error "  actual:   ${actual_digest:0:24}..."
         integrity_audit_log "container_image_mismatch" "expected=${expected_digest:0:20}, actual=${actual_digest:0:20}"
         return 1
     fi
     log_info "Container image digest verified: ${actual_digest:0:20}..."
+
+    # T021: Store initial image digest for final re-verification (FR-004)
+    _INITIAL_IMAGE_DIGEST="$actual_digest"
 
     # Version threshold check (FR-P3-004)
     local manifest_version
@@ -521,7 +567,7 @@ check_container_config() {
     log_step "Verifying container runtime configuration (10 properties)"
 
     if [[ -z "$_CONTAINER_SNAPSHOT" ]]; then
-        fail "No container snapshot available — image check must run first"
+        fail CRITICAL "No container snapshot available — image check must run first"
         return 1
     fi
 
@@ -534,7 +580,7 @@ check_container_config() {
     local privileged
     privileged=$(echo "$snapshot" | jq -r '.HostConfig.Privileged')
     if [[ "$privileged" == "true" ]]; then
-        fail "Container running in PRIVILEGED mode — full host access"
+        fail WARNING "Container running in PRIVILEGED mode — full host access"
         integrity_audit_log "container_config_violation" "property=privileged, expected=false, actual=true"
         violations=$((violations + 1))
     fi
@@ -543,7 +589,7 @@ check_container_config() {
     local cap_drop
     cap_drop=$(echo "$snapshot" | jq -r '.HostConfig.CapDrop | join(",")' 2>/dev/null)
     if ! echo "$cap_drop" | grep -qi "ALL"; then
-        fail "Container does not drop ALL capabilities: ${cap_drop:-none}"
+        fail WARNING "Container does not drop ALL capabilities: ${cap_drop:-none}"
         integrity_audit_log "container_config_violation" "property=cap_drop, expected=ALL, actual=${cap_drop:-none}"
         violations=$((violations + 1))
     fi
@@ -552,7 +598,7 @@ check_container_config() {
     local net_mode
     net_mode=$(echo "$snapshot" | jq -r '.HostConfig.NetworkMode')
     if [[ "$net_mode" == "host" ]]; then
-        fail "Container using HOST network — bypasses network isolation"
+        fail WARNING "Container using HOST network — bypasses network isolation"
         integrity_audit_log "container_config_violation" "property=network_mode, expected=!host, actual=host"
         violations=$((violations + 1))
     fi
@@ -561,7 +607,7 @@ check_container_config() {
     local has_socket
     has_socket=$(echo "$snapshot" | jq '[.Mounts[]? | select(.Source != null) | select(.Source | test("docker.sock"))] | length')
     if [[ "$has_socket" -gt 0 ]]; then
-        fail "Docker socket mounted in container — grants full host control"
+        fail WARNING "Docker socket mounted in container — grants full host control"
         integrity_audit_log "container_config_violation" "property=docker_socket, expected=not_mounted, actual=mounted"
         violations=$((violations + 1))
     fi
@@ -576,7 +622,7 @@ check_container_config() {
          select(.HostIp == null or (.HostIp != "127.0.0.1" and .HostIp != "::1")) |
          (.HostIp // "0.0.0.0") + ":" + .HostPort] | join(", ")')
     if [[ -n "$bad_ports" ]]; then
-        fail "Container ports exposed on non-localhost interfaces: ${bad_ports}"
+        fail WARNING "Container ports exposed on non-localhost interfaces: ${bad_ports}"
         integrity_audit_log "container_config_violation" "property=port_binding, expected=127.0.0.1, actual=${bad_ports}"
         violations=$((violations + 1))
     fi
@@ -585,7 +631,7 @@ check_container_config() {
     local readonly_fs
     readonly_fs=$(echo "$snapshot" | jq -r '.HostConfig.ReadonlyRootfs')
     if [[ "$readonly_fs" != "true" ]]; then
-        fail "Container root filesystem is NOT read-only"
+        fail WARNING "Container root filesystem is NOT read-only"
         integrity_audit_log "container_config_violation" "property=readonly_rootfs, expected=true, actual=${readonly_fs}"
         violations=$((violations + 1))
     fi
@@ -594,14 +640,14 @@ check_container_config() {
     local sec_opts
     sec_opts=$(echo "$snapshot" | jq -r '.HostConfig.SecurityOpt // [] | join(",")' 2>/dev/null)
     if ! echo "$sec_opts" | grep -q "no-new-privileges"; then
-        fail "Container does not enforce no-new-privileges"
+        fail WARNING "Container does not enforce no-new-privileges"
         integrity_audit_log "container_config_violation" "property=no_new_privileges, expected=set, actual=missing"
         violations=$((violations + 1))
     fi
 
     # 8. Seccomp not unconfined (FR-P3-011b)
     if echo "$sec_opts" | grep -q "seccomp=unconfined"; then
-        fail "Container seccomp profile is UNCONFINED — syscall filtering disabled"
+        fail WARNING "Container seccomp profile is UNCONFINED — syscall filtering disabled"
         integrity_audit_log "container_config_violation" "property=seccomp, expected=!unconfined, actual=unconfined"
         violations=$((violations + 1))
     fi
@@ -610,7 +656,7 @@ check_container_config() {
     local user
     user=$(echo "$snapshot" | jq -r '.Config.User // empty')
     if [[ -z "$user" || "$user" == "0" || "$user" == "root" ]]; then
-        fail "Container running as root user"
+        fail WARNING "Container running as root user"
         integrity_audit_log "container_config_violation" "property=user, expected=non-root, actual=${user:-unset}"
         violations=$((violations + 1))
     fi
@@ -623,7 +669,7 @@ check_container_config() {
     expected_nodes_exclude=$(echo "$config" | jq -r '.expected_runtime_config.required_env.NODES_EXCLUDE // empty')
     if [[ -n "$expected_nodes_exclude" ]]; then
         if [[ -z "$actual_nodes_exclude" ]]; then
-            fail "NODES_EXCLUDE environment variable not set in container"
+            fail WARNING "NODES_EXCLUDE environment variable not set in container"
             integrity_audit_log "container_config_violation" "property=NODES_EXCLUDE, expected=set, actual=unset"
             violations=$((violations + 1))
         else
@@ -631,7 +677,7 @@ check_container_config() {
             actual_sorted=$(echo "$actual_nodes_exclude" | jq -cS '.' 2>/dev/null) || actual_sorted="PARSE_FAILED"
             expected_sorted=$(echo "$expected_nodes_exclude" | jq -cS '.' 2>/dev/null) || expected_sorted="PARSE_EXPECTED"
             if [[ "$actual_sorted" != "$expected_sorted" ]]; then
-                fail "NODES_EXCLUDE does not match expected exclusion list"
+                fail WARNING "NODES_EXCLUDE does not match expected exclusion list"
                 integrity_audit_log "container_config_violation" "property=NODES_EXCLUDE, expected=${expected_sorted:0:40}, actual=${actual_sorted:0:40}"
                 violations=$((violations + 1))
             fi
@@ -682,22 +728,35 @@ check_container_credentials() {
             exec_output="No n8n API key in Keychain"
             rc=1
         else
-            exec_output=$(curl -s --config - \
-                "http://localhost:5678/api/v1/credentials" --max-time 10 \
-                <<< "header = \"X-N8N-API-KEY: ${api_key}\"")
+            # T024: Fix credential exposure — use temp file instead of here-string (FR-026)
+            # T028: Credential trap protection (FR-015, FR-025)
+            local _prev_exit_trap
+            _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
+            local _cred_tmpfile
+            _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
+            trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
+            exec_output=$(curl -s --config "$_cred_tmpfile" \
+                "http://localhost:5678/api/v1/credentials" --max-time 10)
             rc=$?
+            rm -f "$_cred_tmpfile"
+            # Restore original EXIT trap
+            if [[ -n "$_prev_exit_trap" ]]; then
+                eval "$_prev_exit_trap"
+            else
+                trap - EXIT
+            fi
         fi
-        if [[ $rc -eq 0 ]] && echo "$exec_output" | jq '.data' &>/dev/null; then
+        if [[ $rc -eq 0 ]]; then
             local parsed
-            parsed=$(echo "$exec_output" | jq -c '[.data[].name // empty] | sort')
+            parsed=$(_integrity_validate_json '[.data[].name // empty] | sort' "$exec_output" "credential_enum" 2>/dev/null)
             if [[ -n "$parsed" ]]; then
                 actual_creds="$parsed"
                 break
             fi
         fi
         # Verify container is still running (curl errors don't contain "no such container")
-        if ! docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null | grep -q .; then
-            fail "CRITICAL: Container disappeared during credential enumeration"
+        if ! integrity_run_with_timeout 5 docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null | grep -q .; then
+            fail CRITICAL "Container disappeared during credential enumeration"
             integrity_audit_log "container_disappeared" "during credential enum" || true
             return
         fi
@@ -721,7 +780,7 @@ check_container_credentials() {
         integrity_audit_log "container_enum_failure" "consecutive_failures=${failures}" || true
 
         if [[ $failures -ge 3 ]]; then
-            fail "Credential enumeration failed ${failures} consecutive times — escalating to hard failure"
+            fail WARNING "Credential enumeration failed ${failures} consecutive times — escalating to hard failure"
         else
             warn "Credential enumeration failed (attempt ${failures}/3 before escalation)"
         fi
@@ -746,7 +805,7 @@ check_container_credentials() {
     if [[ "$unexpected_count" -gt 0 ]]; then
         local names
         names=$(echo "$unexpected" | jq -r 'join(", ")')
-        fail "Potential compromise indicator — unexpected credentials: ${names}"
+        fail WARNING "Potential compromise indicator — unexpected credentials: ${names}"
         integrity_audit_log "container_credential_unexpected" "credentials=${names}"
     fi
 
@@ -787,22 +846,41 @@ check_container_workflows() {
     # Export all workflows from container (FR-P3-017)
     # n8n may output non-JSON lines (e.g. "Browser setup: skipped") before the JSON array
     local raw_export
-    raw_export=$(docker exec "$_CONTAINER_PINNED_CID" n8n export:workflow --all 2>/dev/null)
+    # T043: Write to temp file, then truncate (FR-039) — avoids PIPESTATUS race
+    local _export_tmpfile="${HOME}/.openclaw/tmp/wf-export-$$.json"
+    mkdir -p "${HOME}/.openclaw/tmp"
+    integrity_run_with_timeout 30 docker exec "$_CONTAINER_PINNED_CID" n8n export:workflow --all > "$_export_tmpfile" 2>/dev/null
     local docker_rc=$?
+
+    # Truncate and detect
+    local _export_size
+    _export_size=$(wc -c < "$_export_tmpfile" 2>/dev/null || echo 0)
+    if [[ "$_export_size" -gt 1048576 ]]; then
+        log_warn "output_truncated: workflow export exceeded 1MB (${_export_size} bytes)"
+        head -c 1048576 "$_export_tmpfile" > "${_export_tmpfile}.trunc" && mv "${_export_tmpfile}.trunc" "$_export_tmpfile"
+    fi
+
+    raw_export=$(cat "$_export_tmpfile" 2>/dev/null)
+    rm -f "$_export_tmpfile"
+
     # Strip non-JSON preamble and validate
     local all_wf_json=""
     if [[ $docker_rc -eq 0 ]] && [[ -n "$raw_export" ]]; then
-        all_wf_json=$(echo "$raw_export" | sed -n '/^\[/,$p')
-        # Validate the result is parseable JSON
+        # T023: Use grep-based JSON extraction with validation
+        local json_start_line
+        json_start_line=$(echo "$raw_export" | grep -m1 -n '^\[' | cut -d: -f1)
+        if [[ -n "$json_start_line" ]]; then
+            all_wf_json=$(echo "$raw_export" | tail -n +"$json_start_line")
+        fi
         if [[ -n "$all_wf_json" ]] && ! echo "$all_wf_json" | jq empty 2>/dev/null; then
             all_wf_json=""  # Corrupted — treat as export failure
         fi
     fi
     if [[ -z "$all_wf_json" ]]; then
-        if docker exec "$_CONTAINER_PINNED_CID" true 2>/dev/null; then
+        if integrity_run_with_timeout 5 docker exec "$_CONTAINER_PINNED_CID" true 2>/dev/null; then
             warn "Failed to export workflows from container (n8n may not be ready)"
         else
-            fail "CRITICAL: Container disappeared during workflow export"
+            fail CRITICAL "Container disappeared during workflow export"
             integrity_audit_log "container_disappeared" "during workflow export"
         fi
         return
@@ -844,7 +922,7 @@ check_container_workflows() {
         local n8n_normalized
         n8n_normalized=$(echo "$n8n_raw" | _normalize_workflow)
         if [[ -z "$n8n_normalized" ]]; then
-            fail "Workflow normalization failed: ${wf_name} (possible tampering)"
+            fail WARNING "Workflow normalization failed: ${wf_name} (possible tampering)"
             mismatched=$((mismatched + 1))
             continue
         fi
@@ -852,7 +930,7 @@ check_container_workflows() {
         local repo_normalized
         repo_normalized=$(cat "$repo_wf" | _normalize_workflow)
         if [[ -z "$repo_normalized" ]]; then
-            fail "Cannot parse repo workflow as JSON: ${repo_wf}"
+            fail WARNING "Cannot parse repo workflow as JSON: ${repo_wf}"
             mismatched=$((mismatched + 1))
             continue
         fi
@@ -889,7 +967,7 @@ check_container_workflows() {
             fi
         done
         if ! $found; then
-            fail "Unexpected workflow in container: ${cwf} (no repo counterpart)"
+            fail WARNING "Unexpected workflow in container: ${cwf} (no repo counterpart)"
             integrity_audit_log "container_workflow_mismatch" "type=unexpected, workflow=${cwf}"
         fi
     done <<< "$container_wf_names"
@@ -899,7 +977,7 @@ check_container_workflows() {
         warn "All ${mismatched} workflow mismatches are meta-only"
         log_warn "  Run 'make workflow-export && git add workflows/ && git commit' to sync .meta fields"
     elif [[ $mismatched -gt 0 ]]; then
-        fail "${mismatched}/${compared} workflows differ from repository versions"
+        fail WARNING "${mismatched}/${compared} workflows differ from repository versions"
     fi
 
     if [[ $compared -gt 0 && $mismatched -eq 0 ]]; then
@@ -917,7 +995,8 @@ check_container_drift() {
     fi
 
     local diff_output
-    diff_output=$(docker diff "$_CONTAINER_PINNED_CID" 2>/dev/null)
+    # T025: Wrap docker diff with timeout (FR-010a)
+    diff_output=$(integrity_run_with_timeout 30 docker diff "$_CONTAINER_PINNED_CID" 2>/dev/null)
     local rc=$?
     if [[ $rc -ne 0 ]]; then
         warn "Failed to get container diff (container may not be running)"
@@ -972,7 +1051,7 @@ check_container_drift() {
     readonly_fs=$(echo "$_CONTAINER_SNAPSHOT" | jq -r '.HostConfig.ReadonlyRootfs')
 
     if [[ "$readonly_fs" == "true" ]]; then
-        fail "CRITICAL: Container filesystem drift on read-only rootfs — ${unexpected_count} unexpected changes"
+        fail CRITICAL "Container filesystem drift on read-only rootfs — ${unexpected_count} unexpected changes"
     else
         warn "Container filesystem drift detected — ${unexpected_count} unexpected changes (rootfs writable)"
     fi
@@ -1005,13 +1084,14 @@ check_container_community_nodes() {
     # Cat all package.json files with delimiter, parse on host (container has no jq)
     local actual_nodes='[]'
     local pkg_output
-    pkg_output=$(docker exec "$_CONTAINER_PINNED_CID" sh -c '
+    # T022: Output bounding (FR-010)
+    pkg_output=$(integrity_run_with_timeout 30 docker exec "$_CONTAINER_PINNED_CID" sh -c '
         for f in /home/node/.n8n/nodes/node_modules/n8n-nodes-*/package.json; do
             [ -f "$f" ] && cat "$f" && printf "\n---PKG_DELIMITER---\n"
         done' 2>/dev/null)
 
-    if ! docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null | grep -q .; then
-        fail "CRITICAL: Container disappeared during node enumeration"
+    if ! integrity_run_with_timeout 5 docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null | grep -q .; then
+        fail CRITICAL "Container disappeared during node enumeration"
         integrity_audit_log "container_disappeared" "during community node enum" || true
         return
     fi
@@ -1051,7 +1131,7 @@ check_container_community_nodes() {
     if [[ "$unexpected_count" -gt 0 ]]; then
         local names
         names=$(echo "$unexpected" | jq -r 'join(", ")')
-        fail "Potential supply chain compromise — unexpected packages: ${names}"
+        fail WARNING "Potential supply chain compromise — unexpected packages: ${names}"
         integrity_audit_log "container_community_node_unexpected" "packages=${names}"
     fi
 
@@ -1088,6 +1168,22 @@ check_container_community_nodes() {
     fi
 }
 
+
+# --- Phase 4 T043: Permission and Docker socket verification ---
+check_permissions() {
+    log_step "Checking file permissions and Docker socket"
+
+    if _integrity_check_permissions "$REPO_ROOT"; then
+        log_info "File permissions verified"
+    else
+        warn "File permission violations detected — see errors above"
+    fi
+
+    if ! _integrity_check_docker_socket 2>/dev/null; then
+        warn "Docker socket permissions non-standard"
+    fi
+}
+
 # --- TP3-015: Container Verification Orchestration Wrapper (FR-P3-036/037/038) ---
 _run_container_checks() {
     log_step "Container & Orchestration Integrity Checks"
@@ -1106,28 +1202,54 @@ _run_container_checks() {
     fi
 
     # Step 3: Runtime configuration — BLOCKING (FR-P3-038)
+    # T019: Cascade abort gate before config check
+    [[ "$_CASCADE_ABORT" == "true" ]] && { log_warn "SKIPPED: upstream CRITICAL failure"; return; }
     if ! check_container_config; then
         log_warn "Config check failed — skipping application-level checks"
         return
     fi
 
-    # Step 4: Application-level checks with type guard (incremental implementation)
-    type -t check_container_credentials &>/dev/null && check_container_credentials
-    type -t check_container_workflows &>/dev/null && check_container_workflows
-    type -t check_container_drift &>/dev/null && check_container_drift
-    type -t check_container_community_nodes &>/dev/null && check_container_community_nodes
-
-    # Step 5: Re-verify container ID (FR-P3-037)
-    local current_cid
-    current_cid=$(docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null)
-    if [[ -z "$current_cid" ]]; then
-        fail "CRITICAL: Container ID changed during verification — results invalidated"
-        integrity_audit_log "container_id_changed" "pinned=${_CONTAINER_PINNED_CID:0:12}, status=disappeared" || true
-        return
+    # Step 4: Application-level checks with cascade abort gate (T019)
+    if [[ "$_CASCADE_ABORT" != "true" ]]; then
+        _verify_container_alive || return
+        type -t check_container_credentials &>/dev/null && check_container_credentials
+    fi
+    if [[ "$_CASCADE_ABORT" != "true" ]]; then
+        _verify_container_alive || return
+        type -t check_container_workflows &>/dev/null && check_container_workflows
+    fi
+    # T039: Liveness gate before drift check (FR-002)
+    if [[ "$_CASCADE_ABORT" != "true" ]]; then
+        _verify_container_alive || return
+        type -t check_container_drift &>/dev/null && check_container_drift
+    fi
+    # T040: Liveness gate before community nodes check (FR-002)
+    if [[ "$_CASCADE_ABORT" != "true" ]]; then
+        _verify_container_alive || return
+        type -t check_container_community_nodes &>/dev/null && check_container_community_nodes
     fi
 
-    # Log verification result (only if container ID is stable)
-    integrity_audit_log "container_verify_pass" "all container checks completed, cid=${_CONTAINER_PINNED_CID:0:12}" || true
+    # Step 5: Final re-verification — container ID AND image digest (FR-004, T020)
+    if [[ "$_CASCADE_ABORT" != "true" && -n "$_CONTAINER_PINNED_CID" ]]; then
+        local current_cid
+        current_cid=$(integrity_run_with_timeout 5 docker ps -q --filter "id=${_CONTAINER_PINNED_CID}" 2>/dev/null)
+        if [[ -z "$current_cid" ]]; then
+            fail CRITICAL "Container disappeared during verification — results invalidated"
+            integrity_audit_log "container_id_changed" "pinned=${_CONTAINER_PINNED_CID:0:12}, status=disappeared" || true
+            return
+        fi
+        # Compare image digest against start-of-pipeline value
+        if [[ -n "$_INITIAL_IMAGE_DIGEST" ]]; then
+            local current_digest
+            current_digest=$(integrity_run_with_timeout 5 docker inspect "$_CONTAINER_PINNED_CID" --format '{{.Image}}' 2>/dev/null)
+            if [[ "$current_digest" != "$_INITIAL_IMAGE_DIGEST" ]]; then
+                fail CRITICAL "container_replaced_during_verification: image digest changed"
+                integrity_audit_log "container_replaced" "initial_digest=${_INITIAL_IMAGE_DIGEST:0:20}, final_digest=${current_digest:0:20}" || true
+                return
+            fi
+        fi
+        integrity_audit_log "container_verify_pass" "all container checks completed, cid=${_CONTAINER_PINNED_CID:0:12}" || true
+    fi
 }
 
 main() {
@@ -1163,11 +1285,20 @@ main() {
     check_heartbeat
     check_sandbox_config
 
+    # Phase 4 T043: Permission verification (advisory)
+    check_permissions
+
     # 012 Phase 3: Container & Orchestration Integrity (replaces check_n8n_workflows)
     _run_container_checks
 
     # Summary
     echo ""
+
+    # T021: Trust assumptions in verification output (FR-033)
+    if [[ -n "$_CONTAINER_PINNED_CID" ]]; then
+        log_info "Trust assumptions: Docker daemon integrity assumed, Colima VM integrity assumed, Keychain integrity assumed"
+    fi
+
     if [[ $ERRORS -gt 0 ]]; then
         log_error "Verification FAILED: ${ERRORS} error(s), ${WARNINGS} warning(s)"
         log_error "Agent launch blocked. Fix errors above and retry."

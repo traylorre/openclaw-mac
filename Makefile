@@ -29,7 +29,8 @@ OPENCLAW_DIR := $(HOME)/.openclaw
 	monitor-setup monitor-teardown monitor-status \
 	skillallow-add skillallow-remove \
 	container-security-config-update \
-	security-tools-setup container-bench n8n-audit scan-image security \
+	security-tools-setup security-update-hashes container-bench n8n-audit scan-image security \
+	integrity-rotate-key \
 	setup-gateway teardown-gateway shellrc shellrc-undo
 
 help: ## Show available targets
@@ -281,7 +282,7 @@ hooks-setup: ## M3: Configure OpenClaw inbound hooks in openclaw.json
 		echo "Hooks already configured"; \
 	else \
 		TOKEN=$$(openssl rand -hex 32); \
-		TMP=$$(mktemp); chmod 600 "$$TMP"; \
+		TMP=$$(mktemp "$(HOME)/.openclaw/tmp/atomic-XXXXXX"); \
 		jq --arg token "$$TOKEN" '. + {"hooks": {"enabled": true, "token": $$token, "path": "/hooks"}}' \
 			$(OPENCLAW_DIR)/openclaw.json > "$$TMP" && mv "$$TMP" $(OPENCLAW_DIR)/openclaw.json; \
 		[ -f "$(OPENCLAW_DIR)/.env" ] || (touch $(OPENCLAW_DIR)/.env && chmod 600 $(OPENCLAW_DIR)/.env); \
@@ -293,7 +294,7 @@ hooks-setup: ## M3: Configure OpenClaw inbound hooks in openclaw.json
 hooks-teardown: ## M3: Remove hook config from openclaw.json and .env
 	@echo "Removing hook configuration..."
 	@if [ -f "$(OPENCLAW_DIR)/openclaw.json" ]; then \
-		TMP=$$(mktemp); \
+		TMP=$$(mktemp "$(HOME)/.openclaw/tmp/atomic-XXXXXX"); \
 		jq 'del(.hooks)' $(OPENCLAW_DIR)/openclaw.json > "$$TMP" && mv "$$TMP" $(OPENCLAW_DIR)/openclaw.json; \
 		echo "  Removed .hooks from openclaw.json"; \
 	fi
@@ -437,6 +438,33 @@ security-tools-setup: ## M4: Install security scanning tools (Grype, docker-benc
 	@echo "Security tools installed. No teardown — shared tools."
 	@echo "Manual removal: brew uninstall grype && rm -rf ~/.openclaw/tools/docker-bench-security"
 
+security-update-hashes: ## M4: Update pinned hashes for security tools (docker-bench commit, grype binary)
+	@echo "Updating security tool hashes..."
+	@bash -c 'source $(SCRIPTS)/lib/common.sh && source $(SCRIPTS)/lib/integrity.sh && \
+		config=$$(integrity_read_container_config) && \
+		bench_hash="" && grype_hash="" && \
+		if [ -d "$(HOME)/.openclaw/tools/docker-bench-security/.git" ]; then \
+			bench_hash=$$(cd "$(HOME)/.openclaw/tools/docker-bench-security" && git rev-parse HEAD); \
+			echo "  docker-bench commit: $${bench_hash:0:12}..."; \
+		else \
+			echo "  docker-bench not installed — skipping"; \
+		fi && \
+		if command -v grype >/dev/null 2>&1; then \
+			grype_hash=$$(shasum -a 256 "$$(which grype)" | awk "{print \$$1}"); \
+			echo "  grype binary hash: $${grype_hash:0:12}..."; \
+		else \
+			echo "  grype not installed — skipping"; \
+		fi && \
+		if [ -n "$$bench_hash" ]; then \
+			config=$$(echo "$$config" | jq --arg h "$$bench_hash" ".pinned_bench_commit = \$$h"); \
+		fi && \
+		if [ -n "$$grype_hash" ]; then \
+			config=$$(echo "$$config" | jq --arg h "$$grype_hash" ".pinned_grype_hash = \$$h"); \
+		fi && \
+		integrity_write_container_config "$$config" && \
+		integrity_audit_log "security_hashes_updated" "bench=$${bench_hash:0:12},grype=$${grype_hash:0:12}" && \
+		echo "Security tool hashes updated and signed."'
+
 container-bench: ## M4: Run CIS Docker Benchmark against n8n container
 	bash $(SCRIPTS)/container-bench.sh
 
@@ -456,6 +484,9 @@ skillallow-add: ## M4: Add a skill to the allowlist (NAME=<skill-name>)
 skillallow-remove: ## M4: Remove a skill from the allowlist (NAME=<skill-name>)
 	@if [ -z "$(NAME)" ]; then echo "Usage: make skillallow-remove NAME=<skill-name>"; exit 1; fi
 	bash $(SCRIPTS)/skill-allowlist.sh remove "$(NAME)"
+
+integrity-rotate-key: ## M4: Rotate HMAC signing key and re-sign all state files
+	bash $(SCRIPTS)/integrity-rotate-key.sh
 
 # ===========================================================================
 # Backwards compatibility aliases (M1/M2 used verb-noun naming)

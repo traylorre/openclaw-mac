@@ -16,13 +16,22 @@ source "${SCRIPT_DIR}/lib/integrity.sh"
 
 readonly LAYER_TIMEOUT=600  # 10 minutes per layer (FR-3B-020) — Grype needs time for large images
 
-# Layer definitions: name → script
-declare -A LAYERS
-LAYERS=(
-    ["1_Integrity_Verify"]="${SCRIPT_DIR}/integrity-verify.sh --dry-run"
+# T041: Layer definitions: ordered arrays for safe dispatch (FR-036)
+# Separate arrays avoid bash -c and shell interpretation of commands
+declare -a LAYER_KEYS=("1_Integrity_Verify" "2_CIS_Benchmark" "3_n8n_Audit" "4_Image_Scan")
+declare -A LAYER_SCRIPTS
+declare -A LAYER_ARGS
+LAYER_SCRIPTS=(
+    ["1_Integrity_Verify"]="${SCRIPT_DIR}/integrity-verify.sh"
     ["2_CIS_Benchmark"]="${SCRIPT_DIR}/container-bench.sh"
     ["3_n8n_Audit"]="${SCRIPT_DIR}/n8n-audit.sh"
     ["4_Image_Scan"]="${SCRIPT_DIR}/scan-image.sh"
+)
+LAYER_ARGS=(
+    ["1_Integrity_Verify"]="--dry-run"
+    ["2_CIS_Benchmark"]=""
+    ["3_n8n_Audit"]=""
+    ["4_Image_Scan"]=""
 )
 
 # Human-readable names
@@ -59,18 +68,26 @@ main() {
     declare -A RESULTS
     declare -A REASONS
 
+    # T027: Ensure tmp dir exists for layer logs
+    mkdir -p "${HOME}/.openclaw/tmp"
+
     # FR-3B-017: Run all layers, don't stop on first failure
-    for key in $(echo "${!LAYERS[@]}" | tr ' ' '\n' | sort); do
+    for key in "${LAYER_KEYS[@]}"; do
         local name="${LAYER_NAMES[$key]}"
-        local cmd="${LAYERS[$key]}"
         total_count=$((total_count + 1))
 
         log_info "Running: ${name}..."
 
-        # FR-3B-020: Run with timeout
+        # T041: Safe dispatch — no bash -c, no shell interpretation (FR-036)
         local layer_rc=0
-        # shellcheck disable=SC2086
-        integrity_run_with_timeout "$LAYER_TIMEOUT" bash $cmd >/dev/null 2>&1 || layer_rc=$?
+        local layer_log="${HOME}/.openclaw/tmp/layer-${key}.log"
+        local script="${LAYER_SCRIPTS[$key]}"
+        local args="${LAYER_ARGS[$key]}"
+        if [[ -n "$args" ]]; then
+            integrity_run_with_timeout "$LAYER_TIMEOUT" bash "$script" $args > "$layer_log" 2>&1 || layer_rc=$?
+        else
+            integrity_run_with_timeout "$LAYER_TIMEOUT" bash "$script" > "$layer_log" 2>&1 || layer_rc=$?
+        fi
 
         local result
         result=$(result_label "$layer_rc")
@@ -92,7 +109,7 @@ main() {
     echo ""
     printf "  %-28s %s\n" "Layer" "Result"
     printf "  %-28s %s\n" "────────────────────────────" "──────────"
-    for key in $(echo "${!LAYERS[@]}" | tr ' ' '\n' | sort); do
+    for key in "${LAYER_KEYS[@]}"; do
         local name="${LAYER_NAMES[$key]}"
         local result="${RESULTS[$key]}"
         local reason=""

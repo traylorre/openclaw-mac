@@ -20,15 +20,17 @@ readonly OPENCLAW_DIR="${HOME}/.openclaw"
 
 usage() {
     cat <<'USAGE'
-Usage: scripts/integrity-deploy.sh [--skip-git-check] [--debug]
+Usage: scripts/integrity-deploy.sh [--skip-git-check] [--force] [--verify-baseline] [--debug]
 
 Deploy workspace files from the repository to agent directories,
 compute checksums, sign the integrity manifest, and optionally
 set immutable flags.
 
 Options:
-  --skip-git-check  Skip git clean tree verification (for development)
-  --debug           Verbose output
+  --skip-git-check    Skip git clean tree verification (for development)
+  --force             Skip first-run interactive confirmation
+  --verify-baseline   Print current baseline summary and exit
+  --debug             Verbose output
 USAGE
 }
 
@@ -84,26 +86,78 @@ create_manifest() {
     file_count=$(echo "$manifest" | jq '.files | length')
 
     mkdir -p "$(dirname "$INTEGRITY_MANIFEST")"
-    echo "$manifest" > "$INTEGRITY_MANIFEST"
+    # T046: Use safe atomic write for manifest (FR-005)
+    _integrity_safe_atomic_write "$INTEGRITY_MANIFEST" "$(echo "$manifest" | jq '.')"
     chmod 600 "$INTEGRITY_MANIFEST"
 
     log_info "Manifest created: ${file_count} files checksummed"
     log_info "Saved to ${INTEGRITY_MANIFEST}"
 }
 
+# --- Phase 4 T042: Manifest coverage check ---
+_check_manifest_coverage() {
+    if [[ ! -f "$INTEGRITY_MANIFEST" ]]; then
+        return
+    fi
+
+    local manifest_paths
+    manifest_paths=$(jq -r '.files[].path' "$INTEGRITY_MANIFEST" 2>/dev/null)
+    local missing=0
+
+    while IFS= read -r protected_file; do
+        [[ -z "$protected_file" ]] && continue
+        [[ ! -f "$protected_file" ]] && continue
+        if ! echo "$manifest_paths" | grep -qF "$protected_file"; then
+            log_warn "Protected file not in manifest: ${protected_file}"
+            missing=$((missing + 1))
+        fi
+    done < <(integrity_list_protected_files "$REPO_ROOT")
+
+    if [[ $missing -gt 0 ]]; then
+        log_warn "${missing} protected file(s) not in manifest — re-run deploy"
+    fi
+}
+
 main() {
     local skip_git=false
+    local _force=false
+    local _verify_baseline=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --skip-git-check) skip_git=true; shift ;;
+            --force) _force=true; shift ;;
+            --verify-baseline) _verify_baseline=true; shift ;;
             --debug) DEBUG=true; export DEBUG; shift ;;
             --help|-h) usage; exit 0 ;;
             *) log_error "Unknown: $1"; usage; exit 1 ;;
         esac
     done
 
+    # T042: --verify-baseline prints current baseline summary and exits (FR-037, FR-038)
+    if [[ "${_verify_baseline}" == "true" ]]; then
+        if [[ ! -f "$INTEGRITY_MANIFEST" ]]; then
+            log_error "No manifest to verify. Run 'make integrity-deploy' first."
+            exit 1
+        fi
+        log_step "Current Baseline Summary"
+        local _fc _id _nv
+        _fc=$(jq '.files | length' "$INTEGRITY_MANIFEST" 2>/dev/null || echo "?")
+        _id=$(jq -r '.container_image_digest // "none"' "$INTEGRITY_MANIFEST" 2>/dev/null)
+        _nv=$(jq -r '.container_n8n_version // "none"' "$INTEGRITY_MANIFEST" 2>/dev/null)
+        echo "  Protected files: ${_fc}"
+        echo "  Image digest: ${_id:0:20}..."
+        echo "  n8n version: ${_nv}"
+        exit 0
+    fi
+
     log_step "Integrity Deploy"
+
+    # T042: First-run baseline confirmation (FR-037, FR-038)
+    local _is_first_run=false
+    if [[ ! -f "$INTEGRITY_MANIFEST" ]]; then
+        _is_first_run=true
+    fi
 
     # FR-006: Git clean verification
     if ! $skip_git; then
@@ -127,6 +181,31 @@ main() {
 
     # Create signed manifest
     create_manifest
+
+    # T042: First-run baseline confirmation prompt (FR-037, FR-038)
+    if $_is_first_run && [[ "${_force}" != "true" ]]; then
+        local _file_count
+        _file_count=$(jq '.files | length' "$INTEGRITY_MANIFEST" 2>/dev/null)
+        echo ""
+        log_step "First-Run Baseline Summary"
+        echo "  Protected files: ${_file_count}"
+        echo ""
+        if [[ -t 0 ]]; then
+            read -r -p "Confirm baseline? [y/N] " _confirm
+            if [[ "$_confirm" != "y" && "$_confirm" != "Y" ]]; then
+                log_error "Baseline not confirmed — manifest removed"
+                rm -f "$INTEGRITY_MANIFEST"
+                exit 1
+            fi
+        else
+            log_error "First-run requires interactive confirmation. Use --force to bypass."
+            rm -f "$INTEGRITY_MANIFEST"
+            exit 1
+        fi
+    fi
+
+    # T042: Warn if protected files exist but are not in manifest
+    _check_manifest_coverage
 
     # Phase 3B: Ensure audit output directory exists
     mkdir -p "${HOME}/.openclaw/logs/audit"
@@ -169,7 +248,7 @@ capture_container_baseline() {
     local ready=false
     local attempt
     for attempt in 1 2 3; do
-        if docker exec "$cid" n8n --version &>/dev/null; then
+        if integrity_run_with_timeout 10 docker exec "$cid" n8n --version &>/dev/null; then
             ready=true
             break
         fi
@@ -232,7 +311,10 @@ capture_container_baseline() {
     sig=$(integrity_sign_manifest "$body")
     updated_manifest=$(echo "$updated_manifest" | jq --arg sig "$sig" '. + {signature: $sig}')
 
-    echo "$updated_manifest" | jq '.' > "$INTEGRITY_MANIFEST"
+    # T046: Use safe atomic write for manifest (FR-005)
+    local manifest_content
+    manifest_content=$(echo "$updated_manifest" | jq '.')
+    _integrity_safe_atomic_write "$INTEGRITY_MANIFEST" "$manifest_content"
     chmod 600 "$INTEGRITY_MANIFEST"
 
     log_info "Container baseline captured:"

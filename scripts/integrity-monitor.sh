@@ -269,7 +269,8 @@ _container_monitor_cycle() {
     expected_digest=$(jq -r '.container_image_digest // empty' "$INTEGRITY_MANIFEST" 2>/dev/null)
     if [[ -n "$expected_digest" ]]; then
         local snapshot actual_digest
-        snapshot=$(integrity_capture_container_snapshot "$cid")
+        # T050: Docker calls bounded by timeout (FR-010a, FR-035)
+        snapshot=$(integrity_run_with_timeout 30 integrity_capture_container_snapshot "$cid" 2>/dev/null)
         if [[ -n "$snapshot" ]]; then
             actual_digest=$(echo "$snapshot" | jq -r '.Image // empty')
             if [[ "$actual_digest" != "$expected_digest" ]]; then
@@ -299,12 +300,24 @@ _container_monitor_cycle() {
         api_key=$(security find-generic-password -a "openclaw" -s "n8n-api-key" -w 2>/dev/null)
         if [[ -n "$api_key" ]]; then
             local api_resp
-            api_resp=$(curl -s --config - \
-                "http://localhost:5678/api/v1/credentials" --max-time 10 \
-                <<< "header = \"X-N8N-API-KEY: ${api_key}\"")
-            if echo "$api_resp" | jq '.data' &>/dev/null; then
-                actual_creds=$(echo "$api_resp" | jq -c '[.data[].name // empty] | sort')
+            # T045: Fix credential exposure — use temp file (FR-026)
+            # T029: Credential trap protection (FR-015, FR-025)
+            local _prev_exit_trap
+            _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
+            local _cred_tmpfile
+            _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
+            trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
+            api_resp=$(curl -s --config "$_cred_tmpfile" \
+                "http://localhost:5678/api/v1/credentials" --max-time 10)
+            rm -f "$_cred_tmpfile"
+            # Restore original EXIT trap
+            if [[ -n "$_prev_exit_trap" ]]; then
+                eval "$_prev_exit_trap"
+            else
+                trap - EXIT
             fi
+            # T051: Use _integrity_validate_json for API response (FR-011, FR-035)
+            actual_creds=$(_integrity_validate_json '[.data[].name // empty] | sort' "$api_resp" "monitor_credential_enum" 2>/dev/null) || true
         fi
         if [[ -n "$actual_creds" ]]; then
             local sorted_expected
@@ -327,7 +340,8 @@ _container_monitor_cycle() {
 
     # 4. Filesystem drift detection (FR-P3-033)
     local diff_output
-    diff_output=$(docker diff "$cid" 2>/dev/null || true)
+    # T050: Wrap docker diff with timeout (FR-010a)
+    diff_output=$(integrity_run_with_timeout 30 docker diff "$cid" 2>/dev/null || true)
     if [[ -n "$diff_output" ]]; then
         local config
         config=$(integrity_read_container_config)
@@ -406,7 +420,8 @@ run_monitor() {
     (
         sleep 5
         while true; do
-            _container_monitor_cycle || true
+            # T052: Run cycle through timeout (FR-035)
+            integrity_run_with_timeout "$CONTAINER_POLL_TIMEOUT" _container_monitor_cycle || log_warn "container monitor cycle failed or timed out"
             sleep "$CONTAINER_POLL_INTERVAL"
         done
     ) &
@@ -414,7 +429,8 @@ run_monitor() {
 
     # Clean shutdown of all background loops
     # shellcheck disable=SC2064
-    trap "kill ${heartbeat_pid} ${container_poll_pid} 2>/dev/null; exit" INT TERM EXIT
+    # T049: Kill process groups, not individual PIDs (FR-035) + T045: credential cleanup
+    trap "rm -f '${HOME}/.openclaw/tmp/curl-'* 2>/dev/null; kill -TERM -${heartbeat_pid} -${container_poll_pid} 2>/dev/null; sleep 1; kill -KILL -${heartbeat_pid} -${container_poll_pid} 2>/dev/null; exit" INT TERM EXIT
 
     # Start fswatch — FSEvents backend, 1s latency
     fswatch --latency 1 --event-flags "${watch_files[@]}" | while IFS= read -r event_line; do

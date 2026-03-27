@@ -47,7 +47,8 @@ main() {
 
     # Run audit (FR-3B-006, FR-3B-007)
     local raw_output
-    raw_output=$(docker exec -u node "$cid" n8n audit 2>/dev/null) || true
+    # T033: Output bounding — 30s timeout, 1MB limit (FR-010)
+    raw_output=$(integrity_run_with_timeout 30 docker exec -u node "$cid" n8n audit 2>/dev/null | head -c 1048576) || true
 
     if [[ -z "$raw_output" ]]; then
         log_warn "n8n audit returned empty output"
@@ -62,12 +63,16 @@ main() {
         audit_json='{}'
         log_info "n8n audit: No security issues found"
     else
-        # Strip non-JSON preamble (e.g., "Browser setup: skipped")
-        audit_json=$(echo "$raw_output" | sed -n '/^[{[]/,$p')
+        # T032: Replace sed with grep+tail+jq validation (FR-022, FR-040)
+        local json_start_line
+        json_start_line=$(echo "$raw_output" | grep -m1 -n '^[{[]' | cut -d: -f1)
+        if [[ -n "$json_start_line" ]]; then
+            audit_json=$(echo "$raw_output" | tail -n +"$json_start_line")
+        fi
 
         # Validate JSON
         if [[ -z "$audit_json" ]] || ! echo "$audit_json" | jq empty 2>/dev/null; then
-            log_warn "n8n audit output is not valid JSON after preamble stripping"
+            log_error "no_valid_json_in_output: n8n audit"
             # Save raw output for debugging
             echo "$raw_output" > "${AUDIT_DIR}/n8n-audit-raw.txt"
             log_info "  Raw output saved to ${AUDIT_DIR}/n8n-audit-raw.txt"
@@ -85,17 +90,21 @@ main() {
     local total_findings=0
 
     if [[ "$audit_json" != "{}" ]]; then
-        # Count findings in credentials/instance categories (FAIL-worthy)
-        critical_findings=$(echo "$audit_json" | jq '
+        # T034: Replace || echo 0 with _integrity_validate_json() (FR-011)
+        critical_findings=$(_integrity_validate_json '
             [to_entries[] |
              select(.value.risk // "" | test("credentials|instance"; "i")) |
-             (.value.sections // [] | length)] | add // 0' 2>/dev/null || echo 0)
-
-        # Count findings in other categories (WARN-worthy)
-        warn_findings=$(echo "$audit_json" | jq '
+             (.value.sections // [] | length)] | add // 0' "$audit_json" "n8n_audit_critical" 2>/dev/null) || {
+            log_error "json_validation_failed: n8n audit critical findings parse"
+            exit 1
+        }
+        warn_findings=$(_integrity_validate_json '
             [to_entries[] |
              select(.value.risk // "" | test("credentials|instance"; "i") | not) |
-             (.value.sections // [] | length)] | add // 0' 2>/dev/null || echo 0)
+             (.value.sections // [] | length)] | add // 0' "$audit_json" "n8n_audit_warn" 2>/dev/null) || {
+            log_error "json_validation_failed: n8n audit warn findings parse"
+            exit 1
+        }
 
         total_findings=$((critical_findings + warn_findings))
     fi
@@ -107,7 +116,7 @@ main() {
         # Print per-category summary
         echo "$audit_json" | jq -r '
             to_entries[] |
-            "  \(.value.risk // "unknown"): \(.value.sections // [] | length) finding(s)"' 2>/dev/null || true
+            "  \(.value.risk // "unknown"): \(.value.sections // [] | length) finding(s)"' 2>/dev/null || log_warn "Failed to parse audit categories"
     fi
     log_info "  Report: ${AUDIT_DIR}/n8n-audit.json"
 

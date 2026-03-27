@@ -2,7 +2,7 @@
 
 **Feature Branch**: `012-security-hardening-phase2` (Phase 4 sub-spec)
 **Created**: 2026-03-26
-**Status**: Draft
+**Status**: Complete
 **Input**: 43 adversarial review findings from Phases 3/3B, comprehensive sensitive files inventory, and 2026 threat intelligence synthesis (OWASP Agentic Top 10, CSA Agentic Trust Framework, TEA/TSP gap analysis, OpenClaw/n8n CVE landscape, CaMeL architecture research).
 **Supersedes**: None (new remediation phase; parent phases 3/3B remain authoritative for their scope).
 **Adversarial Review**: 33 findings (2 CRITICAL, 9 HIGH, 12 MEDIUM, 8 LOW). All CRITICALs and HIGHs addressed in this revision.
@@ -242,7 +242,7 @@ The operator can trust that the audit log's hash chain remains valid under concu
 - **FR-031**: Audit log writes MUST call `sync` or equivalent after append to guarantee durability.
 
 **TMPDIR Hardening**:
-- **FR-032**: TMPDIR validation MUST use a strict regex: `^(/tmp|/private/tmp|/var/folders/[a-zA-Z0-9_]{2}/[a-zA-Z0-9_]+/T)(/.*)?$` — macOS uses mixed case in `/var/folders/` subdirectories. The regex MUST reject path traversal attempts (e.g., `/var/folders/../../../tmp/evil`).
+- **FR-032**: TMPDIR validation MUST use a strict regex: `^(/tmp|/private/tmp|/var/folders/[a-zA-Z0-9_+]{2}/[^/]+/T)(/.*)?$` — macOS uses mixed case and `+` characters in `/var/folders/` subdirectories. The regex MUST reject path traversal attempts (e.g., `/var/folders/../../../tmp/evil`).
 
 **Docker Daemon Trust Boundary**:
 - **FR-033**: Verification output MUST document the trust boundary: "Container verification assumes Docker daemon integrity. Results are UNKNOWN if daemon integrity cannot be verified." The verification result JSON MUST include a `trust_assumptions` field listing assumed-trustworthy components.
