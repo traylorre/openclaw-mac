@@ -1,6 +1,7 @@
 ---
 name: linkedin-engage
-description: Discover LinkedIn feed content and engage with community via comments and likes
+status: future
+description: "[FUTURE] Discover LinkedIn feed content and engage with community via comments and likes"
 requires:
   env:
     - N8N_WEBHOOK_SECRET

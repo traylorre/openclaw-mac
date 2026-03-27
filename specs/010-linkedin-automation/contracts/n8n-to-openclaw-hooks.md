@@ -50,27 +50,6 @@ The hook token is configured in OpenClaw's `openclaw.json`:
 
 ---
 
-## Hook: Browser Session Expiry Alert
-
-**Purpose**: Alert operator via chat that LinkedIn browser session is expired
-
-**Trigger**: Daily session health check or pre-discovery health check detects invalid session
-
-**Payload**:
-```json
-{
-  "type": "alert",
-  "alert_type": "browser_session_expired",
-  "message": "LinkedIn browser session has expired. Feed discovery is paused. Please re-login manually to restore the session.",
-  "severity": "warning",
-  "last_valid": "2026-03-18T14:30:00Z"
-}
-```
-
-**Expected behavior**: OpenClaw delivers the message to the operator. Feed discovery is paused until the operator completes a manual re-login and the storageState is updated.
-
----
-
 ## Hook: Workflow Failure Alert
 
 **Purpose**: Alert operator via chat when an n8n workflow fails
@@ -115,7 +94,32 @@ The hook token is configured in OpenClaw's `openclaw.json`:
 
 ---
 
-## Hook: Feed Discovery Results
+## Future
+
+The following hooks are deferred to a future milestone.
+
+### Hook: Browser Session Expiry Alert
+
+**Purpose**: Alert operator via chat that LinkedIn browser session is expired
+
+**Trigger**: Daily session health check or pre-discovery health check detects invalid session
+
+**Payload**:
+```json
+{
+  "type": "alert",
+  "alert_type": "browser_session_expired",
+  "message": "LinkedIn browser session has expired. Feed discovery is paused. Please re-login manually to restore the session.",
+  "severity": "warning",
+  "last_valid": "2026-03-18T14:30:00Z"
+}
+```
+
+**Expected behavior**: OpenClaw delivers the message to the operator. Feed discovery is paused until the operator completes a manual re-login and the storageState is updated.
+
+---
+
+### Hook: Feed Discovery Results
 
 **Purpose**: Deliver discovered feed posts to the operator for engagement decisions
 

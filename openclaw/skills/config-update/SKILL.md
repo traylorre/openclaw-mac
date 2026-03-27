@@ -1,6 +1,7 @@
 ---
 name: config-update
-description: Update operating configuration via HMAC-signed webhook to n8n
+status: future
+description: "[FUTURE] Update operating configuration via HMAC-signed webhook to n8n"
 requires:
   env:
     - N8N_WEBHOOK_SECRET

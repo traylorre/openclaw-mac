@@ -2429,8 +2429,8 @@ check_openclaw_extraction_agent() {
 
     if [[ ! -d "$extractor_dir" ]]; then
         report_result "$id" "OpenClaw Agent" \
-            "Extraction agent (feed-extractor) not deployed" "SKIP" "11.6" \
-            "Deploy extraction agent: copy openclaw-extractor/ to ~/.openclaw/agents/feed-extractor/agent/"
+            "Extraction agent (feed-extractor) not deployed — deferred to future scope" "SKIP" "11.6" \
+            "Re-enable when US2 (community engagement) is implemented"
         return
     fi
 
@@ -2561,19 +2561,15 @@ check_openclaw_sandbox_mode() {
         return
     fi
 
-    local persona_mode extractor_mode
+    local persona_mode
     persona_mode=$(jq -r '.agents.list[] | select(.id == "linkedin-persona") | .sandbox.mode // empty' "$config" 2>/dev/null)
-    extractor_mode=$(jq -r '.agents.list[] | select(.id == "feed-extractor") | .sandbox.mode // empty' "$config" 2>/dev/null)
 
-    if [[ "$persona_mode" == "all" && "$extractor_mode" == "all" ]]; then
+    if [[ "$persona_mode" == "all" ]]; then
         report_result "$id" "Workspace Integrity" \
-            "Sandbox mode enabled for both agents" "PASS" "12.3"
+            "Sandbox mode enabled for linkedin-persona" "PASS" "12.3"
     else
-        local missing=""
-        [[ "$persona_mode" != "all" ]] && missing="linkedin-persona "
-        [[ "$extractor_mode" != "all" ]] && missing="${missing}feed-extractor"
         report_result "$id" "Workspace Integrity" \
-            "Sandbox not configured: ${missing}" "FAIL" "12.3" \
+            "Sandbox not configured: linkedin-persona" "FAIL" "12.3" \
             "Run: make sandbox-setup"
     fi
 }
@@ -2588,20 +2584,15 @@ check_openclaw_sandbox_tools() {
         return
     fi
 
-    local persona_deny extractor_allow
+    local persona_deny
     persona_deny=$(jq -r '.agents.list[] | select(.id == "linkedin-persona") | .tools.deny | length // 0' "$config" 2>/dev/null)
-    extractor_allow=$(jq -r '.agents.list[] | select(.id == "feed-extractor") | .tools.allow | length // 0' "$config" 2>/dev/null)
 
-    local issues=""
-    [[ "$persona_deny" -eq 0 ]] 2>/dev/null && issues="linkedin-persona has no denied tools; "
-    [[ "$extractor_allow" != "0" ]] 2>/dev/null && issues="${issues}feed-extractor has allowed tools"
-
-    if [[ -z "$issues" ]]; then
+    if [[ "$persona_deny" -gt 0 ]] 2>/dev/null; then
         report_result "$id" "Workspace Integrity" \
-            "Tool restrictions configured (persona deny=${persona_deny}, extractor allow=0)" "PASS" "12.4"
+            "Tool restrictions configured (persona deny=${persona_deny})" "PASS" "12.4"
     else
         report_result "$id" "Workspace Integrity" \
-            "Tool restrictions misconfigured: ${issues}" "FAIL" "12.4" \
+            "linkedin-persona has no denied tools" "FAIL" "12.4" \
             "Run: make sandbox-setup"
     fi
 }

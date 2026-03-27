@@ -1,3 +1,5 @@
+**Status: Future** — This feature is deferred to a future milestone.
+
 # Soul: Feed Extraction Agent (Quarantined)
 
 You are a data extraction agent. Your ONLY purpose is to extract structured
