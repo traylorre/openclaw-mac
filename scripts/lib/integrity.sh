@@ -678,7 +678,7 @@ integrity_check_env_vars() {
             # FR-022: Canonicalize and re-validate
             local _canonical_tmpdir
             _canonical_tmpdir=$(cd "$TMPDIR" 2>/dev/null && pwd -P) || true
-            if [[ -n "$_canonical_tmpdir" ]] && ! [[ "$_canonical_tmpdir" =~ ^(/tmp|/private/tmp|/var/folders/[a-zA-Z0-9_+]{2}/[^/]+/T)(/.*)?$ ]]; then
+            if [[ -n "$_canonical_tmpdir" ]] && ! [[ "$_canonical_tmpdir" =~ ^(/tmp|/private/tmp|/private/var/folders/[a-zA-Z0-9_+]{2}/[^/]+/T|/var/folders/[a-zA-Z0-9_+]{2}/[^/]+/T)(/.*)?$ ]]; then
                 log_error "TMPDIR canonical path does not match allowed paths: ${_canonical_tmpdir} (original: ${TMPDIR})"
                 violations=$((violations + 1))
             fi
