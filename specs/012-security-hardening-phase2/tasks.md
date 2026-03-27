@@ -1,0 +1,203 @@
+# Tasks: Security Hardening Phase 2
+
+**Input**: Design documents from `/specs/012-security-hardening-phase2/`
+**Prerequisites**: plan.md, spec.md, research.md, data-model.md, quickstart.md
+
+**Tests**: Not explicitly requested. Verification tasks included as checkpoint tasks within each phase.
+
+**Organization**: Tasks grouped by user story. Each story is independently testable after Phase 2 (Foundational) completes. Phases 1A/1B must be sequential; subsequent phases can be implemented in any order (respecting noted dependencies).
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story (US1-US7)
+- Exact file paths included in all descriptions
+
+---
+
+## Phase 1A: Expanded Protection Surface — Deploy (US1, Spec Phase A)
+
+**Purpose**: Add all newly identified sensitive files to the protected file list and deploy updated manifest.
+
+- [x] T001 [US1] Expand `_integrity_protected_file_patterns()` in `scripts/lib/integrity.sh`: added models.json, workspace-state.json, settings.local.json, openclaw.json.bak*, restore-scripts/*, manifest-sequence.json, enforcement.json, hooks-allowlist.json, LaunchAgent plists. 71 files total (up from 49).
+- [x] T002 [US1] Add git hooks neutralization to `scripts/integrity-deploy.sh`: scans agent .git/hooks/ and repo root, chmod -x on unauthorized hooks, respects signed hooks-allowlist.json (FR-005)
+- [x] T003 [US1] Add restore script permission tightening to `scripts/integrity-deploy.sh`: tightens to 700, handles locked files gracefully (FR-006)
+- [x] T004 [US1] Add HMAC signing to `scripts/skill-allowlist.sh`: read_allowlist() verifies signature, write_allowlist() signs. do_add/do_remove/do_check all use signed read/write. Audit log entries on changes (FR-007, FR-008)
+- [x] T005 [US1] Update `scripts/integrity-verify.sh` check_skill_allowlist(): verify allowlist HMAC signature before trusting entries. Fails (not warns) on invalid signature (FR-008)
+- [x] T006 [P] [US1] Add TMPDIR validation to integrity_check_env_vars(): verifies TMPDIR unset or points to /tmp, /private/tmp, or /var/folders/* (FR-035)
+- [x] T007 [US1] Lib self-verification: existing _verify_lib_integrity() in integrity-verify.sh covers this. Pattern documented for new scripts (FR-034)
+- [x] T008 [US1] Workflow files already in protected list via find workflows/ -name "*.json" from 011. Verified: 11 workflow files in manifest (FR-036)
+
+**Checkpoint**: Deploy → verify manifest now includes 65+ files (up from 49). All new files have checksums.
+
+---
+
+## Phase 1B: Expanded Protection Surface — Lock (US1, Spec Phase B)
+
+**Purpose**: Lock all files including newly protected set. Separate from deploy per spec Deployment Sequence.
+
+- [ ] T009 [US1] Add old configuration backup detection to `scripts/integrity-lock.sh`: find `~/.openclaw/openclaw.json.bak*`, lock with uchg (FR-004). Log count of backups locked to audit trail.
+- [ ] T010 [US1] Run `make integrity-lock` to lock all files including newly protected set
+
+### Verification
+
+- [ ] T011 [US1] Verification: deploy → verify manifest contains new files (models.json, workspace-state.json, settings.local.json, restore-scripts, bak files) → lock → verify all have uchg flag → attempt modification of newly protected file as non-root → verify "Operation not permitted"
+- [ ] T012 [US1] Verification: deploy with git hooks in agent workspace → verify hooks have execute permission removed → verify hooks locked with uchg → verify legitimate hooks (if allowlisted) preserved
+
+**Checkpoint**: US1 complete. All sensitive files locked and manifested.
+
+---
+
+## Phase 2: Hash-Chained Audit Log (US2, Spec Phase C)
+
+**Purpose**: Implement tamper-evident audit logging with hash chain and append-only enforcement.
+
+### Implementation (MUST be in this order)
+
+- [x] T013 [US2] Updated integrity_audit_log() with hash chain: prev_hash field computed from SHA-256 of last log line, GENESIS for first entry. All required fields present (FR-011, FR-014, FR-014b)
+- [x] T014 [US2] Added integrity_verify_audit_chain(): walks log line-by-line, verifies prev_hash chain. Returns violation count. Tested with tamper detection (insertion detected).
+- [x] T015 [US2] Audit log entries already include required detail fields from 011 implementation. integrity-deploy.sh now logs file count. skill-allowlist.sh logs skill name/hash on add/remove.
+- [x] T016 [US2] Write failure detection: integrity_audit_log() returns 1 and logs CRITICAL error to stderr if append fails (FR-009 edge case)
+- [ ] T017 [US2] Add `chflags uappnd` setup to `scripts/integrity-deploy.sh`: requires sudo, deferred to verification phase (operator must run manually)
+- [ ] T019 [P] [US2] Document audit log rotation procedure in quickstart.md — deferred to Phase 8 polish
+- [x] T020 [US2] Added check_audit_chain() to integrity-verify.sh: verifies hash chain integrity, reports entry count, fails on violations
+- [ ] T021 [US2] Add CHK-OPENCLAW-AUDIT-CHAIN check to hardening-audit.sh — deferred (needs uappnd setup first)
+
+### Verification
+
+- [ ] T022 [US2] Verification: append entries → verify chain validates → attempt to truncate log → verify "Operation not permitted" → insert a forged entry in the middle → verify chain verification detects the break
+- [ ] T023 [US2] Verification: run lock/unlock/deploy/verify/skill-add sequence → verify each generates audit log entry with all required fields (timestamp, action, operator, pid, details, prev_hash)
+
+**Checkpoint**: US2 complete. Audit log is hash-chained and append-only. All privileged operations logged.
+
+---
+
+## Phase 3: Docker and Container Integrity (US3, Spec Phase D)
+
+**[SUPERSEDED]** T024-T031 replaced by `phase3-tasks.md` (38 tasks, 43 FRs — expanded from deep research + 3 adversarial reviews). The original 8 tasks covered 4 FRs; the expanded spec covers 8 user stories across 7 defense-in-depth verification layers: image digest pinning, runtime configuration (10 properties), credential set baseline, workflow integrity, filesystem drift detection, community node supply chain verification, VM boundary auditing, and continuous monitoring with alert deduplication.
+
+**Checkpoint**: See `phase3-tasks.md` for implementation and verification tasks.
+
+---
+
+## Phase 4: Browser Session Protection (US4, Spec Phase E)
+
+**Purpose**: Encrypt browser session authentication state at rest.
+
+**Dependencies**: Phase 2 (audit logging for session access events per FR-021)
+
+- [ ] T032 [US4] Create `scripts/session-encrypt.sh` with subcommands: `encrypt` (AES-256-GCM via openssl, key from Keychain service `session-encryption-key`), `decrypt --temp` (decrypt to temporary file, return path), `status` (check if encrypted). Use `security add-generic-password` for key generation if not exists (FR-019, FR-020)
+- [ ] T033 [US4] Add secure deletion of plaintext after encryption in `scripts/session-encrypt.sh`: overwrite with random bytes before unlinking (`dd if=/dev/urandom of=<file> bs=1 count=<size> && rm`) (FR-022)
+- [ ] T034 [US4] Add session access audit logging to `scripts/session-encrypt.sh`: log decrypt events to integrity audit log with timestamp and calling context (FR-021)
+- [ ] T035 [P] [US4] Add CHK-OPENCLAW-SESSION-ENCRYPTED check to `scripts/hardening-audit.sh`: verify storageState file is encrypted (not plaintext JSON), verify encryption key exists in Keychain
+- [ ] T036 [P] [US4] Add Makefile targets: `session-encrypt`, `session-decrypt`, `session-status`
+
+### Verification
+
+- [ ] T037 [US4] Verification: encrypt storageState → verify file is not readable as JSON → attempt to read raw bytes → verify encrypted → decrypt to temp → verify usable JSON → verify temp file deleted after use → verify audit log entry for decrypt event
+
+**Checkpoint**: US4 complete. Browser session credentials encrypted at rest.
+
+---
+
+## Phase 5: Output Sanitization (US5, Spec Phase F)
+
+**Purpose**: Validate webhook payloads before they reach external APIs.
+
+**Dependencies**: Phase 1A (workflow files in protected set per FR-036)
+
+- [ ] T038 [US5] Add sanitization Code node to `workflows/linkedin-post.json`: insert after HMAC verification node, before LinkedIn API node. Validates: (1) required fields present with correct types (FR-023), (2) no control characters in content fields — reject null bytes, escape sequences, terminal injection (FR-024), (3) content length within limits: 3000 chars for posts, 1250 for comments (FR-025)
+- [ ] T039 [US5] Add rejection logging and operator notification to sanitization node: on validation failure, return structured error with rejection reason, log to audit trail, trigger error-handler workflow for operator notification (FR-026)
+- [ ] T040 [P] [US5] Create sanitization test payloads in `specs/012-security-hardening-phase2/test-payloads/`: valid payload, payload with null bytes, payload with escape sequences, oversized payload, payload missing required fields, payload with unexpected fields, payload with wrong types
+
+### Verification
+
+- [ ] T041 [US5] Verification: send each test payload to linkedin-post webhook → verify valid payload passes through → verify all injection payloads rejected with specific error → verify rejection events in audit log → verify operator notified
+
+**Checkpoint**: US5 complete. Webhook payloads sanitized before reaching external APIs.
+
+---
+
+## Phase 6: Manifest Versioning and Rollback Detection (US6, Spec Phase G)
+
+**Purpose**: Detect manifest rollback attacks.
+
+**Dependencies**: Phase 2 (audit logging for rollback events)
+
+- [ ] T042 [US6] Add `manifest_sequence` counter to `integrity_build_manifest()` in `scripts/lib/integrity.sh`: read current sequence from `~/.openclaw/manifest-sequence.json`, increment, include in manifest (FR-027)
+- [ ] T043 [US6] Create `~/.openclaw/manifest-sequence.json` signed state file management: `integrity_read_sequence()` reads and verifies signature, `integrity_write_sequence()` writes and signs (FR-029). First deploy initializes sequence to 1.
+- [ ] T044 [US6] Add sequence verification to `scripts/integrity-verify.sh`: new `check_manifest_sequence()` function reads last verified sequence from signed state file, compares to manifest sequence, fails if manifest sequence < last verified (FR-028). Log rollback attempt to audit trail.
+- [ ] T045 [US6] Add `--force` flag to `scripts/integrity-deploy.sh`: when set, resets sequence counter with audit trail warning (FR-030). Without flag, sequence must only increase.
+
+### Verification
+
+- [ ] T046 [US6] Verification: deploy manifest (seq=1) → deploy again (seq=2) → copy seq=1 manifest back → run integrity-verify → verify rollback detected and agent launch blocked → verify audit log records rollback attempt
+- [ ] T047 [US6] Verification: deploy with `--force` → verify sequence resets → verify audit log records the force reset with warning
+
+**Checkpoint**: US6 complete. Manifest rollback attacks detected and blocked.
+
+---
+
+## Phase 7: Audit Enforcement Gate (US7, Spec Phase H)
+
+**Purpose**: Critical audit checks block agent launch.
+
+**Dependencies**: Phase 1A (enforcement.json in protected set), Phase 2 (audit logging for bypass events)
+
+- [ ] T048 [US7] Create `scripts/enforcement-setup.sh`: create `~/.openclaw/enforcement.json` with default enforced checks (sandbox_enabled, manifest_signature, files_locked, allowlist_valid), sign with HMAC (R-008)
+- [ ] T049 [US7] Modify `scripts/integrity-verify.sh`: load enforcement config, for each enforced check, change from `warn()` to `fail()` on failure (FR-031). Implement hardcoded minimum set that cannot be disabled: sandbox_enabled, manifest_signature (FR-033).
+- [ ] T050 [US7] Add `FORCE=1` bypass to `scripts/integrity-verify.sh`: when set, enforced checks warn instead of fail. Log bypass event to audit trail with operator identity (FR-032)
+- [ ] T051 [US7] Add enforcement.json to protected file list and lock with uchg (FR-033)
+- [ ] T052 [P] [US7] Add CHK-OPENCLAW-ENFORCEMENT check to `scripts/hardening-audit.sh`: verify enforcement.json exists, is signed, and contains the hardcoded minimum set
+- [ ] T053 [P] [US7] Add Makefile targets: `enforcement-setup`, `enforcement-status`
+
+### Verification
+
+- [ ] T054 [US7] Verification: enable enforcement → disable sandbox → run integrity-verify → verify FAILS (not warns) → re-enable sandbox → verify PASSES
+- [ ] T055 [US7] Verification: enable enforcement → run with FORCE=1 → verify warns but does not block → verify audit log records bypass event
+- [ ] T056 [US7] Verification: attempt to remove sandbox_enabled from enforced checks via enforcement.json edit → verify hardcoded minimum prevents removal
+
+**Checkpoint**: US7 complete. Critical audit checks enforced at startup.
+
+---
+
+## Phase 8: Polish and Cross-Cutting Concerns
+
+**Purpose**: Shellcheck, verification, key rotation, documentation.
+
+- [ ] T057 Run shellcheck on all new/modified scripts: `session-encrypt.sh`, `enforcement-setup.sh`, `lib/integrity.sh`, `integrity-verify.sh`, `integrity-deploy.sh`, `integrity-lock.sh`, `integrity-monitor.sh`, `skill-allowlist.sh`, `hardening-audit.sh` — zero warnings required per Constitution VI
+- [ ] T058 Create key rotation script `scripts/integrity-key-rotate.sh`: re-sign all signed artifacts (manifest, lock-state, heartbeat, allowlist, sequence, enforcement) in documented order. Log rotation event to audit trail. Handle interruption gracefully (rollback to old key if incomplete)
+- [ ] T059 Full verification script `scripts/integrity-verify-phase2.sh`: automated assertions for all 7 user stories
+- [ ] T060 Adversarial testing: state-actor scenarios from ADVERSARIAL-REVIEW-01.md — attempt manifest forgery, grace period exploitation, heartbeat forgery, container replacement, session exfiltration
+- [ ] T061 Update `specs/012-security-hardening-phase2/quickstart.md` with verified commands
+- [ ] T062 Content notes for LinkedIn: capture findings for social-content inbox
+
+---
+
+## Dependencies and Execution Order
+
+### Phase Dependencies
+
+- **Phase 1A (Deploy)**: No dependencies — start immediately
+- **Phase 1B (Lock)**: Depends on Phase 1A
+- **Phase 2 (Audit Log)**: Depends on Phase 1A (file list)
+- **Phase 3 (Container)**: Depends on Phase 1A (manifest fields)
+- **Phase 4 (Session)**: Depends on Phase 2 (audit logging). Code can be written in parallel but deployment must follow Phase 2
+- **Phase 5 (Sanitization)**: Depends on Phase 1A (workflow files in protected set)
+- **Phase 6 (Versioning)**: Depends on Phase 2 (audit logging)
+- **Phase 7 (Enforcement)**: Depends on Phase 1A (config in protected set) + Phase 2 (bypass logging). Deploy LAST per spec Deployment Sequence.
+- **Phase 8 (Polish)**: Depends on all previous phases
+
+### Parallel Opportunities
+
+Within each phase, tasks marked [P] can run in parallel. Across phases:
+
+- Phase 3 and Phase 4 code can be written in parallel (independent concerns)
+- Phase 5 code can be written in parallel with Phase 3/4 (different files)
+- Phase 6 is independent of Phases 3-5
+
+### Implementation Strategy
+
+1. **MVP**: Phase 1A + 1B + Phase 2 = expanded protection + tamper-evident audit log
+2. **Security Complete**: Add Phases 3-7 for full hardening
+3. **Production Ready**: Phase 8 for polish and adversarial testing
