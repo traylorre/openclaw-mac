@@ -16,6 +16,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=browser-registry.sh
 source "${SCRIPT_DIR}/browser-registry.sh"
+# shellcheck source=lib/cve-registry.sh
+source "${SCRIPT_DIR}/lib/cve-registry.sh"
 
 readonly VERSION="0.1.0"
 SCRIPT_NAME="$(basename "$0")"
@@ -2739,6 +2741,220 @@ check_openclaw_platform_version() {
     fi
 }
 
+# === 014: Pipeline Security Hardening Checks ===
+
+check_pipeline_cve_n8n() {
+    local id="CHK-PIPELINE-CVE-N8N"
+
+    if ! cve_load_registry 2>/dev/null; then
+        report_result "$id" "Pipeline Security" \
+            "CVE registry not found — cannot verify n8n version" "SKIP" "14.1" \
+            "Create data/cve-registry.json"
+        return
+    fi
+
+    # Get running n8n version from container
+    local n8n_version=""
+    local cid
+    cid=$(docker ps --filter "name=n8n" --format '{{.ID}}' 2>/dev/null | head -1)
+    if [[ -z "$cid" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "n8n container not running — cannot verify version" "SKIP" "14.1"
+        return
+    fi
+
+    n8n_version=$(docker exec "$cid" n8n --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [[ -z "$n8n_version" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "Could not determine n8n version" "WARN" "14.1"
+        return
+    fi
+
+    local report
+    report=$(cve_report_component "n8n" "$n8n_version")
+    if cve_check_version "n8n" "$n8n_version" >/dev/null 2>&1; then
+        report_result "$id" "Pipeline Security" \
+            "n8n ${n8n_version}: all known CVEs patched (registry: $(cve_registry_date))" "PASS" "14.1"
+    else
+        report_result "$id" "Pipeline Security" \
+            "n8n ${n8n_version}: VULNERABLE — ${report}" "FAIL" "14.1" \
+            "Upgrade n8n: see docs/DEPENDENCY-UPDATE-PROCEDURE.md"
+    fi
+}
+
+check_pipeline_cve_openclaw() {
+    local id="CHK-PIPELINE-CVE-OPENCLAW"
+
+    if ! cve_load_registry 2>/dev/null; then
+        report_result "$id" "Pipeline Security" \
+            "CVE registry not found" "SKIP" "14.1"
+        return
+    fi
+
+    local oc_version
+    oc_version=$(openclaw --version 2>/dev/null || echo "unknown")
+    if [[ "$oc_version" == "unknown" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "OpenClaw not installed or not in PATH" "SKIP" "14.1"
+        return
+    fi
+
+    if cve_check_version "openclaw" "$oc_version" >/dev/null 2>&1; then
+        report_result "$id" "Pipeline Security" \
+            "OpenClaw ${oc_version}: all known CVEs patched (registry: $(cve_registry_date))" "PASS" "14.1"
+    else
+        local report
+        report=$(cve_report_component "openclaw" "$oc_version")
+        report_result "$id" "Pipeline Security" \
+            "OpenClaw ${oc_version}: VULNERABLE — ${report}" "FAIL" "14.1" \
+            "Upgrade OpenClaw: see docs/DEPENDENCY-UPDATE-PROCEDURE.md"
+    fi
+}
+
+check_pipeline_cve_ollama() {
+    local id="CHK-PIPELINE-CVE-OLLAMA"
+
+    if ! command -v ollama &>/dev/null; then
+        report_result "$id" "Pipeline Security" \
+            "Ollama not installed" "SKIP" "14.1"
+        return
+    fi
+
+    local ollama_version
+    ollama_version=$(ollama --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    if [[ -z "$ollama_version" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "Could not determine Ollama version" "WARN" "14.1"
+        return
+    fi
+
+    if ! cve_load_registry 2>/dev/null; then
+        report_result "$id" "Pipeline Security" \
+            "CVE registry not found" "SKIP" "14.1"
+        return
+    fi
+
+    if cve_check_version "ollama" "$ollama_version" >/dev/null 2>&1; then
+        report_result "$id" "Pipeline Security" \
+            "Ollama ${ollama_version}: all known CVEs patched (registry: $(cve_registry_date))" "PASS" "14.1"
+    else
+        local report
+        report=$(cve_report_component "ollama" "$ollama_version")
+        report_result "$id" "Pipeline Security" \
+            "Ollama ${ollama_version}: VULNERABLE — ${report}" "FAIL" "14.1" \
+            "Upgrade Ollama: see docs/DEPENDENCY-UPDATE-PROCEDURE.md"
+    fi
+
+    # Verify model digest against manifest
+    local manifest="${HOME}/.openclaw/manifest.json"
+    if [[ -f "$manifest" ]]; then
+        local expected_digest
+        expected_digest=$(jq -r '.ollama_model_digest // empty' "$manifest" 2>/dev/null)
+        if [[ -n "$expected_digest" ]]; then
+            local current_digest
+            current_digest=$(ollama show gemma3:4b --digest 2>/dev/null | head -1 || echo "unknown")
+            if [[ "$current_digest" == "$expected_digest" ]]; then
+                report_result "CHK-PIPELINE-OLLAMA-DIGEST" "Pipeline Security" \
+                    "Ollama model digest matches manifest" "PASS" "14.1"
+            else
+                report_result "CHK-PIPELINE-OLLAMA-DIGEST" "Pipeline Security" \
+                    "Ollama model digest mismatch (expected: ${expected_digest:0:16}...)" "FAIL" "14.1" \
+                    "Re-baseline: make integrity-deploy --force"
+            fi
+        fi
+    fi
+}
+
+check_pipeline_hmac_consistency() {
+    local id="CHK-PIPELINE-HMAC-CONSISTENCY"
+    local repo_env="${SCRIPT_DIR}/../.env"
+    local agent_env="${HOME}/.openclaw/.env"
+
+    if [[ ! -f "$repo_env" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "Repository .env not found" "SKIP" "14.2"
+        return
+    fi
+
+    if [[ ! -f "$agent_env" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "Agent .env not found at ${agent_env}" "FAIL" "14.2" \
+            "Run: make hmac-setup"
+        return
+    fi
+
+    # Compare SHA-256 hashes of the secrets (never expose raw values)
+    local repo_hash agent_hash
+    repo_hash=$(grep 'OPENCLAW_WEBHOOK_SECRET=' "$repo_env" 2>/dev/null | sed 's/^[^=]*=//' | shasum -a 256 | cut -d' ' -f1)
+    agent_hash=$(grep 'N8N_WEBHOOK_SECRET=' "$agent_env" 2>/dev/null | sed 's/^[^=]*=//' | shasum -a 256 | cut -d' ' -f1)
+
+    if [[ -z "$repo_hash" || -z "$agent_hash" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "Could not extract HMAC secrets for comparison" "WARN" "14.2"
+        return
+    fi
+
+    if [[ "$repo_hash" == "$agent_hash" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "HMAC secrets consistent across pipeline (SHA-256 match)" "PASS" "14.2"
+    else
+        report_result "$id" "Pipeline Security" \
+            "HMAC secrets MISMATCH between .env and ~/.openclaw/.env" "FAIL" "14.2" \
+            "Re-run: make hmac-setup to synchronize"
+    fi
+}
+
+check_pipeline_container_hardening() {
+    local id="CHK-PIPELINE-CONTAINER-HARDENING"
+
+    local cid
+    cid=$(docker ps --filter "name=n8n" --format '{{.ID}}' 2>/dev/null | head -1)
+    if [[ -z "$cid" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "n8n container not running" "SKIP" "14.3"
+        return
+    fi
+
+    local failures=""
+
+    # Read-only rootfs
+    local readonly_fs
+    readonly_fs=$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$cid" 2>/dev/null)
+    if [[ "$readonly_fs" != "true" ]]; then
+        failures="${failures}read-only rootfs disabled; "
+    fi
+
+    # Non-root user
+    local user
+    user=$(docker inspect --format '{{.Config.User}}' "$cid" 2>/dev/null)
+    if [[ -z "$user" || "$user" == "root" || "$user" == "0" ]]; then
+        failures="${failures}running as root; "
+    fi
+
+    # Localhost-only port binding
+    local bindings
+    bindings=$(docker inspect --format '{{range $p, $conf := .NetworkSettings.Ports}}{{range $conf}}{{.HostIp}}{{end}}{{end}}' "$cid" 2>/dev/null)
+    if [[ -n "$bindings" ]] && ! echo "$bindings" | grep -qE '^(127\.0\.0\.1)*$'; then
+        failures="${failures}non-localhost port binding; "
+    fi
+
+    # Capabilities dropped
+    local cap_add
+    cap_add=$(docker inspect --format '{{.HostConfig.CapAdd}}' "$cid" 2>/dev/null)
+    if [[ "$cap_add" != "[]" && "$cap_add" != "<nil>" && -n "$cap_add" ]]; then
+        failures="${failures}capabilities added (${cap_add}); "
+    fi
+
+    if [[ -z "$failures" ]]; then
+        report_result "$id" "Pipeline Security" \
+            "Container hardened: read-only FS, non-root (${user}), localhost-only, no added caps" "PASS" "14.3"
+    else
+        report_result "$id" "Pipeline Security" \
+            "Container hardening issues: ${failures}" "FAIL" "14.3" \
+            "Review scripts/templates/docker-compose.yml"
+    fi
+}
+
 main() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -2946,6 +3162,13 @@ main() {
     run_check check_openclaw_skillallow
     run_check check_openclaw_symlink
     run_check check_openclaw_platform_version
+
+    # §14: Pipeline Security Hardening (014)
+    run_check check_pipeline_cve_n8n
+    run_check check_pipeline_cve_openclaw
+    run_check check_pipeline_cve_ollama
+    run_check check_pipeline_hmac_consistency
+    run_check check_pipeline_container_hardening
 
     # --- Output ---
     if $JSON_OUTPUT; then

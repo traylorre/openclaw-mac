@@ -213,6 +213,9 @@ main() {
     # 012 Phase 3: Container baseline capture (TP3-010, TP3-012)
     capture_container_baseline
 
+    # 014: Ollama model baseline capture
+    capture_ollama_baseline
+
     integrity_audit_log "deploy" "manifest created with $(jq '.files | length' "$INTEGRITY_MANIFEST" 2>/dev/null) files"
     log_info "Deploy complete. Run 'sudo make integrity-lock' to set immutable flags."
 }
@@ -324,6 +327,50 @@ capture_container_baseline() {
     log_info "  Community nodes: ${node_count}"
 
     integrity_audit_log "container_deploy" "image_digest=${image_digest:0:20}, n8n_version=${n8n_version}, credentials=${cred_count}, community_nodes=${node_count}"
+}
+
+capture_ollama_baseline() {
+    if ! command -v ollama &>/dev/null; then
+        log_info "Ollama not installed — skipping model digest capture"
+        return 0
+    fi
+
+    log_step "Capturing Ollama model baseline"
+
+    # Attempt to get digest for the configured model (default: gemma3:4b)
+    local model="${OLLAMA_MODEL:-gemma3:4b}"
+    local digest
+    digest=$(ollama show "$model" --modelfile 2>/dev/null | grep -oE 'sha256:[a-f0-9]+' | head -1 || true)
+
+    if [[ -z "$digest" ]]; then
+        log_warn "Could not capture Ollama model digest for ${model}"
+        return 0
+    fi
+
+    # Merge into manifest
+    if [[ ! -f "$INTEGRITY_MANIFEST" ]]; then
+        log_warn "Manifest not found — cannot add Ollama digest"
+        return 0
+    fi
+
+    local manifest_body
+    manifest_body=$(jq --sort-keys -c 'del(.signature)' "$INTEGRITY_MANIFEST")
+    local updated
+    updated=$(echo "$manifest_body" | jq --arg d "$digest" --arg m "$model" \
+        '. + {ollama_model_digest: $d, ollama_model_name: $m}')
+
+    local body sig
+    body=$(echo "$updated" | jq --sort-keys -c '.')
+    sig=$(integrity_sign_manifest "$body")
+    updated=$(echo "$updated" | jq --arg sig "$sig" '. + {signature: $sig}')
+
+    local manifest_content
+    manifest_content=$(echo "$updated" | jq '.')
+    _integrity_safe_atomic_write "$INTEGRITY_MANIFEST" "$manifest_content"
+    chmod 600 "$INTEGRITY_MANIFEST"
+
+    log_info "Ollama baseline captured: model=${model}, digest=${digest:0:20}..."
+    integrity_audit_log "ollama_deploy" "model=${model}, digest=${digest:0:20}"
 }
 
 neutralize_git_hooks() {
