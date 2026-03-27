@@ -110,7 +110,7 @@ load_config() {
 # --- Find Latest Audit JSON ---
 find_latest_json() {
     local latest
-    latest=$(ls -t "${LOG_DIR}"/audit-*.json 2>/dev/null | head -1)
+    latest=$(find "${LOG_DIR}" -maxdepth 1 -name "audit-*.json" -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1)
     if [[ -z "$latest" || ! -f "$latest" ]]; then
         echo "Error: No audit JSON files found in ${LOG_DIR}/" >&2
         exit 2
@@ -177,7 +177,7 @@ send_email() {
 
     if ! command -v msmtp &>/dev/null; then
         log_notify "ERROR: email enabled but msmtp not found"
-        printf "  ${RED}FAIL${NC}  Email: msmtp not installed (brew install msmtp)\n"
+        printf "  %sFAIL%s  Email: msmtp not installed (brew install msmtp)\n" "$RED" "$NC"
         return 1
     fi
 
@@ -186,7 +186,7 @@ send_email() {
 
     if [[ -z "$to" ]]; then
         log_notify "ERROR: NOTIFY_EMAIL_TO is empty"
-        printf "  ${RED}FAIL${NC}  Email: NOTIFY_EMAIL_TO not configured\n"
+        printf "  %sFAIL%s  Email: NOTIFY_EMAIL_TO not configured\n" "$RED" "$NC"
         return 1
     fi
 
@@ -197,10 +197,10 @@ send_email() {
 
     if [[ $rc -eq 0 ]]; then
         log_notify "OK: email sent to ${to}"
-        printf "  ${GREEN}SENT${NC}  Email → %s\n" "$to"
+        printf "  %sSENT%s  Email → %s\n" "$GREEN" "$NC" "$to"
     else
         log_notify "ERROR: email dispatch failed to ${to}"
-        printf "  ${RED}FAIL${NC}  Email → %s\n" "$to"
+        printf "  %sFAIL%s  Email → %s\n" "$RED" "$NC" "$to"
         return 1
     fi
 }
@@ -218,10 +218,10 @@ send_osascript() {
 
     if [[ $rc -eq 0 ]]; then
         log_notify "OK: osascript notification sent"
-        printf "  ${GREEN}SENT${NC}  macOS Notification Center\n"
+        printf "  %sSENT%s  macOS Notification Center\n" "$GREEN" "$NC"
     else
         log_notify "ERROR: osascript notification failed"
-        printf "  ${RED}FAIL${NC}  macOS Notification Center\n"
+        printf "  %sFAIL%s  macOS Notification Center\n" "$RED" "$NC"
         return 1
     fi
 }
@@ -233,7 +233,7 @@ send_webhook() {
 
     if [[ -z "$NOTIFY_WEBHOOK_URL" ]]; then
         log_notify "ERROR: NOTIFY_WEBHOOK_URL is empty"
-        printf "  ${RED}FAIL${NC}  Webhook: URL not configured\n"
+        printf "  %sFAIL%s  Webhook: URL not configured\n" "$RED" "$NC"
         return 1
     fi
 
@@ -262,10 +262,10 @@ send_webhook() {
 
     if [[ "$http_code" =~ ^2 ]]; then
         log_notify "OK: webhook sent (HTTP ${http_code})"
-        printf "  ${GREEN}SENT${NC}  Webhook → %s (HTTP %s)\n" "$NOTIFY_WEBHOOK_URL" "$http_code"
+        printf "  %sSENT%s  Webhook → %s (HTTP %s)\n" "$GREEN" "$NC" "$NOTIFY_WEBHOOK_URL" "$http_code"
     else
         log_notify "ERROR: webhook failed (HTTP ${http_code})"
-        printf "  ${RED}FAIL${NC}  Webhook → %s (HTTP %s)\n" "$NOTIFY_WEBHOOK_URL" "$http_code"
+        printf "  %sFAIL%s  Webhook → %s (HTTP %s)\n" "$RED" "$NC" "$NOTIFY_WEBHOOK_URL" "$http_code"
         return 1
     fi
 }
@@ -277,7 +277,7 @@ main() {
         case "$1" in
             --conf)    CONF_FILE="$2"; shift 2 ;;
             --log-dir) LOG_DIR="$2"; shift 2 ;;
-            --no-color) RED='' GREEN='' YELLOW='' CYAN='' NC=''; shift ;;
+            --no-color) RED='' GREEN='' YELLOW='' CYAN='' NC=''; : "${YELLOW}${CYAN}"; shift ;;
             --debug)   DEBUG=true; shift ;;
             --version) echo "${SCRIPT_NAME} v${VERSION}"; exit 0 ;;
             --help)    usage; exit 0 ;;
