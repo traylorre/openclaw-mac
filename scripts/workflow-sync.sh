@@ -5,9 +5,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib/common.sh
+# shellcheck source=lib/common.sh disable=SC1091
 source "${SCRIPT_DIR}/lib/common.sh"
-# shellcheck source=lib/integrity.sh
+# shellcheck source=lib/integrity.sh disable=SC1091
 source "${SCRIPT_DIR}/lib/integrity.sh"
 
 REPO_ROOT="$(resolve_repo_root "$SCRIPT_DIR")"
@@ -192,6 +192,7 @@ activate_workflows() {
     _prev_exit_trap=$(trap -p EXIT 2>/dev/null || true)
     local _cred_tmpfile
     _cred_tmpfile=$(_integrity_safe_credential_write "$api_key")
+    # shellcheck disable=SC2064  # Intentional early expansion: capture current $_cred_tmpfile value
     trap "rm -f '$_cred_tmpfile' 2>/dev/null; ${_prev_exit_trap:+eval \"$_prev_exit_trap\"}" EXIT
 
     for f in "${sorted_files[@]}"; do

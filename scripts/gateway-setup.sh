@@ -36,11 +36,11 @@ ERRORS=0
 report() {
     local status="$1" msg="$2"
     case "$status" in
-        OK)    printf "  ${GREEN}✓${NC}  %s\n" "$msg"; OK=$((OK + 1)) ;;
-        FIXED) printf "  ${CYAN}+${NC}  %s\n" "$msg"; FIXED=$((FIXED + 1)) ;;
-        FAIL)  printf "  ${RED}✗${NC}  %s\n" "$msg"; ERRORS=$((ERRORS + 1)) ;;
-        WARN)  printf "  ${YELLOW}!${NC}  %s\n" "$msg" ;;
-        INFO)  printf "  ${BOLD}ℹ${NC}  %s\n" "$msg" ;;
+        OK)    printf "  %s✓%s  %s\n" "$GREEN" "$NC" "$msg"; OK=$((OK + 1)) ;;
+        FIXED) printf "  %s+%s  %s\n" "$CYAN" "$NC" "$msg"; FIXED=$((FIXED + 1)) ;;
+        FAIL)  printf "  %s✗%s  %s\n" "$RED" "$NC" "$msg"; ERRORS=$((ERRORS + 1)) ;;
+        WARN)  printf "  %s!%s  %s\n" "$YELLOW" "$NC" "$msg" ;;
+        INFO)  printf "  %sℹ%s  %s\n" "$BOLD" "$NC" "$msg" ;;
     esac
 }
 
@@ -52,7 +52,7 @@ fi
 
 # --- Step 1: Verify prerequisites ---
 step_prerequisites() {
-    printf "\n${BOLD}[1/6] Prerequisites${NC}\n"
+    printf "\n%s[1/6] Prerequisites%s\n" "$BOLD" "$NC"
 
     if ! command -v colima &>/dev/null; then
         report FAIL "Colima not installed (run: bash scripts/bootstrap.sh)"
@@ -85,7 +85,7 @@ step_prerequisites() {
 
 # --- Step 2: Start Colima ---
 step_colima() {
-    printf "\n${BOLD}[2/6] Colima Container Runtime${NC}\n"
+    printf "\n%s[2/6] Colima Container Runtime%s\n" "$BOLD" "$NC"
 
     if colima status &>/dev/null && docker info &>/dev/null; then
         report OK "Colima running, Docker socket reachable"
@@ -120,7 +120,7 @@ step_colima() {
 
 # --- Step 3: Create secrets ---
 step_secrets() {
-    printf "\n${BOLD}[3/6] Docker Secrets${NC}\n"
+    printf "\n%s[3/6] Docker Secrets%s\n" "$BOLD" "$NC"
 
     local secrets_dir="${COMPOSE_DIR}/secrets"
     local key_file="${secrets_dir}/n8n_encryption_key.txt"
@@ -144,7 +144,7 @@ step_secrets() {
 
 # --- Step 4: Start n8n ---
 step_n8n() {
-    printf "\n${BOLD}[4/6] n8n Container${NC}\n"
+    printf "\n%s[4/6] n8n Container%s\n" "$BOLD" "$NC"
 
     # Check if already running
     if docker compose -f "${COMPOSE_DIR}/docker-compose.yml" ps 2>/dev/null | grep -q "n8n.*Up"; then
@@ -189,7 +189,7 @@ step_n8n() {
 
 # --- Step 5: Import workflows ---
 step_workflows() {
-    printf "\n${BOLD}[5/6] Workflow Import${NC}\n"
+    printf "\n%s[5/6] Workflow Import%s\n" "$BOLD" "$NC"
 
     local container_name
     container_name=$(docker compose -f "${COMPOSE_DIR}/docker-compose.yml" ps -q n8n 2>/dev/null) || true
@@ -245,16 +245,16 @@ step_workflows() {
 
 # --- Step 6: Manual steps ---
 step_manual() {
-    printf "\n${BOLD}[6/6] Manual Steps Required${NC}\n"
+    printf "\n%s[6/6] Manual Steps Required%s\n" "$BOLD" "$NC"
 
     printf "\n  The following steps require the n8n web editor.\n"
-    printf "  Open ${CYAN}http://localhost:5678${NC} in Chrome (not Safari).\n\n"
+    printf "  Open %shttp://localhost:5678%s in Chrome (not Safari).\n\n" "$CYAN" "$NC"
 
-    printf "  ${BOLD}A. Create owner account${NC} (first time only)\n"
+    printf "  %sA. Create owner account%s (first time only)\n" "$BOLD" "$NC"
     printf "     Fill in email, name, password. This is local-only.\n"
     printf "     Do NOT check 'receive updates'. Skip the tutorial.\n\n"
 
-    printf "  ${BOLD}B. Create Bearer auth credential${NC}\n"
+    printf "  %sB. Create Bearer auth credential%s\n" "$BOLD" "$NC"
     printf "     1. Home → Credentials tab → Add Credential\n"
     printf "     2. Search 'Header Auth', select it\n"
     printf "     3. Name: gateway-bearer-token\n"
@@ -265,28 +265,28 @@ step_manual() {
     printf "     6. Allowed HTTP Request Domains: None\n"
     printf "     7. Save\n\n"
 
-    printf "  ${BOLD}C. Attach credential to webhooks${NC}\n"
+    printf "  %sC. Attach credential to webhooks%s\n" "$BOLD" "$NC"
     printf "     For each workflow (Gateway, Hello World):\n"
     printf "     1. Open workflow → click Webhook node\n"
     printf "     2. Authentication → Header Auth\n"
     printf "     3. Credential → gateway-bearer-token\n"
     printf "     4. Click Publish (top-right orange button)\n\n"
 
-    printf "  ${BOLD}D. Store token in macOS Keychain${NC}\n"
+    printf "  %sD. Store token in macOS Keychain%s\n" "$BOLD" "$NC"
     printf "     Run (with leading space to avoid history):\n"
     printf "      security add-generic-password -a 'openclaw' -s 'n8n-gateway-bearer' -w 'YOUR_TOKEN'\n\n"
 
-    printf "  ${BOLD}E. Shell aliases${NC} (automatically configured)\n"
+    printf "  %sE. Shell aliases%s (automatically configured)\n" "$BOLD" "$NC"
     printf "     The n8n-token and openclaw aliases are in ~/.openclaw/shellrc\n"
     printf "     Open a new terminal for them to take effect.\n\n"
 
-    printf "  ${BOLD}F. Test${NC}\n"
+    printf "  %sF. Test%s\n" "$BOLD" "$NC"
     printf "     curl -s -X POST http://localhost:5678/webhook/gateway \\\\\n"
     printf "       -H \"Authorization: Bearer \$(n8n-token)\" \\\\\n"
     printf "       -H \"Content-Type: application/json\" \\\\\n"
     printf "       -d '{\"intent\": \"hello\"}'\n\n"
 
-    printf "  ${BOLD}Stop / Restart${NC}\n"
+    printf "  %sStop / Restart%s\n" "$BOLD" "$NC"
     printf "     Stop gateway:  docker compose -f scripts/templates/docker-compose.yml down\n"
     printf "     Stop Colima:   colima stop\n"
     printf "     Restart all:   bash scripts/gateway-setup.sh\n\n"
@@ -294,14 +294,14 @@ step_manual() {
 
 # --- Main ---
 main() {
-    printf "${BOLD}Fledge Gateway Setup v${VERSION}${NC}\n"
+    printf "%sFledge Gateway Setup v%s%s\n" "$BOLD" "$VERSION" "$NC"
     if $CHECK_ONLY; then
-        printf "Mode: ${YELLOW}check only${NC}\n"
+        printf "Mode: %scheck only%s\n" "$YELLOW" "$NC"
     else
-        printf "Mode: ${GREEN}setup${NC}\n"
+        printf "Mode: %ssetup%s\n" "$GREEN" "$NC"
     fi
 
-    step_prerequisites || { printf "\n${RED}Prerequisites not met. Run bootstrap.sh first.${NC}\n"; exit 1; }
+    step_prerequisites || { printf "\n%sPrerequisites not met. Run bootstrap.sh first.%s\n" "$RED" "$NC"; exit 1; }
     step_colima || exit 1
     step_secrets || exit 1
     step_n8n || exit 1
@@ -309,9 +309,9 @@ main() {
     step_manual
 
     # Summary
-    printf "${BOLD}════════════════════════════════════════${NC}\n"
-    printf "  ${GREEN}%d OK${NC}  |  ${CYAN}%d FIXED${NC}  |  ${RED}%d ERRORS${NC}\n" "$OK" "$FIXED" "$ERRORS"
-    printf "${BOLD}════════════════════════════════════════${NC}\n"
+    printf "%s════════════════════════════════════════%s\n" "$BOLD" "$NC"
+    printf "  %s%d OK%s  |  %s%d FIXED%s  |  %s%d ERRORS%s\n" "$GREEN" "$OK" "$NC" "$CYAN" "$FIXED" "$NC" "$RED" "$ERRORS" "$NC"
+    printf "%s════════════════════════════════════════%s\n" "$BOLD" "$NC"
 
     if [[ $ERRORS -gt 0 ]]; then
         exit 1

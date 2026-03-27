@@ -5,6 +5,7 @@
 set -euo pipefail
 
 readonly VERSION="0.1.0"
+# shellcheck disable=SC2034
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- Color Setup ---
@@ -27,11 +28,11 @@ ERRORS=0
 report() {
     local status="$1" msg="$2"
     case "$status" in
-        OK)    printf "  ${GREEN}✓${NC}  %s\n" "$msg"; OK=$((OK + 1)) ;;
-        FIXED) printf "  ${CYAN}+${NC}  %s\n" "$msg"; FIXED=$((FIXED + 1)) ;;
-        FAIL)  printf "  ${RED}✗${NC}  %s\n" "$msg"; ERRORS=$((ERRORS + 1)) ;;
-        SKIP)  printf "  ${YELLOW}—${NC}  %s\n" "$msg" ;;
-        INFO)  printf "  ${BOLD}ℹ${NC}  %s\n" "$msg" ;;
+        OK)    printf "  %s✓%s  %s\n" "$GREEN" "$NC" "$msg"; OK=$((OK + 1)) ;;
+        FIXED) printf "  %s+%s  %s\n" "$CYAN" "$NC" "$msg"; FIXED=$((FIXED + 1)) ;;
+        FAIL)  printf "  %s✗%s  %s\n" "$RED" "$NC" "$msg"; ERRORS=$((ERRORS + 1)) ;;
+        SKIP)  printf "  %s—%s  %s\n" "$YELLOW" "$NC" "$msg" ;;
+        INFO)  printf "  %sℹ%s  %s\n" "$BOLD" "$NC" "$msg" ;;
     esac
 }
 
@@ -63,7 +64,7 @@ EOF
 
 # --- Platform ---
 check_macos() {
-    printf "\n${BOLD}[1/8] Platform Check${NC}\n"
+    printf "\n%s[1/8] Platform Check%s\n" "$BOLD" "$NC"
     if [[ "$(uname -s)" != "Darwin" ]]; then
         report FAIL "Not macOS — this script requires macOS"
         exit 2
@@ -85,7 +86,7 @@ check_macos() {
 
 # --- Homebrew ---
 check_homebrew() {
-    printf "\n${BOLD}[2/8] Homebrew${NC}\n"
+    printf "\n%s[2/8] Homebrew%s\n" "$BOLD" "$NC"
     if command -v brew &>/dev/null; then
         local brew_ver
         brew_ver=$(brew --version 2>/dev/null) || true
@@ -108,7 +109,7 @@ check_homebrew() {
 
 # --- Shell & Tools ---
 check_tools() {
-    printf "\n${BOLD}[3/8] Required Tools${NC}\n"
+    printf "\n%s[3/8] Required Tools%s\n" "$BOLD" "$NC"
 
     # jq
     if command -v jq &>/dev/null; then
@@ -172,7 +173,7 @@ check_tools() {
 
 # --- Directory Structure ---
 check_directories() {
-    printf "\n${BOLD}[4/8] Directory Structure${NC}\n"
+    printf "\n%s[4/8] Directory Structure%s\n" "$BOLD" "$NC"
 
     local dirs=(
         "/opt/n8n"
@@ -203,7 +204,7 @@ check_directories() {
 
 # --- Deploy Scripts ---
 deploy_scripts() {
-    printf "\n${BOLD}[5/8] Deploy Scripts${NC}\n"
+    printf "\n%s[5/8] Deploy Scripts%s\n" "$BOLD" "$NC"
 
     # Determine source directory (where this script lives)
     local src_dir
@@ -265,7 +266,7 @@ deploy_scripts() {
 
 # --- Configuration ---
 create_config() {
-    printf "\n${BOLD}[6/8] Configuration${NC}\n"
+    printf "\n%s[6/8] Configuration%s\n" "$BOLD" "$NC"
 
     local conf="/opt/n8n/etc/notify.conf"
     if [[ -f "$conf" ]]; then
@@ -299,7 +300,7 @@ CONF
 
 # --- Generate Sample Audit JSON ---
 generate_sample_json() {
-    printf "\n${BOLD}[7/8] Sample Audit JSON${NC}\n"
+    printf "\n%s[7/8] Sample Audit JSON%s\n" "$BOLD" "$NC"
 
     local sample="/opt/n8n/logs/audit/sample-audit.json"
     if [[ -f "$sample" ]]; then
@@ -351,7 +352,7 @@ SAMPLE
 
 # --- Dependency Validation ---
 validate_commands() {
-    printf "\n${BOLD}[8/8] Command Validation${NC}\n"
+    printf "\n%s[8/8] Command Validation%s\n" "$BOLD" "$NC"
 
     # Test each macOS command the audit script depends on
     local cmds=(
@@ -454,11 +455,11 @@ main() {
         esac
     done
 
-    printf "${BOLD}OpenClaw Bootstrap v${VERSION}${NC}\n"
+    printf "%sOpenClaw Bootstrap v%s%s\n" "$BOLD" "$VERSION" "$NC"
     if [[ "$CHECK_ONLY" == true ]]; then
-        printf "Mode: ${YELLOW}check only${NC} (no changes will be made)\n"
+        printf "Mode: %scheck only%s (no changes will be made)\n" "$YELLOW" "$NC"
     else
-        printf "Mode: ${GREEN}install${NC} (will install dependencies and create directories)\n"
+        printf "Mode: %sinstall%s (will install dependencies and create directories)\n" "$GREEN" "$NC"
     fi
 
     # Pre-flight: disk space check
@@ -466,7 +467,7 @@ main() {
         local avail_gb
         avail_gb=$(df -g / | awk 'NR==2 {print $4}') || avail_gb=999
         if [[ "$avail_gb" -lt 8 ]]; then
-            printf "  ${YELLOW}!${NC}  Low disk space: %dGB available (8GB recommended)\n" "$avail_gb"
+            printf "  %s!%s  Low disk space: %dGB available (8GB recommended)\n" "$YELLOW" "$NC" "$avail_gb"
         fi
     fi
 
@@ -480,17 +481,17 @@ main() {
     validate_commands
 
     # Summary
-    printf "\n${BOLD}════════════════════════════════════════${NC}\n"
-    printf "  ${GREEN}%d OK${NC}  |  ${CYAN}%d FIXED${NC}  |  ${RED}%d ERRORS${NC}\n" "$OK" "$FIXED" "$ERRORS"
-    printf "${BOLD}════════════════════════════════════════${NC}\n"
+    printf "\n%s════════════════════════════════════════%s\n" "$BOLD" "$NC"
+    printf "  %s%d OK%s  |  %s%d FIXED%s  |  %s%d ERRORS%s\n" "$GREEN" "$OK" "$NC" "$CYAN" "$FIXED" "$NC" "$RED" "$ERRORS" "$NC"
+    printf "%s════════════════════════════════════════%s\n" "$BOLD" "$NC"
 
     if [[ $ERRORS -gt 0 ]]; then
-        printf "\n${YELLOW}Next: Fix the errors above, then re-run bootstrap.sh${NC}\n"
+        printf "\n%sNext: Fix the errors above, then re-run bootstrap.sh%s\n" "$YELLOW" "$NC"
         exit 1
     fi
 
     if [[ "$CHECK_ONLY" != true ]]; then
-        printf "\n${GREEN}Bootstrap complete. Next steps:${NC}\n"
+        printf "\n%sBootstrap complete. Next steps:%s\n" "$GREEN" "$NC"
         echo "  1. Run audit:    make audit"
         echo "  2. Apply fixes:  make fix"
         echo "  3. Verify:       make verify"
