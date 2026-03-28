@@ -57,6 +57,7 @@ chat-based operator interaction.
 - [ ] Document OAuth token lifecycle as agent credential management pattern
 - [x] Checksum OpenClaw workspace files (SOUL.md, AGENTS.md, TOOLS.md) to detect tampering — HMAC-signed manifest, 49 protected files
 - [x] **011-workspace-integrity (pulled forward from M4)**: filesystem immutability (chflags uchg), agent sandbox isolation (ro workspace, tool restrictions), startup integrity verification (10 checks), continuous monitoring (fswatch + LaunchAgent), skill allowlist (content-hash identity), adversarial review (18 findings, 9 fixed). 46/58 tasks complete; 12 integration tests deferred until agent is running.
+- [x] **014-pipeline-security-hardening**: CVE verification for n8n, OpenClaw, and Ollama. Sensitive file inventory with HMAC verification. OWASP ASI Top 10 control mapping. Five-layer defense-in-depth verification (prevent, contain, detect, respond, recover). Behavioral baseline monitoring. LinkedIn OAuth refresh token automation. Dependency update and rollback procedures. Trust boundary model with ToIP TEA mapping.
 
 ### Hardening observations
 

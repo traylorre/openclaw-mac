@@ -4,6 +4,9 @@ Auto-generated from all feature plans. Last updated: 2026-03-08
 
 ## Active Technologies
 
+- Bash 5.x (POSIX-compatible subset per Constitution VI) + jq (JSON), openssl (HMAC-SHA256), shasum (SHA-256), curl (API calls) + Existing integrity framework (lib/integrity.sh, ~1500 lines), hardening-audit.sh (~3100 lines), Docker CLI (container inspection), macOS Keychain (HMAC key storage), n8n REST API (version/execution queries) (014-pipeline-security-hardening)
+- Filesystem — `~/.openclaw/` (manifest.json, lock-state.json, openclaw.json, skill-allowlist.json), JSONL audit log, version-controlled CVE registry (JSON) (014-pipeline-security-hardening)
+
 - Bash 5.x (POSIX-compatible subset per Constitution VI) + jq (JSON manipulation), openssl (AES-256-GCM encryption, HMAC signing), shasum (SHA-256 checksums), macOS chflags (filesystem flags), Docker CLI (container inspection), fswatch (filesystem monitoring) (012-security-hardening-phase2)
 - Filesystem — JSON state files (~/.openclaw/), JSONL audit log, encrypted session files (012-security-hardening-phase2)
 
@@ -49,6 +52,8 @@ tests/
 Bash 5.x (POSIX-compatible subset for portability): Follow standard conventions
 
 ## Recent Changes
+
+- 014-pipeline-security-hardening: Added Bash 5.x (POSIX-compatible subset per Constitution VI) + jq (JSON), openssl (HMAC-SHA256), shasum (SHA-256), curl (API calls) + Existing integrity framework (lib/integrity.sh, ~1500 lines), hardening-audit.sh (~3100 lines), Docker CLI (container inspection), macOS Keychain (HMAC key storage), n8n REST API (version/execution queries)
 
 - 012-security-hardening-phase2: Added Bash 5.x (POSIX-compatible subset per Constitution VI) + jq (JSON manipulation), openssl (AES-256-GCM encryption, HMAC signing), shasum (SHA-256 checksums), macOS chflags (filesystem flags), Docker CLI (container inspection), fswatch (filesystem monitoring)
 
