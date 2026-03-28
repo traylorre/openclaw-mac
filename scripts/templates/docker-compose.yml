@@ -37,6 +37,7 @@ services:
     tmpfs:
       - /tmp
       - /var/tmp
+      - /home/node/.cache
 
     # Persistent data only — no host directory mounts (FR-058)
     # NOTE: Never mount /var/run/docker.sock (SC-017)
