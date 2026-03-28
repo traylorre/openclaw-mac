@@ -66,7 +66,7 @@ services:
       # Mitigation: n8n is localhost-only, workflows are version-controlled,
       #   only operator can create/modify workflows via n8n UI
       # Original: N8N_BLOCK_ENV_ACCESS_IN_NODE=true
-      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/.n8n  # Restrict Code node filesystem access
       # M3: API enabled — required for activity-query (T068) and rate-limit-tracker (T063)
       # Original: N8N_PUBLIC_API_DISABLED=true
