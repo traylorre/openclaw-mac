@@ -30,23 +30,85 @@ The hook token is configured in OpenClaw's `openclaw.json`:
 
 ## Hook: Token Expiry Alert
 
-**Purpose**: Alert operator via chat that LinkedIn OAuth token is expiring
+**Purpose**: Alert operator via chat about LinkedIn OAuth token lifecycle events
 
-**Trigger**: Daily scheduled workflow detects ≤7 days remaining
+**Trigger**: Daily scheduled workflow detects token expiry conditions or refresh failure
 
-**Payload**:
+**Alert Types**:
+
+### `token_expiring` — Access token approaching expiry (automated refresh unavailable)
+
+Sent when the access token has ≤7 days remaining and automated refresh cannot be performed (e.g., refresh token expired or circuit breaker engaged).
+
 ```json
 {
   "type": "alert",
-  "alert_type": "token_expiry",
-  "message": "LinkedIn OAuth token expires in 5 days (2026-04-02). Please re-authorize: [instructions URL]",
+  "alert_type": "token_expiring",
+  "message": "LinkedIn access token expires in 5 days (2026-04-02). Automated refresh unavailable — manual re-authorization required.",
   "severity": "warning",
-  "days_remaining": 5,
-  "expiry_date": "2026-04-02"
+  "access_token_days_remaining": 5,
+  "refresh_token_days_remaining": 280,
+  "access_token_expiry_date": "2026-04-02"
 }
 ```
 
+### `refresh_token_expiring` — Refresh token approaching expiry (30-day warning)
+
+Sent when the refresh token has ≤30 days remaining. The operator should plan re-authorization before the refresh token expires, as this would require a full manual OAuth flow.
+
+```json
+{
+  "type": "alert",
+  "alert_type": "refresh_token_expiring",
+  "message": "LinkedIn refresh token expires in 25 days (2026-05-15). Plan re-authorization.",
+  "severity": "warning",
+  "access_token_days_remaining": 45,
+  "refresh_token_days_remaining": 25,
+  "access_token_expiry_date": "2026-04-25"
+}
+```
+
+### `refresh_token_expired` — Refresh token has expired
+
+Sent when the refresh token TTL has elapsed. Automated refresh is no longer possible. The operator must complete a full manual OAuth re-authorization.
+
+```json
+{
+  "type": "alert",
+  "alert_type": "refresh_token_expired",
+  "message": "LinkedIn refresh token has expired. Manual re-authorization required.",
+  "severity": "critical",
+  "access_token_days_remaining": 0,
+  "refresh_token_days_remaining": 0,
+  "access_token_expiry_date": "2026-03-20"
+}
+```
+
+### `token_refresh_failed` — Automated refresh attempt failed
+
+Sent when the automated access token refresh fails after retries. Includes the error classification to guide operator action.
+
+```json
+{
+  "type": "alert",
+  "alert_type": "token_refresh_failed",
+  "message": "LinkedIn token refresh failed: refresh token revoked or expired. Manual re-authorization required.",
+  "severity": "critical",
+  "access_token_days_remaining": 3,
+  "refresh_token_days_remaining": 200,
+  "access_token_expiry_date": "2026-04-02"
+}
+```
+
+**Error classifications**:
+- `invalid_grant` — Refresh token revoked or expired. No retry. Alert immediately.
+- `invalid_client` — Client credentials incorrect. No retry. Alert to verify credentials in n8n.
+- HTTP 5xx — LinkedIn server error. Retry up to 3 times across scheduled runs before alerting.
+- Network/unknown — Retry once on next scheduled run, then alert.
+
 **Expected behavior**: OpenClaw delivers the message to the operator via the configured chat channel.
+
+> **Note (T042)**: The original `token_expiry` alert type has been standardized to `token_expiring` for consistency. Consumers should handle `token_expiring` (not `token_expiry`).
 
 ---
 
