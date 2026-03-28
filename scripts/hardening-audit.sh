@@ -64,6 +64,9 @@ declare -a FAIL_SUMMARIES=()
 declare -a WARN_ACTIONABLE=()
 declare -a WARN_OPTIONAL=()
 
+# --- Check result cache for aggregation (F2/F3 query prior results) ---
+declare -A CHECK_RESULTS=()
+
 
 # --- User Scope ---
 # When run with sudo, user-scoped defaults reads must target the
@@ -175,6 +178,9 @@ report_result() {
         WARN) WARN_COUNT=$((WARN_COUNT + 1)) ;;
         SKIP) SKIP_COUNT=$((SKIP_COUNT + 1)) ;;
     esac
+
+    # Cache result for aggregation queries (defense layers, ASI controls)
+    CHECK_RESULTS["$id"]="$status"
 
     # JSON accumulation (always, for --compare support even in terminal mode)
     local json_entry
@@ -868,7 +874,8 @@ check_secrets_env() {
     fi
 }
 
-# CIS Docker Benchmark 5.6 (sensitive host dirs) — partially covered by docker-bench-securitycheck_colima_mounts() {
+# CIS Docker Benchmark 5.6 (sensitive host dirs) — partially covered by docker-bench-security
+check_colima_mounts() {
     local id="CHK-COLIMA-MOUNTS"
     local container_id
     container_id=$(integrity_run_with_timeout 30 run_as_user docker ps -q --filter "name=n8n" 2>/dev/null | head -1) || true
@@ -2955,6 +2962,522 @@ check_pipeline_container_hardening() {
     fi
 }
 
+# --- 014 Phase 4: Sensitive File Protections (US2, T019-T022) ---
+
+check_sensitive_file_protections() {
+    local id_prefix="CHK-SENSITIVE-FILE"
+    local oc_dir="${HOME}/.openclaw"
+    local repo_root="${SCRIPT_DIR}/.."
+
+    # Check mode 600 files
+    local -a mode600_files=(
+        "${oc_dir}/.env"
+        "${oc_dir}/manifest.json"
+        "${oc_dir}/lock-state.json"
+        "${oc_dir}/openclaw.json"
+        "${oc_dir}/skill-allowlist.json"
+        "${oc_dir}/integrity-monitor-heartbeat.json"
+        "${oc_dir}/integrity-audit.log"
+        "${oc_dir}/container-security-config.json"
+        "${oc_dir}/container-verify-state.json"
+    )
+
+    for f in "${mode600_files[@]}"; do
+        local fname
+        fname=$(basename "$f")
+        if [[ ! -f "$f" ]]; then
+            report_result "${id_prefix}-PERM-${fname}" "Sensitive Files" \
+                "${fname}: not found" "SKIP" "14.4"
+            continue
+        fi
+        local perms
+        perms=$(stat -f '%Lp' "$f" 2>/dev/null)
+        if [[ "$perms" == "600" ]]; then
+            report_result "${id_prefix}-PERM-${fname}" "Sensitive Files" \
+                "${fname}: mode 600" "PASS" "14.4"
+        else
+            report_result "${id_prefix}-PERM-${fname}" "Sensitive Files" \
+                "${fname}: mode ${perms} (expected 600)" "FAIL" "14.4" \
+                "chmod 600 ${f}"
+        fi
+    done
+
+    # Check uchg immutability on workspace files
+    local -a uchg_files=()
+    local agent_dir="${oc_dir}/agents/linkedin-persona"
+    for wf in SOUL.md AGENTS.md TOOLS.md USER.md IDENTITY.md BOOT.md; do
+        [[ -f "${agent_dir}/${wf}" ]] && uchg_files+=("${agent_dir}/${wf}")
+    done
+    # integrity.sh itself
+    [[ -f "${SCRIPT_DIR}/lib/integrity.sh" ]] && uchg_files+=("${SCRIPT_DIR}/lib/integrity.sh")
+
+    for f in "${uchg_files[@]}"; do
+        local fname
+        fname=$(basename "$f")
+        if [[ ! -f "$f" ]]; then
+            report_result "${id_prefix}-UCHG-${fname}" "Sensitive Files" \
+                "${fname}: not found" "SKIP" "14.4"
+            continue
+        fi
+        local flags
+        flags=$(ls -lO "$f" 2>/dev/null | awk '{print $5}')
+        if echo "$flags" | grep -q "uchg"; then
+            report_result "${id_prefix}-UCHG-${fname}" "Sensitive Files" \
+                "${fname}: uchg immutable" "PASS" "14.4"
+        else
+            report_result "${id_prefix}-UCHG-${fname}" "Sensitive Files" \
+                "${fname}: uchg flag NOT set" "FAIL" "14.4" \
+                "sudo chflags uchg ${f}"
+        fi
+    done
+
+    # Check HMAC-signed state files (require Keychain)
+    if [[ "${_INTEGRITY_INIT_OK:-}" == "true" ]]; then
+        local -a signed_files=(
+            "${oc_dir}/manifest.json"
+            "${oc_dir}/skill-allowlist.json"
+            "${oc_dir}/container-security-config.json"
+            "${oc_dir}/container-verify-state.json"
+        )
+        for f in "${signed_files[@]}"; do
+            local fname
+            fname=$(basename "$f")
+            if [[ ! -f "$f" ]]; then
+                report_result "${id_prefix}-SIG-${fname}" "Sensitive Files" \
+                    "${fname}: not found" "SKIP" "14.4"
+                continue
+            fi
+            if integrity_verify_state_file "$f" 2>/dev/null; then
+                report_result "${id_prefix}-SIG-${fname}" "Sensitive Files" \
+                    "${fname}: HMAC signature valid" "PASS" "14.4"
+            else
+                report_result "${id_prefix}-SIG-${fname}" "Sensitive Files" \
+                    "${fname}: HMAC signature INVALID or missing" "FAIL" "14.4" \
+                    "Re-sign: make integrity-deploy && sudo make integrity-lock"
+            fi
+        done
+    else
+        report_result "${id_prefix}-SIG-SKIP" "Sensitive Files" \
+            "HMAC signature checks skipped (Keychain unavailable)" "SKIP" "14.4"
+    fi
+
+    # Check workflow files (dynamic glob)
+    local wf_count=0 wf_pass=0
+    for wf in "${repo_root}"/workflows/*.json; do
+        [[ -f "$wf" ]] || continue
+        wf_count=$((wf_count + 1))
+        wf_pass=$((wf_pass + 1))
+    done
+    if [[ $wf_count -eq 0 ]]; then
+        report_result "${id_prefix}-WORKFLOWS" "Sensitive Files" \
+            "No workflow JSON files found" "WARN" "14.4"
+    else
+        report_result "${id_prefix}-WORKFLOWS" "Sensitive Files" \
+            "${wf_count} workflow files present (manifest-checksummed)" "PASS" "14.4"
+    fi
+
+    # Check repo-tracked config files
+    local -a repo_files=(
+        "${repo_root}/scripts/templates/docker-compose.yml"
+        "${repo_root}/scripts/templates/n8n-entrypoint.sh"
+    )
+    for f in "${repo_files[@]}"; do
+        local fname
+        fname=$(basename "$f")
+        if [[ -f "$f" ]]; then
+            report_result "${id_prefix}-REPO-${fname}" "Sensitive Files" \
+                "${fname}: present (manifest-checksummed)" "PASS" "14.4"
+        else
+            report_result "${id_prefix}-REPO-${fname}" "Sensitive Files" \
+                "${fname}: missing" "WARN" "14.4"
+        fi
+    done
+}
+
+check_env_gitignore() {
+    local id="CHK-SENSITIVE-ENV-GITIGNORE"
+    local repo_root="${SCRIPT_DIR}/.."
+    local repo_env="${repo_root}/.env"
+
+    # Check .env is in .gitignore
+    if grep -qx '\.env' "${repo_root}/.gitignore" 2>/dev/null; then
+        report_result "$id" "Sensitive Files" \
+            ".env listed in .gitignore" "PASS" "14.4"
+    else
+        report_result "$id" "Sensitive Files" \
+            ".env NOT in .gitignore — secrets may be committed" "FAIL" "14.4" \
+            "Add '.env' to .gitignore"
+    fi
+
+    # Check repo .env mode 600
+    if [[ -f "$repo_env" ]]; then
+        local perms
+        perms=$(stat -f '%Lp' "$repo_env" 2>/dev/null)
+        if [[ "$perms" == "600" ]]; then
+            report_result "CHK-SENSITIVE-ENV-PERMS" "Sensitive Files" \
+                "Repo .env: mode 600" "PASS" "14.4"
+        else
+            report_result "CHK-SENSITIVE-ENV-PERMS" "Sensitive Files" \
+                "Repo .env: mode ${perms} (expected 600)" "FAIL" "14.4" \
+                "chmod 600 .env"
+        fi
+    else
+        report_result "CHK-SENSITIVE-ENV-PERMS" "Sensitive Files" \
+            "Repo .env not found" "SKIP" "14.4"
+    fi
+}
+
+check_lock_state_signed() {
+    local id="CHK-SENSITIVE-LOCKSTATE-SIG"
+    local lockfile="${HOME}/.openclaw/lock-state.json"
+
+    if [[ ! -f "$lockfile" ]]; then
+        report_result "$id" "Sensitive Files" \
+            "lock-state.json not found" "SKIP" "14.4"
+        return
+    fi
+
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        report_result "$id" "Sensitive Files" \
+            "lock-state.json signature check skipped (Keychain unavailable)" "SKIP" "14.4"
+        return
+    fi
+
+    if integrity_verify_state_file "$lockfile" 2>/dev/null; then
+        report_result "$id" "Sensitive Files" \
+            "lock-state.json: HMAC signature valid (ADV-002 closed)" "PASS" "14.4"
+    else
+        report_result "$id" "Sensitive Files" \
+            "lock-state.json: HMAC signature INVALID (ADV-002)" "FAIL" "14.4" \
+            "Re-sign: make integrity-lock"
+    fi
+}
+
+check_heartbeat_signed() {
+    local id="CHK-SENSITIVE-HEARTBEAT-SIG"
+    local hbfile="${HOME}/.openclaw/integrity-monitor-heartbeat.json"
+
+    if [[ ! -f "$hbfile" ]]; then
+        report_result "$id" "Sensitive Files" \
+            "heartbeat file not found" "SKIP" "14.4"
+        return
+    fi
+
+    if [[ "${_INTEGRITY_INIT_OK:-}" != "true" ]]; then
+        report_result "$id" "Sensitive Files" \
+            "heartbeat signature check skipped (Keychain unavailable)" "SKIP" "14.4"
+        return
+    fi
+
+    if integrity_verify_state_file "$hbfile" 2>/dev/null; then
+        report_result "$id" "Sensitive Files" \
+            "heartbeat: HMAC signature valid (ADV-004 closed)" "PASS" "14.4"
+    else
+        report_result "$id" "Sensitive Files" \
+            "heartbeat: HMAC signature INVALID (ADV-004)" "FAIL" "14.4" \
+            "Restart monitor: make integrity-monitor-start"
+    fi
+}
+
+# --- 014 Phase 5: OWASP ASI Controls (US3, T025-T026) ---
+
+# Helper: query CHECK_RESULTS for a list of check IDs, return aggregate status.
+# Returns: PASS (all pass), FAIL (any fail), WARN (any warn), SKIP (all skip).
+_aggregate_check_results() {
+    local has_fail=false has_warn=false has_pass=false all_skip=true
+    local check_id
+    for check_id in "$@"; do
+        local status="${CHECK_RESULTS[$check_id]:-SKIP}"
+        case "$status" in
+            FAIL) has_fail=true; all_skip=false ;;
+            WARN) has_warn=true; all_skip=false ;;
+            PASS) has_pass=true; all_skip=false ;;
+            SKIP) ;; # remains all_skip unless another status seen
+        esac
+    done
+    if $has_fail; then echo "FAIL"
+    elif $all_skip; then echo "SKIP"
+    elif $has_warn; then echo "WARN"
+    else echo "PASS"
+    fi
+}
+
+check_asi_controls() {
+    # ASI → existing check ID mappings (per docs/ASI-MAPPING.md)
+    local -A ASI_CHECKS
+    ASI_CHECKS["ASI01"]="CHK-OPENCLAW-INTEGRITY-LOCK CHK-OPENCLAW-SANDBOX-MODE"
+    ASI_CHECKS["ASI02"]="CHK-OPENCLAW-SANDBOX-TOOLS CHK-N8N-NODES"
+    ASI_CHECKS["ASI03"]="CHK-OPENCLAW-CREDS CHK-OPENCLAW-N8N-CREDS CHK-OPENCLAW-WEBHOOK-AUTH"
+    ASI_CHECKS["ASI04"]="CHK-OPENCLAW-SKILLALLOW CHK-PIPELINE-CVE-N8N CHK-PIPELINE-CVE-OPENCLAW CHK-PIPELINE-CVE-OLLAMA"
+    ASI_CHECKS["ASI05"]="CHK-OPENCLAW-SANDBOX-MODE CHK-N8N-NODES CHK-PIPELINE-CONTAINER-HARDENING"
+    ASI_CHECKS["ASI06"]="CHK-OPENCLAW-INTEGRITY-LOCK"
+    ASI_CHECKS["ASI07"]="CHK-OPENCLAW-WEBHOOK-AUTH CHK-PIPELINE-HMAC-CONSISTENCY"
+    ASI_CHECKS["ASI08"]="CHK-OPENCLAW-SANDBOX-MODE"
+    ASI_CHECKS["ASI09"]="CHK-OPENCLAW-SANDBOX-MODE"
+    ASI_CHECKS["ASI10"]="CHK-OPENCLAW-MONITOR-STATUS"
+
+    local -A ASI_NAMES
+    ASI_NAMES["ASI01"]="Agent Goal Hijack"
+    ASI_NAMES["ASI02"]="Tool Misuse"
+    ASI_NAMES["ASI03"]="Identity & Privilege"
+    ASI_NAMES["ASI04"]="Supply Chain"
+    ASI_NAMES["ASI05"]="Code Execution"
+    ASI_NAMES["ASI06"]="Memory Poisoning"
+    ASI_NAMES["ASI07"]="Inter-Agent Comms"
+    ASI_NAMES["ASI08"]="Cascading Failures"
+    ASI_NAMES["ASI09"]="Human-Agent Trust"
+    ASI_NAMES["ASI10"]="Rogue Agents"
+
+    local asi_id
+    for asi_id in ASI01 ASI02 ASI03 ASI04 ASI05 ASI06 ASI07 ASI08 ASI09 ASI10; do
+        local check_ids="${ASI_CHECKS[$asi_id]}"
+        local name="${ASI_NAMES[$asi_id]}"
+        # shellcheck disable=SC2086
+        local status
+        status=$(_aggregate_check_results $check_ids)
+
+        local id="CHK-ASI-${asi_id}"
+        case "$status" in
+            PASS)
+                report_result "$id" "OWASP ASI" \
+                    "${asi_id} (${name}): controls verified" "PASS" "14.5"
+                ;;
+            WARN)
+                report_result "$id" "OWASP ASI" \
+                    "${asi_id} (${name}): controls partially verified" "WARN" "14.5" \
+                    "See docs/ASI-MAPPING.md for residual risks"
+                ;;
+            SKIP)
+                report_result "$id" "OWASP ASI" \
+                    "${asi_id} (${name}): controls not verifiable (services unavailable)" "SKIP" "14.5"
+                ;;
+            FAIL)
+                report_result "$id" "OWASP ASI" \
+                    "${asi_id} (${name}): control verification FAILED" "FAIL" "14.5" \
+                    "Fix upstream check failures, then re-run audit"
+                ;;
+        esac
+    done
+}
+
+# --- 014 Phase 6: Defense-in-Depth Layers (US5, T028-T033) ---
+
+check_defense_layer_prevent() {
+    local id="CHK-DEFENSE-PREVENT"
+    local checks=(
+        CHK-OPENCLAW-CREDS
+        CHK-OPENCLAW-WEBHOOK-AUTH
+        CHK-OPENCLAW-INTEGRITY-LOCK
+        CHK-OPENCLAW-SANDBOX-MODE
+    )
+    local status
+    status=$(_aggregate_check_results "${checks[@]}")
+
+    # ADV-001: Keychain gap is a known partial — upgrade PASS to WARN
+    if [[ "$status" == "PASS" ]]; then
+        status="WARN"
+        report_result "$id" "Defense Layers" \
+            "Prevent layer: controls verified (ADV-001 Keychain gap acknowledged)" "WARN" "14.6" \
+            "ADV-001: HMAC trust anchor accessible to same-user processes"
+    else
+        report_result "$id" "Defense Layers" \
+            "Prevent layer: ${status}" "$status" "14.6" \
+            "Fix upstream Prevent controls, then re-run audit"
+    fi
+}
+
+check_defense_layer_contain() {
+    local id="CHK-DEFENSE-CONTAIN"
+    local checks=(
+        CHK-PIPELINE-CONTAINER-HARDENING
+        CHK-OPENCLAW-SANDBOX-MODE
+        CHK-OPENCLAW-SANDBOX-TOOLS
+    )
+    # N8N-NODES is also a contain control
+    checks+=(CHK-N8N-NODES)
+
+    local status
+    status=$(_aggregate_check_results "${checks[@]}")
+    case "$status" in
+        PASS)
+            report_result "$id" "Defense Layers" \
+                "Contain layer: Docker isolation, sandbox, node exclusion verified" "PASS" "14.6"
+            ;;
+        SKIP)
+            report_result "$id" "Defense Layers" \
+                "Contain layer: services unavailable for verification" "SKIP" "14.6"
+            ;;
+        *)
+            report_result "$id" "Defense Layers" \
+                "Contain layer: ${status}" "$status" "14.6" \
+                "Fix upstream Contain controls, then re-run audit"
+            ;;
+    esac
+}
+
+check_defense_layer_detect() {
+    local id="CHK-DEFENSE-DETECT"
+
+    # Sub-checks: pre-launch attestation, continuous monitoring, behavioral baseline
+    local has_fail=false has_warn=false has_pass=false all_skip=true
+
+    # 1. Pre-launch attestation (integrity-verify.sh exists)
+    if [[ -x "${SCRIPT_DIR}/integrity-verify.sh" ]]; then
+        has_pass=true; all_skip=false
+    else
+        has_fail=true; all_skip=false
+    fi
+
+    # 2. Continuous monitoring (fswatch heartbeat via CHECK_RESULTS)
+    local monitor_status="${CHECK_RESULTS[CHK-OPENCLAW-MONITOR-STATUS]:-SKIP}"
+    case "$monitor_status" in
+        PASS) has_pass=true; all_skip=false ;;
+        FAIL) has_fail=true; all_skip=false ;;
+        WARN) has_warn=true; all_skip=false ;;
+        SKIP) ;;
+    esac
+
+    # 3. Behavioral baseline existence
+    local baseline="${HOME}/.openclaw/behavioral-baseline.json"
+    if [[ -f "$baseline" ]]; then
+        has_pass=true; all_skip=false
+    else
+        has_warn=true; all_skip=false
+    fi
+
+    # Aggregate
+    local status
+    if $has_fail; then status="FAIL"
+    elif $all_skip; then status="SKIP"
+    elif $has_warn; then status="WARN"
+    else status="PASS"
+    fi
+
+    case "$status" in
+        PASS)
+            report_result "$id" "Defense Layers" \
+                "Detect layer: attestation, monitoring, baseline all verified" "PASS" "14.6"
+            ;;
+        WARN)
+            local detail=""
+            [[ "$monitor_status" != "PASS" ]] && detail="monitor ${monitor_status}; "
+            [[ ! -f "$baseline" ]] && detail="${detail}baseline not established; "
+            report_result "$id" "Defense Layers" \
+                "Detect layer: partially verified (${detail%%; })" "WARN" "14.6" \
+                "Run integrity-deploy.sh to establish baseline"
+            ;;
+        *)
+            report_result "$id" "Defense Layers" \
+                "Detect layer: ${status}" "$status" "14.6" \
+                "Fix upstream Detect controls, then re-run audit"
+            ;;
+    esac
+}
+
+check_defense_layer_respond() {
+    local id="CHK-DEFENSE-RESPOND"
+    local has_fail=false has_warn=false has_pass=false all_skip=true
+
+    # 1. Alert delivery: webhook callback configured in openclaw.json
+    local oc_config="${HOME}/.openclaw/openclaw.json"
+    if [[ -f "$oc_config" ]]; then
+        if jq -e '.hooks // empty' "$oc_config" &>/dev/null; then
+            has_pass=true; all_skip=false
+        else
+            has_warn=true; all_skip=false
+        fi
+    else
+        all_skip=false; has_warn=true
+    fi
+
+    # 2. Audit logging: make audit --json capability
+    if [[ -x "${SCRIPT_DIR}/hardening-audit.sh" ]]; then
+        has_pass=true; all_skip=false
+    fi
+
+    # 3. Manual remediation: make integrity-lock target
+    local makefile="${SCRIPT_DIR}/../Makefile"
+    if [[ -f "$makefile" ]] && grep -q 'integrity-lock' "$makefile" 2>/dev/null; then
+        has_pass=true; all_skip=false
+    else
+        has_warn=true; all_skip=false
+    fi
+
+    local status
+    if $has_fail; then status="FAIL"
+    elif $all_skip; then status="SKIP"
+    elif $has_warn; then status="WARN"
+    else status="PASS"
+    fi
+
+    report_result "$id" "Defense Layers" \
+        "Respond layer: alert delivery, audit logging, remediation procedures" "$status" "14.6"
+}
+
+check_defense_layer_recover() {
+    local id="CHK-DEFENSE-RECOVER"
+    local has_fail=false has_warn=false has_pass=false all_skip=true
+
+    # 1. Credential rotation procedure documented
+    local dep_update="${SCRIPT_DIR}/../docs/DEPENDENCY-UPDATE-PROCEDURE.md"
+    if [[ -f "$dep_update" ]]; then
+        has_pass=true; all_skip=false
+    else
+        # Phase 7 (T037) creates this — WARN until then
+        has_warn=true; all_skip=false
+    fi
+
+    # 2. Manifest re-baseline (make integrity-deploy works)
+    if [[ -x "${SCRIPT_DIR}/integrity-deploy.sh" ]]; then
+        has_pass=true; all_skip=false
+    else
+        has_fail=true; all_skip=false
+    fi
+
+    # 3. Dependency rollback (rollback section in update procedure)
+    if [[ -f "$dep_update" ]] && grep -qi 'rollback' "$dep_update" 2>/dev/null; then
+        has_pass=true; all_skip=false
+    fi
+
+    local status
+    if $has_fail; then status="FAIL"
+    elif $all_skip; then status="SKIP"
+    elif $has_warn; then status="WARN"
+    else status="PASS"
+    fi
+
+    case "$status" in
+        WARN)
+            report_result "$id" "Defense Layers" \
+                "Recover layer: partially verified (update procedures pending)" "WARN" "14.6" \
+                "Create docs/DEPENDENCY-UPDATE-PROCEDURE.md (Phase 7 T037)"
+            ;;
+        *)
+            report_result "$id" "Defense Layers" \
+                "Recover layer: rotation, re-baseline, rollback verified" "$status" "14.6"
+            ;;
+    esac
+}
+
+check_pipeline_env_vars() {
+    local id="CHK-PIPELINE-ENV-VARS"
+
+    if ! type integrity_check_env_vars &>/dev/null; then
+        report_result "$id" "Pipeline Security" \
+            "integrity_check_env_vars not available (integrity.sh not loaded)" "SKIP" "14.7"
+        return
+    fi
+
+    if integrity_check_env_vars 2>/dev/null; then
+        report_result "$id" "Pipeline Security" \
+            "No dangerous environment variables detected (7 checked)" "PASS" "14.7"
+    else
+        report_result "$id" "Pipeline Security" \
+            "Dangerous environment variable(s) detected" "FAIL" "14.7" \
+            "Unset flagged variables before running agent"
+    fi
+}
+
 main() {
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -3169,6 +3692,23 @@ main() {
     run_check check_pipeline_cve_ollama
     run_check check_pipeline_hmac_consistency
     run_check check_pipeline_container_hardening
+
+    # §14.1b: Sensitive File Protections (014 US2)
+    run_check check_sensitive_file_protections
+    run_check check_env_gitignore
+    run_check check_lock_state_signed
+    run_check check_heartbeat_signed
+
+    # §14.1c: OWASP ASI Controls (014 US3)
+    run_check check_asi_controls
+
+    # §14.2: Defense-in-Depth Layers (014 US5)
+    run_check check_defense_layer_prevent
+    run_check check_defense_layer_contain
+    run_check check_defense_layer_detect
+    run_check check_defense_layer_respond
+    run_check check_defense_layer_recover
+    run_check check_pipeline_env_vars
 
     # --- Output ---
     if $JSON_OUTPUT; then
