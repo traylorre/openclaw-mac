@@ -10,7 +10,7 @@ COMPOSE := $(SCRIPTS)/templates/docker-compose.yml
 PREFIX := /opt/n8n
 OPENCLAW_DIR := $(HOME)/.openclaw
 
-.PHONY: help install uninstall verify audit \
+.PHONY: help install uninstall verify doctor audit \
 	fix fix-interactive fix-dry-run fix-undo \
 	gateway-setup gateway-teardown \
 	shellrc-setup shellrc-teardown \
@@ -67,6 +67,9 @@ verify: ## Check that all expected artifacts are present
 	@[ -f "$(OPENCLAW_DIR)/shellrc" ] && echo "  OK  Shell aliases" || echo "  MISSING  Shell aliases (run: make shellrc-setup)"
 	@command -v grype >/dev/null 2>&1 && echo "  OK  Grype (CVE scanner)" || echo "  MISSING  Grype (run: make security-tools-setup)"
 	@[ -d "$(HOME)/.openclaw/tools/docker-bench-security" ] && echo "  OK  docker-bench-security (CIS benchmark)" || echo "  MISSING  docker-bench-security (run: make security-tools-setup)"
+
+doctor: ## Check all prerequisite tools are installed
+	@bash $(SCRIPTS)/doctor.sh
 
 # --- Fix targets ---
 
