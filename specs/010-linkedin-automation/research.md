@@ -64,11 +64,14 @@ On the OpenClaw side, the skill that calls n8n webhooks computes the HMAC signat
 
 ## R-006: LinkedIn OAuth Token Lifecycle
 
-**Decision**: Store the token grant timestamp in n8n Workflow Static Data. A daily scheduled workflow computes days remaining and fires a chat alert via OpenClaw's inbound webhook when the token is within 7 days of expiry.
+**Decision**: Track dual tokens — access token (60-day TTL) and refresh token (365-day TTL) — in n8n Workflow Static Data. Automate access token refresh when ≤7 days remain. Alert the operator when the refresh token approaches expiry (30-day warning) or when automated refresh fails.
 
-**Rationale**: LinkedIn consumer OAuth tokens expire after 60 days. Programmatic refresh is only available to select LinkedIn partners — consumer apps must re-authorize through a browser flow. n8n does not expose credential expiry metadata to workflows. The workaround: when the operator completes OAuth authorization, a workflow records the grant timestamp in Static Data. A scheduled workflow checks this daily and calculates days remaining. When ≤7 days remain, it POSTs an alert to OpenClaw's inbound webhook, which delivers the message via chat.
+**Rationale**: LinkedIn extended programmatic refresh token support to consumer apps with `w_member_social` scope in late 2025. This supersedes the original conclusion that programmatic refresh was partner-only. Consumer apps now receive a 365-day refresh token alongside the 60-day access token during the OAuth authorization flow. When a refresh token generates a new access token, the refresh token TTL remains fixed at 365 days from original issue (it does not reset). This reduces the manual re-authorization cadence from every 60 days to approximately once per year. The token-check workflow implements automated refresh with error handling, circuit breaker logic, and retry with backoff for transient LinkedIn API failures.
+
+**Reference**: Microsoft Learn — LinkedIn API OAuth documentation (updated late 2025)
 
 **Alternatives considered**:
+- Manual re-auth every 60 days (original design): Rejected — automated refresh is now available and reduces operational burden from bi-monthly to yearly.
 - Error-based detection: Wait for API calls to fail with 401, then alert. Too late — the operator needs advance warning.
 - n8n credential metadata API: Does not exist. Credentials are opaque to workflows.
 - External cron job: Adds complexity outside the n8n ecosystem.

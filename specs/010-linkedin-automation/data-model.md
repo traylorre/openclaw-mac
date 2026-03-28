@@ -84,23 +84,41 @@ The set of files defining the agent's voice, knowledge, and operating rules.
 
 ## Entity: Credential Lifecycle State
 
-The current status of the LinkedIn API credential.
+The current status of the LinkedIn API credential with dual-token support.
 
 **Attributes**:
-- `grant_timestamp`: When the OAuth token was last authorized (stored in n8n Workflow Static Data)
-- `expiry_days`: 60 (LinkedIn standard for consumer OAuth tokens)
-- `computed_expiry`: `grant_timestamp + 60 days`
-- `days_remaining`: `computed_expiry - now()`
-- `status`: `valid` | `expiring_soon` (≤7 days) | `expired`
-- `last_check`: Timestamp of last health check
-- `alert_sent`: Whether the expiry alert has been delivered
+- `access_token_granted_at`: When the access token was last granted or refreshed (stored in n8n Workflow Static Data)
+- `access_token_expiry_days`: 60 (LinkedIn standard for consumer OAuth access tokens)
+- `access_token_days_remaining`: `(access_token_granted_at + 60 days) - now()`
+- `refresh_token_granted_at`: When the refresh token was originally issued (stored in n8n Workflow Static Data)
+- `refresh_token_expiry_days`: 365 (LinkedIn refresh token TTL, does not reset on use)
+- `refresh_token_days_remaining`: `(refresh_token_granted_at + 365 days) - now()`
+- `last_refresh_attempt`: Timestamp of last automated refresh attempt
+- `last_refresh_result`: `success` | `failed` | `not_attempted`
+- `refresh_retry_count`: Number of consecutive refresh failures (reset on success, max 3 for server errors)
+- `refresh_in_progress`: Boolean flag preventing concurrent refresh attempts
+- `refresh_token_expired`: Boolean circuit breaker — when true, skips automated refresh
+- `status`: `healthy` | `expiring_soon` (access ≤7 days) | `refresh_expiring_soon` (refresh ≤30 days) | `expired` | `refresh_token_expired` | `refresh_failed`
 
-**Persistence**: `grant_timestamp` stored in n8n Workflow Static Data (persists across workflow executions in production mode). `alert_sent` flag prevents duplicate alerts.
+**Persistence**: All timestamps and flags stored in n8n Workflow Static Data (persists across workflow executions in production mode).
+
+**Token lifecycle**:
+1. Operator completes OAuth authorization (manual browser flow)
+2. `access_token_granted_at` and `refresh_token_granted_at` recorded (same timestamp on initial grant)
+3. Daily check computes days remaining for both tokens
+4. When access token ≤7 days: automated refresh via LinkedIn OAuth endpoint
+5. On successful refresh: `access_token_granted_at` updated, 60-day window resets
+6. Refresh token TTL does NOT reset on use (365 days from original issue)
+7. When refresh token ≤30 days: alert operator to plan re-authorization
+8. When refresh token expired: circuit breaker set, alert operator for full manual re-auth
+
+**Security note (ASI04)**: The 365-day refresh token increases the blast radius of a credential compromise vs. the previous 60-day access-only model. Mitigated by n8n credential isolation (agent never holds tokens directly) and Docker container boundaries.
 
 **Relationships**:
 - Monitored by the token-check scheduled workflow
 - Blocks Content Draft publishing when expired
-- Produces Activity Records for token checks and alerts
+- Produces Activity Records for token checks, refresh attempts, and alerts
+- References 014 Token Lifecycle State entity for the hardening perspective
 
 ---
 

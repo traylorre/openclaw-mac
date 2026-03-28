@@ -18,7 +18,7 @@ Follow the procedures in `docs/DEPENDENCY-UPDATE-PROCEDURE.md` for any component
 # Example: Update n8n Docker image
 docker compose -f scripts/templates/docker-compose.yml pull n8n
 docker compose -f scripts/templates/docker-compose.yml up -d --no-deps n8n
-make integrity-deploy --force   # Re-baseline manifest with new image digest
+bash scripts/integrity-deploy.sh --force   # Re-baseline manifest with new image digest
 make audit                      # Verify updated version passes CVE checks
 ```
 
@@ -26,7 +26,7 @@ make audit                      # Verify updated version passes CVE checks
 
 ```bash
 # Re-deploy to HMAC-sign lock-state.json and heartbeat (ADV-002, ADV-004 fixes)
-make integrity-deploy --force
+bash scripts/integrity-deploy.sh --force
 
 # Verify all sensitive files have correct protections
 make audit   # Look for CHK-SENSITIVE-FILE-* results
