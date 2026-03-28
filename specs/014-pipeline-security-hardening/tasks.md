@@ -123,7 +123,7 @@
 
 - [x] T037 [US4] Create `docs/DEPENDENCY-UPDATE-PROCEDURE.md` with procedures for n8n (pull image, restart, re-baseline), OpenClaw (version check, upgrade, verify CVEs), and Ollama (pull model, verify digest). Each procedure: pre-update check, update command, post-update verification, rollback steps, post-rollback CVE check. Implementation notes: (1) Add pre-update `docker tag` step to preserve rollback image before pulling new version. (2) Add "Partial Update Recovery" section documenting half-complete states and how `make audit` detects them. (3) Add credential rotation section (HMAC key, n8n encryption key) — required by Recover defense layer check. (4) Document OpenClaw binary location and FR-027 residual risk for unsigned binary updates. (5) Recommend digest pinning in docker-compose.yml (`image: ...@sha256:...`). (6) Use `bash scripts/integrity-deploy.sh --force` not `make integrity-deploy --force` (Make does not forward args). (7) Note OLLAMA_MODEL defaults to gemma3:4b, configurable via env var
 - [x] T038 [P] [US4] Create `docs/TRUST-BOUNDARY-MODEL.md` with 5 trust zones per research.md R-008. Each zone: component, trust anchor, known gap (ADV reference), remediation roadmap. Include ToIP TEA mapping section per FR-025 (VID, TSP, did:peer concepts). Implementation notes: (1) Add data-flow enumeration across trust zone boundaries. (2) Cross-reference existing `docs/TRUST-GAPS.md` to avoid duplication
-- [ ] T039 [US4] End-to-end verification: follow n8n update procedure → confirm manifest updated with new image digest → run `make audit` → confirm CVE check reports PASS for new version
+- [x] T039 [US4] End-to-end verification: follow n8n update procedure → confirm manifest updated with new image digest → run `make audit` → confirm CVE check reports PASS for new version
 
 **Checkpoint**: US4 complete. Update procedures documented and tested.
 
@@ -152,9 +152,9 @@
 
 - [x] T046 Create `scripts/test-phase5-integration.sh` with integration tests for all new audit checks. Test pattern: for each check, set up passing state → verify PASS, then set up failing state → verify FAIL. At minimum: CVE checks (3), HMAC consistency (1), sensitive file protections (1), lock-state signed (1), heartbeat signed (1), defense layers (5), env vars (1), behavioral baseline (1). Total: ~14 tests
 - [x] T047 Run `shellcheck` on all modified scripts: `scripts/hardening-audit.sh`, `scripts/lib/cve-registry.sh`, `scripts/lib/integrity.sh`, `scripts/integrity-verify.sh`, `scripts/integrity-deploy.sh`, `scripts/test-phase5-integration.sh` — zero warnings required per Constitution VI
-- [ ] T048 Run `make audit` full suite — verify zero FAIL across all checks (existing 84 + new pipeline security checks)
+- [x] T048 Run `make audit` full suite — verify zero FAIL across all checks (existing 84 + new pipeline security checks)
 - [x] T049 [P] Update `ROADMAP.md`: add note about 014 completion in M3 section
-- [ ] T050 Validate `specs/014-pipeline-security-hardening/quickstart.md` end-to-end on actual Mac Mini
+- [x] T050 Validate `specs/014-pipeline-security-hardening/quickstart.md` end-to-end on actual Mac Mini
 
 ---
 
