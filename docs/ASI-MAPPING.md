@@ -46,8 +46,9 @@ content manipulation is feasible at current posting volume (1-3 posts/day).
 **Residual Risk**: The n8n Code Node sandbox has been bypassed 3 times in 6
 months (CVE-2025-68613, CVE-2025-68668/N8scape, CVE-2026-27577). Version
 pinning to >= 2.13.0 mitigates known bypasses but the pattern suggests future
-bypasses are likely. `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` weakens Code Node
-isolation (see ASI04).
+bypasses are likely. `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` is now deployed (PR #104),
+blocking Code Node access to environment variables. See ASI04 for full
+treatment.
 
 **Residual Severity**: Medium
 
@@ -86,18 +87,17 @@ of trust.
 
 **MITRE ATLAS**: AML.T0054 (ML Supply Chain Compromise)
 
-**Residual Risk**: OpenClaw binary has no signature verification or provenance
+**Residual Risk**: `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` is now deployed (PR #104),
+so Code nodes can no longer read environment variables. The remaining residual
+risks are: OpenClaw binary has no signature verification or provenance
 attestation (FR-027). The agent binary is the most privileged component and the
 security tools protecting it cannot detect its own compromise.
-`N8N_BLOCK_ENV_ACCESS_IN_NODE=false` means a malicious community node could read
-the n8n encryption key and decrypt all stored credentials (FR-019 trade-off).
 
-**Residual Severity**: High
+**Residual Severity**: Medium
 
 **Remediation Roadmap** (target: M4):
 
-1. Short-term: Set `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` when community node
-   compatibility is confirmed
+1. ~~Short-term: Set `N8N_BLOCK_ENV_ACCESS_IN_NODE=true`~~ — **COMPLETE** (PR #104, 2026-03-28)
 2. Short-term: Binary checksum verification against published release hashes
 3. Medium-term: OpenClaw provenance attestation support when available
 
@@ -234,7 +234,7 @@ by a same-user process (ADV-001 scope).
 | ASI01 | Agent Goal Hijack | Medium | CHK-OPENCLAW-INTEGRITY-LOCK, CHK-OPENCLAW-SANDBOX-MODE |
 | ASI02 | Tool Misuse | Medium | CHK-OPENCLAW-SANDBOX-TOOLS, CHK-N8N-NODES |
 | ASI03 | Identity & Privilege | Medium | CHK-OPENCLAW-CREDS, CHK-OPENCLAW-N8N-CREDS, CHK-OPENCLAW-WEBHOOK-AUTH |
-| ASI04 | Supply Chain | **High** | CHK-OPENCLAW-SKILLALLOW, CHK-PIPELINE-CVE-* |
+| ASI04 | Supply Chain | Medium | CHK-OPENCLAW-SKILLALLOW, CHK-PIPELINE-CVE-* |
 | ASI05 | Code Execution | Medium | CHK-OPENCLAW-SANDBOX-MODE, CHK-N8N-NODES, CHK-PIPELINE-CONTAINER-HARDENING |
 | ASI06 | Memory Poisoning | Medium | CHK-OPENCLAW-INTEGRITY-LOCK |
 | ASI07 | Inter-Agent Comms | Low | CHK-OPENCLAW-WEBHOOK-AUTH, CHK-PIPELINE-HMAC-CONSISTENCY |
@@ -242,4 +242,4 @@ by a same-user process (ADV-001 scope).
 | ASI09 | Human-Agent Trust | Medium | CHK-OPENCLAW-SANDBOX-MODE |
 | ASI10 | Rogue Agents | Medium | CHK-OPENCLAW-MONITOR-STATUS |
 
-10/10 ASI risks mapped. 1 rated High (ASI04) with remediation roadmap.
+10/10 ASI risks mapped. 0 rated High. ASI04 reduced to Medium after PR #104.

@@ -60,13 +60,9 @@ services:
       # M3: Allow crypto module in Code nodes for HMAC verification
       - NODE_FUNCTION_ALLOW_BUILTIN=crypto
       # Security hardening (§5.3)
-      # M3: Changed from true to false — HMAC verification Code node (hmac-verify.json)
-      # reads OPENCLAW_WEBHOOK_SECRET from env. This is a security trade-off:
-      # Pro: Enables HMAC webhook auth (identity + integrity + replay protection)
-      # Con: Code nodes can now read ALL env vars (including N8N_ENCRYPTION_KEY)
-      # Mitigation: n8n is localhost-only, workflows are version-controlled,
-      #   only operator can create/modify workflows via n8n UI
-      # Original: N8N_BLOCK_ENV_ACCESS_IN_NODE=true
+      # N8N_BLOCK_ENV_ACCESS_IN_NODE=true blocks Code node access to env vars.
+      # Was temporarily set to false during M3 for HMAC verification; reverted
+      # to true in PR #104 after HMAC redesign. See ASI04 in docs/ASI-MAPPING.md.
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=true
       - N8N_RESTRICT_FILE_ACCESS_TO=/home/node/.n8n  # Restrict Code node filesystem access
       # M3: API enabled — required for activity-query (T068) and rate-limit-tracker (T063)
