@@ -87,11 +87,13 @@ of trust.
 
 **MITRE ATLAS**: AML.T0054 (ML Supply Chain Compromise)
 
-**Residual Risk**: `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` is now deployed (PR #104),
-so Code nodes can no longer read environment variables. The remaining residual
-risks are: OpenClaw binary has no signature verification or provenance
-attestation (FR-027). The agent binary is the most privileged component and the
-security tools protecting it cannot detect its own compromise.
+**Residual Risk**: `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` is deployed (PR #104) and
+all workflows have been redesigned to use n8n credentials and workflow Static
+Data instead of `$env` access (019). Code nodes can no longer read environment
+variables. The remaining residual risks are: OpenClaw binary has no signature
+verification or provenance attestation (FR-027). The agent binary is the most
+privileged component and the security tools protecting it cannot detect its own
+compromise.
 
 **Residual Severity**: Medium
 

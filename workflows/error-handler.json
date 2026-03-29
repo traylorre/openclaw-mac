@@ -8,17 +8,23 @@
       "name": "Error Trigger",
       "type": "n8n-nodes-base.errorTrigger",
       "typeVersion": 1,
-      "position": [240, 300]
+      "position": [
+        240,
+        300
+      ]
     },
     {
       "parameters": {
-        "jsCode": "// Extract error details from the failed workflow execution\nconst errorData = $input.all()[0].json;\n\nconst workflowName = errorData.workflow?.name || 'unknown';\nconst executionId = errorData.execution?.id || 'unknown';\nconst errorMessage = errorData.execution?.error?.message || 'Unknown error';\nconst errorNode = errorData.execution?.error?.node?.name || 'unknown node';\n\n// Classify error for the alert\nlet errorCode = 'workflow_error';\nlet severity = 'error';\n\nif (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {\n  errorCode = 'token_expired';\n} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {\n  errorCode = 'rate_limited';\n  severity = 'warning';\n} else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {\n  errorCode = 'account_restricted';\n}\n\nreturn [{\n  json: {\n    type: 'alert',\n    alert_type: 'workflow_failure',\n    message: `${workflowName} workflow failed: ${errorMessage}`,\n    severity: severity,\n    workflow_name: workflowName,\n    execution_id: executionId,\n    error_code: errorCode,\n    error_details: `${errorMessage} (at node: ${errorNode})`,\n    affected_content: errorData.execution?.data?.resultData?.lastNodeExecuted || 'unknown'\n  }\n}];"
+        "jsCode": "// 019: Read hook token from Static Data (not $env)\nconst staticData = $getWorkflowStaticData('global');\nconst hookToken = staticData.hookToken || '';\n\n// Extract error details from the failed workflow execution\nconst errorData = $input.all()[0].json;\n\nconst workflowName = errorData.workflow?.name || 'unknown';\nconst executionId = errorData.execution?.id || 'unknown';\nconst errorMessage = errorData.execution?.error?.message || 'Unknown error';\nconst errorNode = errorData.execution?.error?.node?.name || 'unknown node';\n\n// Classify error for the alert\nlet errorCode = 'workflow_error';\nlet severity = 'error';\n\nif (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {\n  errorCode = 'token_expired';\n} else if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {\n  errorCode = 'rate_limited';\n  severity = 'warning';\n} else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {\n  errorCode = 'account_restricted';\n}\n\nreturn [{\n  json: {\n    type: 'alert',\n    alert_type: 'workflow_failure',\n    message: `${workflowName} workflow failed: ${errorMessage}`,\n    severity: severity,\n    workflow_name: workflowName,\n    execution_id: executionId,\n    error_code: errorCode,\n    error_details: `${errorMessage} (at node: ${errorNode})`,\n    affected_content: errorData.execution?.data?.resultData?.lastNodeExecuted || 'unknown'\n  }\n}];"
       },
       "id": "format-error",
       "name": "Format Error Alert",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [460, 300]
+      "position": [
+        460,
+        300
+      ]
     },
     {
       "parameters": {
@@ -28,7 +34,7 @@
           "parameters": [
             {
               "name": "Authorization",
-              "value": "Bearer {{ $env.OPENCLAW_HOOK_TOKEN }}"
+              "value": "Bearer {{ $json.hookToken }}"
             },
             {
               "name": "Content-Type",
@@ -51,19 +57,34 @@
       "name": "Alert OpenClaw",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
-      "position": [680, 300],
+      "position": [
+        680,
+        300
+      ],
       "notes": "POST alert to OpenClaw inbound hooks per contracts/n8n-to-openclaw-hooks.md"
     }
   ],
   "connections": {
     "Error Trigger": {
       "main": [
-        [{ "node": "Format Error Alert", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Format Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Format Error Alert": {
       "main": [
-        [{ "node": "Alert OpenClaw", "type": "main", "index": 0 }]
+        [
+          {
+            "node": "Alert OpenClaw",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     }
   },

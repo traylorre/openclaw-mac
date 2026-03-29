@@ -74,8 +74,8 @@ and on demand (make audit). The self-assessment limitation is documented in
 |-----------|-------|
 | **Component** | n8n Docker container, Ollama, LinkedIn API |
 | **Trust Anchor** | Docker container isolation (read-only FS, non-root, caps dropped, no-new-privileges) |
-| **Known Gap** | ADV-009: The n8n container image digest is not verified before `docker exec` commands are issued. A replaced image (tag mutation or local tampering) would be trusted implicitly. (The env access portion of this gap is now closed: `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` deployed in PR #104.) |
-| **Remediation Roadmap** | Pre-exec image digest verification against manifest before any `docker exec`. Digest pinning in `docker-compose.yml` (see Dependency Update Procedure). ~~Env access remediation~~ — **COMPLETE** (PR #104, 2026-03-28): `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` deployed after HMAC redesign. Target: digest pinning in M4. |
+| **Known Gap** | ADV-009: The n8n container image digest is not verified before `docker exec` commands are issued. A replaced image (tag mutation or local tampering) would be trusted implicitly. (The env access portion of this gap is now closed: `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` deployed in PR #104, workflows redesigned to use credentials/Static Data instead of `$env` in 019.) |
+| **Remediation Roadmap** | Pre-exec image digest verification against manifest before any `docker exec`. Digest pinning in `docker-compose.yml` (see Dependency Update Procedure). ~~Env access remediation~~ — **COMPLETE** (PR #104 + 019): `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` deployed, all workflows use n8n credentials and Static Data. Target: digest pinning in M4. |
 
 External Services are components the operator does not build from source.
 Their trust relies on container isolation, version pinning, and CVE monitoring.
