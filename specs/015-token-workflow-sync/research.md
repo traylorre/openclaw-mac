@@ -34,7 +34,7 @@
 
 **Decision**: Verify via n8n REST API after import.
 
-**Rationale**: The operator needs confidence that the import succeeded. Verification checks: (1) workflow exists with correct ID, (2) node count matches expected (11), (3) workflow is active, (4) webhook endpoint responds to a health check.
+**Rationale**: The operator needs confidence that the import succeeded. Verification checks: (1) workflow exists with correct ID, (2) node count matches expected (13), (3) workflow is active, (4) webhook endpoint responds to a health check.
 
 **Alternatives considered**:
 - *Manual UI inspection*: Not scriptable, violates Constitution X.

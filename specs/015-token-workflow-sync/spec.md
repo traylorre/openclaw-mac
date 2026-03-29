@@ -3,22 +3,22 @@
 **Feature Branch**: `015-token-workflow-sync`
 **Created**: 2026-03-28
 **Status**: Draft
-**Input**: Resolve token workflow divergence between git-committed workflows/token-check.json (11 nodes) and the running n8n instance (9 nodes, old version). Use existing make workflow-import. Verify Static Data survives import.
+**Input**: Resolve token workflow divergence between git-committed workflows/token-check.json (13 nodes) and the running n8n instance (9 nodes, old version). Use existing make workflow-import. Verify Static Data survives import.
 
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Sync Authoritative Workflow to Running Instance (Priority: P1)
 
-As the platform operator, I need the running n8n instance to execute the current authoritative token-check workflow (11 nodes with dual-token lifecycle, OAuth refresh, circuit breaker, error classification) instead of the outdated 9-node version, so that token expiry monitoring and automated refresh function correctly.
+As the platform operator, I need the running n8n instance to execute the current authoritative token-check workflow (13 nodes with dual-token lifecycle, OAuth refresh, circuit breaker, error classification) instead of the outdated 9-node version, so that token expiry monitoring and automated refresh function correctly.
 
 **Why this priority**: The divergence means the running workflow lacks OAuth refresh, circuit breaker logic, and error classification. If the LinkedIn access token expires, the pipeline cannot auto-recover. This is the core problem to solve.
 
-**Independent Test**: Run `make workflow-import`, then verify in the n8n UI that the token-check workflow shows 11 nodes with the correct dual-path architecture (schedule + webhook).
+**Independent Test**: Run `make workflow-import`, then verify in the n8n UI that the token-check workflow shows 13 nodes with the correct dual-path architecture (schedule + webhook).
 
 **Acceptance Scenarios**:
 
-1. **Given** the n8n instance is running with a 9-node token-check workflow, **When** the operator runs `make workflow-import`, **Then** the running workflow is replaced (not duplicated) with the 11-node version from `workflows/token-check.json`.
-2. **Given** the import has completed, **When** the operator opens the token-check workflow in the n8n UI, **Then** all 11 nodes are visible with correct connections: Schedule Trigger, Webhook, HMAC Verify, Is Verified?, Check Token (schedule path), Check Token (webhook path), Should Refresh?, Refresh Access Token, Handle Refresh Response, Alert Needed?, and Alert OpenClaw.
+1. **Given** the n8n instance is running with a 9-node token-check workflow, **When** the operator runs `make workflow-import`, **Then** the running workflow is replaced (not duplicated) with the 13-node version from `workflows/token-check.json`.
+2. **Given** the import has completed, **When** the operator opens the token-check workflow in the n8n UI, **Then** all 13 nodes are visible (13 nodes including internal webhook response nodes) with correct connections: Schedule Trigger, Webhook, HMAC Verify, Is Verified?, Check Token (schedule path), Check Token (webhook path), Should Refresh?, Refresh Access Token, Handle Refresh Response, Alert Needed?, and Alert OpenClaw.
 3. **Given** the import has completed, **When** the operator triggers the workflow via the schedule path, **Then** the dual-token lifecycle logic executes without errors.
 
 ---
@@ -49,7 +49,7 @@ As the platform operator, I need the duplicate workflow created by the failed n8
 
 **Acceptance Scenarios**:
 
-1. **Given** the n8n instance contains a duplicate token-check workflow (created by the failed UI import), **When** the operator identifies and removes the duplicate, **Then** only the authoritative 11-node workflow remains.
+1. **Given** the n8n instance contains a duplicate token-check workflow (created by the failed UI import), **When** the operator identifies and removes the duplicate, **Then** only the authoritative 13-node workflow remains.
 2. **Given** the duplicate has been removed and `make workflow-import` has run, **When** the operator lists all workflows, **Then** no workflow name contains "copy" or similar duplicate indicators.
 
 ---
@@ -71,7 +71,7 @@ As the platform operator, I need the duplicate workflow created by the failed n8
 - **FR-004**: Static Data MUST survive the import cycle — existing grant timestamps, retry counts, and circuit breaker flags MUST be preserved. Since n8n's `import:workflow` overwrites the `staticData` field from the JSON file, the implementation MUST log current Static Data (via API export) before import for operator reference. After import, the workflow's built-in migration code re-initializes Static Data on first execution. If the operator knows the actual grant date, they MUST be able to set it via the n8n UI Static Data editor.
 - **FR-005**: The Static Data migration code MUST convert legacy `grant_timestamp` to `access_token_granted_at` and `refresh_token_granted_at` on first execution after import.
 - **FR-006**: Any duplicate workflows created by prior failed imports MUST be identified (by name pattern, e.g., names containing "copy", "2", or duplicate entries with different IDs) and removed.
-- **FR-007**: The import process MUST validate that the imported workflow has the expected node count (11 nodes) after import.
+- **FR-007**: The import process MUST validate that the imported workflow has the expected node count (13 nodes) after import.
 - **FR-008**: The post-import verification MUST confirm the workflow is active and the webhook endpoint responds.
 
 ### Key Entities
@@ -84,7 +84,7 @@ As the platform operator, I need the duplicate workflow created by the failed n8
 
 ### Measurable Outcomes
 
-- **SC-001**: After sync, the running n8n instance contains exactly one token-check workflow with 11 nodes.
+- **SC-001**: After sync, the running n8n instance contains exactly one token-check workflow with 13 nodes.
 - **SC-002**: The workflow's schedule trigger fires at 09:00 UTC daily without manual intervention.
 - **SC-003**: The webhook endpoint (`POST /token-check`) responds to authenticated requests within 5 seconds.
 - **SC-004**: Static Data grant timestamps are accurate to within 1 day of the actual OAuth grant date after import.

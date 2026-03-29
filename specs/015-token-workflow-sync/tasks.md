@@ -19,7 +19,7 @@
 
 - [ ] T001 Verify n8n container (`openclaw-n8n`) is running via `docker ps`
 - [ ] T002 Verify n8n API key exists in macOS Keychain via `security find-generic-password -a openclaw -s n8n-api-key -w`
-- [ ] T003 Verify `workflows/token-check.json` exists and contains 11 nodes via `jq '.nodes | length' workflows/token-check.json`
+- [ ] T003 Verify `workflows/token-check.json` exists and contains 13 nodes via `jq '.nodes | length' workflows/token-check.json`
 
 ---
 
@@ -38,18 +38,18 @@
 
 ## Phase 3: User Story 1 - Sync Authoritative Workflow (Priority: P1)
 
-**Goal**: Replace the 9-node workflow in n8n with the authoritative 11-node version from git
+**Goal**: Replace the 9-node workflow in n8n with the authoritative 13-node version from git
 
-**Independent Test**: After `make workflow-import`, query n8n API to confirm token-check workflow has 11 nodes and is active
+**Independent Test**: After `make workflow-import`, query n8n API to confirm token-check workflow has 13 nodes and is active
 
 ### Implementation for User Story 1
 
 - [ ] T006 [US1] Run `make workflow-import` to import all workflows from `workflows/` directory into n8n via `scripts/workflow-sync.sh import`
-- [ ] T007 [US1] Verify imported token-check workflow has 11 nodes via n8n REST API: `curl -s -H "X-N8N-API-KEY: $KEY" http://localhost:5678/api/v1/workflows | jq '.data[] | select(.name=="token-check") | .nodes | length'`
+- [ ] T007 [US1] Verify imported token-check workflow has 13 nodes via n8n REST API: `curl -s -H "X-N8N-API-KEY: $KEY" http://localhost:5678/api/v1/workflows | jq '.data[] | select(.name=="token-check") | .nodes | length'`
 - [ ] T008 [US1] Verify workflow is active (triggers armed) via n8n REST API: `curl -s -H "X-N8N-API-KEY: $KEY" http://localhost:5678/api/v1/workflows | jq '.data[] | select(.name=="token-check") | .active'`
 - [ ] T009 [US1] Verify webhook endpoint responds: `curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:5678/webhook-test/token-check` (expect 401 or HMAC rejection, not 404)
 
-**Checkpoint**: Authoritative 11-node workflow is running and active in n8n
+**Checkpoint**: Authoritative 13-node workflow is running and active in n8n
 
 ---
 
@@ -90,7 +90,7 @@
 
 **Purpose**: Final validation and documentation
 
-- [ ] T017 Run full post-import verification: workflow active, 11 nodes, webhook responsive, Static Data correct, no duplicates
+- [ ] T017 Run full post-import verification: workflow active, 13 nodes, webhook responsive, Static Data correct, no duplicates
 - [ ] T018 Run `make workflow-export --dry-run` to confirm export mechanism still works correctly after import
 - [ ] T019 Update `specs/015-token-workflow-sync/quickstart.md` with actual verification results
 
@@ -129,7 +129,7 @@
 1. Complete Phase 1: Setup verification
 2. Complete Phase 2: Static Data backup
 3. Complete Phase 3: `make workflow-import` + verify
-4. **STOP and VALIDATE**: Confirm 11 nodes, active, webhook responsive
+4. **STOP and VALIDATE**: Confirm 13 nodes, active, webhook responsive
 5. This alone resolves the primary divergence problem
 
 ### Incremental Delivery

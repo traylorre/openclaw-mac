@@ -10,7 +10,7 @@ The n8n workflow JSON file stored in `workflows/token-check.json`.
 |-------|------|-------------|
 | id | string | Workflow identifier (`token-check`). Used for import matching. |
 | name | string | Human-readable name (`token-check`). |
-| nodes | array | List of 11 node definitions (triggers, code, HTTP, conditionals). |
+| nodes | array | List of 13 node definitions (triggers, code, HTTP, conditionals). |
 | connections | object | Node-to-node wiring (edges in the workflow graph). |
 | settings | object | Workflow-level configuration (timezone, error handling). |
 | staticData | object/null | Runtime state persisted across executions. `null` in git-committed version. |

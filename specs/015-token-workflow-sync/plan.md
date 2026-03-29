@@ -5,7 +5,7 @@
 
 ## Summary
 
-Resolve the divergence between the git-committed `workflows/token-check.json` (11 nodes with dual-token lifecycle, OAuth refresh, circuit breaker, error classification) and the running n8n instance (9 nodes, old version). Use the existing `make workflow-import` mechanism. Add a pre-import Static Data backup step to prevent data loss, and post-import verification to confirm correct sync. Remove the duplicate workflow created by the failed n8n UI import.
+Resolve the divergence between the git-committed `workflows/token-check.json` (13 nodes with dual-token lifecycle, OAuth refresh, circuit breaker, error classification) and the running n8n instance (9 nodes, old version). Use the existing `make workflow-import` mechanism. Add a pre-import Static Data backup step to prevent data loss, and post-import verification to confirm correct sync. Remove the duplicate workflow created by the failed n8n UI import.
 
 ## Technical Context
 
@@ -17,7 +17,7 @@ Resolve the divergence between the git-committed `workflows/token-check.json` (1
 **Project Type**: CLI/infrastructure tooling
 **Performance Goals**: Import completes in under 30 seconds
 **Constraints**: n8n container is read-only (no `docker cp`); must use `docker exec` + tmpfs
-**Scale/Scope**: Single workflow sync operation (1 workflow, 11 nodes)
+**Scale/Scope**: Single workflow sync operation (1 workflow, 13 nodes)
 
 ## Constitution Check
 
@@ -65,7 +65,7 @@ scripts/
     └── common.sh             # Existing — require_command(), logging functions
 
 workflows/
-└── token-check.json          # Authoritative workflow definition (11 nodes)
+└── token-check.json          # Authoritative workflow definition (13 nodes)
 
 Makefile                      # Existing workflow-import/workflow-export targets
 ```
@@ -80,6 +80,6 @@ Makefile                      # Existing workflow-import/workflow-export targets
 | Research R1 selected "re-initialize via migration code" approach but FR-004 said "export and restore afterward" — different mechanisms. | Spec-Research inconsistency | Aligned FR-004 with R1's practical approach: log current Static Data for reference, rely on migration code for re-initialization, allow manual correction via UI. |
 | Contract doesn't reflect enhanced import workflow (pre-backup, post-verification). | Contract gap | Low severity — contract describes existing `make` targets; verification is a new addition to be documented in tasks. |
 
-**Cross-artifact consistency**: Node count (11), workflow ID (`token-check`), Static Data fields, and activation order all consistent across spec, plan, research, data-model, and contract.
+**Cross-artifact consistency**: Node count (13), workflow ID (`token-check`), Static Data fields, and activation order all consistent across spec, plan, research, data-model, and contract.
 
 **Gate: 0 CRITICAL, 0 HIGH remaining. No spec drift requiring plan realignment.**

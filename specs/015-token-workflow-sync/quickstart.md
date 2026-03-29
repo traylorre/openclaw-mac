@@ -12,7 +12,7 @@
 # 2. Import authoritative workflow from git
 make workflow-import
 
-# 3. Verify in n8n UI: token-check workflow should show 11 nodes
+# 3. Verify in n8n UI: token-check workflow should show 13 nodes
 # 4. Trigger a manual execution to confirm Static Data initialization
 ```
 
