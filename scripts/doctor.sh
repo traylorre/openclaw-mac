@@ -72,7 +72,7 @@ check_bash_version() {
     local major
     major=$(echo "$version" | cut -d. -f1)
 
-    if [[ "$major" -ge 5 ]]; then
+    if [[ -n "$major" ]] && [[ "$major" -ge 5 ]]; then
         report OK "bash $version — ($bash_path)"
     else
         report FAIL "bash $version — requires >= 5.0 (install: brew install bash)"
