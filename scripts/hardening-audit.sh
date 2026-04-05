@@ -3468,13 +3468,16 @@ check_pipeline_env_vars() {
         return
     fi
 
-    if integrity_check_env_vars 2>/dev/null; then
+    local _env_diag
+    if _env_diag=$(integrity_check_env_vars 2>&1); then
         report_result "$id" "Pipeline Security" \
-            "No dangerous environment variables detected (7 checked)" "PASS" "14.7"
+            "No dangerous environment variables detected (15 vars + HOME + PATH + TMPDIR checked)" "PASS" "14.7"
     else
+        local _detail
+        _detail=$(printf '%s' "$_env_diag" | sed 's/\[ERROR\] //g' | tr '\n' '; ' | sed 's/; $//')
         report_result "$id" "Pipeline Security" \
-            "Dangerous environment variable(s) detected" "FAIL" "14.7" \
-            "Unset flagged variables before running agent"
+            "Dangerous environment variable(s) detected: ${_detail}" "FAIL" "14.7" \
+            "Unset flagged variables or configure sudoers secure_path before running agent"
     fi
 }
 
