@@ -2098,7 +2098,7 @@ check_browser_dangerflags() {
     if [[ -f "$oc_config" ]] && command -v jq &>/dev/null; then
         local bad_args
         bad_args=$(jq -r '.browser.launchArgs // [] | .[]' "$oc_config" 2>/dev/null \
-            | grep -E "$dangerous_flags") || true
+            | grep -E -- "$dangerous_flags") || true
         if [[ -n "$bad_args" ]]; then
             report_result "$id" "Browser Security" \
                 "[${name}] Dangerous flags in OpenClaw config: ${bad_args//$'\n'/, }" "WARN" "2.11" \
