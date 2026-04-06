@@ -648,6 +648,16 @@ integrity_check_env_vars() {
         DYLD_LIBRARY_PATH
         NODE_OPTIONS
         LD_PRELOAD
+        BASH_ENV
+        ENV
+        PERL5OPT
+        PYTHONPATH
+        PYTHONSTARTUP
+        RUBYOPT
+        JAVA_TOOL_OPTIONS
+        _JAVA_OPTIONS
+        GIT_SSH
+        GIT_PROXY_COMMAND
     )
 
     for var in "${dangerous_vars[@]}"; do
@@ -658,11 +668,27 @@ integrity_check_env_vars() {
     done
 
     # HOME must point to expected location (ADV-007)
+    # Under sudo, whoami=root but HOME is preserved via env_keep — use SUDO_USER
+    local _lookup_user="${SUDO_USER:-$(whoami)}"
     local expected_home
-    expected_home=$(dscl . -read "/Users/$(whoami)" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
+    expected_home=$(dscl . -read "/Users/${_lookup_user}" NFSHomeDirectory 2>/dev/null | awk '{print $2}')
     if [[ -n "$expected_home" && "$HOME" != "$expected_home" ]]; then
         log_error "HOME override detected: ${HOME} (expected ${expected_home})"
         violations=$((violations + 1))
+    fi
+
+    # PATH validation under sudo: advisory warning for user-owned directories (ADV-007)
+    # Downgraded to warn — resolving requires sudoers secure_path architectural review
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        local _path_entry _dir_owner
+        IFS=: read -ra _path_entries <<< "$PATH"
+        for _path_entry in "${_path_entries[@]}"; do
+            [[ -d "$_path_entry" ]] || continue
+            _dir_owner=$(stat -f '%Su' "$_path_entry" 2>/dev/null) || continue
+            if [[ "$_dir_owner" != "root" ]]; then
+                log_warn "PATH under sudo contains non-root-owned directory: ${_path_entry} (owner: ${_dir_owner})"
+            fi
+        done
     fi
 
     # T011: TMPDIR validation with .. rejection and canonicalization (FR-021, FR-022)
