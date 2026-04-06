@@ -1343,6 +1343,30 @@ check_service_data_perms() {
         fi
         return
     fi
+    # REQ-08: Symlink guard — symlinks in /opt/ data dirs are never expected
+    if [[ -L /opt/n8n/data ]]; then
+        report_result "$id" "Bare-Metal" \
+            "n8n data dir is a symlink — unexpected, investigate" "FAIL" "6.4" \
+            "Remove symlink: sudo rm /opt/n8n/data"
+        return
+    fi
+    # Unknown deployment with dir present — fallback for ambiguous detection (e.g. Colima stopped)
+    if [[ "$deployment" == "unknown" ]]; then
+        local _owner
+        _owner=$(stat -f "%Su" /opt/n8n/data 2>/dev/null) || true
+        if [[ "$_owner" == "root" ]]; then
+            local _perms
+            _perms=$(stat -f "%A" /opt/n8n/data 2>/dev/null) || true
+            report_result "$id" "Bare-Metal" \
+                "n8n data dir exists but n8n not detected (${_perms} owned by ${_owner})" "WARN" "6.4" \
+                "Start Colima: colima start — or remove stale dir: sudo rm -rf /opt/n8n/data"
+        else
+            report_result "$id" "Bare-Metal" \
+                "n8n data dir: unexpected owner ${_owner} (n8n not detected)" "FAIL" "6.4" \
+                "Investigate ownership: ls -la /opt/n8n/data"
+        fi
+        return
+    fi
     local perms
     perms=$(stat -f "%A" /opt/n8n/data 2>/dev/null) || true
     local owner
