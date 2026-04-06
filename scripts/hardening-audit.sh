@@ -2688,6 +2688,7 @@ check_openclaw_skillallow() {
     done < <(find "${HOME}/.openclaw/agents" -type d -name "skills" 2>/dev/null)
 
     local -A seen_skills
+    local -a _mismatched=()
     for parent in "${skill_dirs[@]}"; do
         for skill_dir in "${parent}"/*/; do
             local skill_file="${skill_dir}SKILL.md"
@@ -2702,7 +2703,12 @@ check_openclaw_skillallow() {
             hash=$(shasum -a 256 "$skill_file" | awk '{print $1}')
             approved=$(jq -r --arg n "$name" '.skills[] | select(.name == $n) | .content_hash // empty' "$allowlist" 2>/dev/null)
 
-            [[ "$hash" == "$approved" ]] && passed=$((passed + 1))
+            if [[ "$hash" == "$approved" ]]; then
+                passed=$((passed + 1))
+            else
+                _mismatched+=("$name")
+                log_error "Skill hash mismatch: ${name} (possible prompt injection via tampered SKILL.md)"
+            fi
         done
     done
 
@@ -2713,9 +2719,16 @@ check_openclaw_skillallow() {
         report_result "$id" "Workspace Integrity" \
             "All ${total} skills match allowlist hashes" "PASS" "12.6"
     else
+        local _count=${#_mismatched[@]}
+        local _names
+        if [[ $_count -le 3 ]]; then
+            _names=$(IFS=,; echo "${_mismatched[*]}")
+        else
+            _names="${_mismatched[0]}, ${_mismatched[1]} +$((_count - 2)) more"
+        fi
         report_result "$id" "Workspace Integrity" \
-            "$((total - passed))/${total} skills have hash mismatches" "FAIL" "12.6" \
-            "Re-approve: make skillallow-add NAME=<skill>"
+            "Supply chain risk: ${_names} tampered" "FAIL" "12.6" \
+            "STOP — do not restart agent. SKILL.md loads at session start. Investigate, then: make skillallow-add NAME=<skill>"
     fi
 }
 
