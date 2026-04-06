@@ -15,6 +15,7 @@ cd ~/
 git clone https://github.com/traylorre/openclaw-mac.git
 cd openclaw-mac
 make install
+make doctor
 make audit
 make fix
 make verify
@@ -64,7 +65,12 @@ cd ~/
 git clone https://github.com/traylorre/openclaw-mac.git
 cd openclaw-mac
 make install
+make doctor
 ```
+
+`make doctor` checks that all prerequisites are in place (Bash 5.x, jq,
+shellcheck, correct PATH). If it reports issues, fix them before
+continuing — the remaining steps depend on these tools.
 
 > **Do not run `make install` with `sudo`.** The bootstrap handles
 > elevated privileges internally. Running as root breaks Homebrew.
@@ -102,6 +108,81 @@ make verify
 
 Checks that all expected files, directories, and services are in place.
 `DOWN` for Colima/n8n is normal if you haven't deployed the gateway yet.
+
+---
+
+## Step 5: Workspace integrity
+
+> **Prerequisite**: Steps 1-4 must be complete before this step.
+
+```bash
+make integrity-deploy
+make integrity-lock
+make monitor-setup
+```
+
+`make integrity-deploy` creates the HMAC-signed integrity manifest.
+`make integrity-lock` sets `uchg` flags on protected workspace files.
+`make monitor-setup` starts the background file monitor (fswatch).
+
+> **After this step, workspace files will be locked.** Edits to
+> protected files (SOUL.md, AGENTS.md, TOOLS.md, skill files) will
+> silently fail unless you unlock first. See
+> [docs/BEHAVIORS.md](docs/BEHAVIORS.md) for how to edit protected
+> files and what the "new normal" looks like.
+
+Check your environment before continuing:
+
+> **Dangerous environment variables**: If you have `NODE_OPTIONS`,
+> `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, `PYTHONPATH`, or
+> similar variables set in your shell profile, the audit will FAIL and
+> agent startup may be blocked. Unset them before proceeding:
+> `unset NODE_OPTIONS` (repeat for each variable). See
+> [docs/BEHAVIORS.md](docs/BEHAVIORS.md) for the full list of 15
+> blocked variables.
+
+---
+
+## Step 6: sudoers secure_path
+
+By default, `sudo` on macOS inherits your user PATH, which may include
+18+ directories in your home folder (`~/.bun/bin`, `~/.cargo/bin`,
+etc.). An attacker who can write to any of those directories could place
+a trojan binary that `sudo` would execute as root.
+
+Fix this by adding a `secure_path` to sudoers:
+
+```bash
+EDITOR=nano sudo visudo
+```
+
+Add this line at the end of the file:
+
+```text
+Defaults    secure_path="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+```
+
+Save and exit (`Ctrl+O`, `Enter`, `Ctrl+X` in nano).
+
+> **Warning**: Do not make other changes to the sudoers file. A syntax
+> error in sudoers can lock you out of `sudo` entirely. If that happens,
+> reboot into Recovery Mode and fix the file from there.
+
+---
+
+## Package managers
+
+This repo uses three package managers, each for a different purpose:
+
+| Manager | Purpose | Install method |
+|---------|---------|---------------|
+| Homebrew | System tools: bash 5.x, jq, shellcheck, docker, colima, fswatch, grype | `make install` (via Brewfile) |
+| npm | Dev dependency: markdownlint-cli2 for pre-push markdown linting | `npm install` (via package.json) |
+| Bun | OpenClaw runtime (the AI agent itself) | `curl -fsSL https://bun.sh/install \| bash` |
+
+All three are needed. Homebrew provides macOS system tools that Apple
+does not ship (or ships outdated versions of). npm provides the linting
+tool that CI uses. Bun is the runtime that OpenClaw requires.
 
 ---
 
@@ -190,6 +271,19 @@ example, re-enabling AirDrop does not change the firewall setting.
   (restart, hold Cmd + R). See
   [docs/HARDENING.md §2.9](docs/HARDENING.md).
 
+- **Understand the new normal**: After hardening, your repo behaves
+  differently. See [docs/BEHAVIORS.md](docs/BEHAVIORS.md) for what
+  changed and how to work within the restrictions.
+
+- **Why each restriction exists**:
+  [docs/SECURITY-VALUE.md](docs/SECURITY-VALUE.md) maps each control
+  to NIST 800-53r5 standards and explains the security value.
+
+- **How this compares to NemoClaw**:
+  [docs/FEATURE-COMPARISON.md](docs/FEATURE-COMPARISON.md) shows what
+  this repo provides that NVIDIA's cloud sandbox doesn't (and vice
+  versa).
+
 ---
 
 ## Troubleshooting
@@ -208,6 +302,13 @@ Run `make audit` first — it saves the JSON that `make fix` needs.
 ### Audit shows FAIL but fix says SKIPPED
 
 Some checks need interactive approval: run `make fix-interactive`.
+
+### "Operation not permitted"
+
+A file has the `uchg` (user immutable) flag set by the integrity
+framework. Run `make integrity-unlock` to temporarily remove the lock,
+make your edit, then `make integrity-lock` and `make manifest-update`.
+See [docs/BEHAVIORS.md](docs/BEHAVIORS.md) for detailed workflows.
 
 ### "No firmware password set (Intel)" WARN
 
