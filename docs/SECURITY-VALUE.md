@@ -30,11 +30,11 @@ Each row maps a security control to its justification. Columns:
 
 | Control | Threat | NIST Family | TSC Category | Layer | Implementation | Value |
 |---------|--------|-------------|-------------|-------|----------------|-------|
-| Filesystem Immutability (uchg) | Workspace file tampering by compromised agent or supply chain attack | SC-28, CM-5, SI-7 | Security (CC6.1) | Prevent | `CHK-OPENCLAW-INTEGRITY-LOCK` · `make integrity-lock` | Agent instruction files cannot be modified — even by the agent itself |
-| Cryptographic Integrity (HMAC-SHA256) | Undetected file modifications that bypass uchg (e.g., root compromise) | SI-7, SC-13, AU-10 | Processing Integrity (PI1.1) | Detect | `CHK-PIPELINE-HMAC-CONSISTENCY` · `make manifest-update` | Every protected file has a cryptographic signature — a single changed byte triggers detection |
+| Filesystem Immutability (uchg) | Workspace file tampering by compromised agent or supply chain attack | SC-28 (integrity), CM-5, SI-7 | Security (CC6.1) | Prevent | `CHK-OPENCLAW-INTEGRITY-LOCK` · `make integrity-lock` | Agent instruction files cannot be modified — even by the agent itself |
+| Cryptographic Integrity (HMAC-SHA256) | Undetected file modifications that bypass uchg (e.g., root compromise) | SI-7, SC-13 | Processing Integrity (PI1.1) | Detect | `CHK-PIPELINE-HMAC-CONSISTENCY` · `make manifest-update` | Every protected file has a cryptographic signature — a single changed byte triggers detection |
 | Continuous Monitoring (fswatch) | Delayed discovery of unauthorized file changes | SI-4, IR-4, AU-6 | Security (CC7.2) | Detect | `CHK-OPENCLAW-MONITOR-STATUS` · `make monitor-setup` | A background process watches every protected file with 30-second heartbeats — changes trigger alerts within seconds |
 | Skill Allowlist (Supply Chain) | Modified SKILL.md files injecting malicious instructions into the agent | SR-4, SA-12, CM-7 | Security (CC6.1) + Processing Integrity (PI1.1) | Prevent | `CHK-OPENCLAW-SKILLALLOW` · `make skillallow-add` | Every skill file is content-hashed and signed — a tampered skill triggers a supply chain risk warning |
-| Environment Variable Validation | NODE_OPTIONS / DYLD_* / PYTHONPATH used to inject code at process startup | CM-6, SA-8, AC-6 | Security (CC6.1) | Prevent | `CHK-PIPELINE-ENV-VARS` · `CHK-N8N-ENV-BLOCK` | 15 dangerous environment variables are blocked — Code nodes cannot read any env vars at all |
+| Environment Variable Validation | NODE_OPTIONS / DYLD_* / PYTHONPATH used to inject code at process startup | CM-6, SA-8 (design), AC-6 | Security (CC6.1) | Prevent | `CHK-PIPELINE-ENV-VARS` · `CHK-N8N-ENV-BLOCK` | 15 dangerous environment variables are blocked — Code nodes cannot read any env vars at all |
 | Container Isolation | Container escape leading to host compromise | SC-7, SC-39, CM-7, AC-6 | Security (CC6.1, CC6.3) | Prevent + Respond | `CHK-PIPELINE-CONTAINER-HARDENING` · `make container-bench` | Even if n8n is compromised, the container cannot write to its own filesystem, escalate privileges, or reach anything outside localhost |
 | Audit Automation | Configuration drift going unnoticed for weeks or months | CA-7, AU-2, SI-6 | Security (CC7.1) + Availability (A1.2) | Detect + Respond | `CHK-LAUNCHD-AUDIT-JOB` · `make audit` | Every Sunday at 3am, 84 security checks run automatically — the audit can also fix issues it finds |
 
@@ -126,8 +126,11 @@ No single control is sufficient. The controls are designed to layer:
 5. **Container isolation** limits the blast radius of a compromised
    component (Respond layer)
 
-An attacker must defeat every layer in sequence. Each layer operates
-independently — compromising one does not disable the others.
+An attacker must defeat every layer to avoid detection. Each layer
+operates independently — compromising one does not disable the others.
+A sufficiently privileged attacker (root) could attempt to defeat all
+layers simultaneously, but each additional layer increases the
+likelihood of detection before the attack completes.
 
 ---
 
@@ -170,11 +173,39 @@ technical controls.
 | OWASP Top 10 for LLM Applications | 2025 | 2025 | <https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/> |
 | OWASP Top 10 for Agentic Applications | 2025/2026 | Dec 2025 | <https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/> |
 | MITRE ATLAS | v5.1.0 | Nov 2025 | <https://atlas.mitre.org/> |
-| CIS Docker Benchmark | v1.6.0 | 2024 | <https://www.cisecurity.org/benchmark/docker> |
-| CIS Apple macOS Benchmark | v4.0 | 2024 | <https://www.cisecurity.org/benchmark/apple_os> |
+| CIS Docker Benchmark | v1.6.0 (v1.8.0 available Aug 2025) | 2024 | <https://www.cisecurity.org/benchmark/docker> |
+| CIS Apple macOS Benchmarks | Tahoe 26 v1.0.0, Sequoia 15 v2.0.0, Sonoma 14 v3.0.0 | 2025-2026 | <https://www.cisecurity.org/benchmark/apple_os> |
 
 > CIS Benchmark documents require free registration to download. The
 > landing pages above are publicly accessible.
+
+---
+
+## Trust Assumptions
+
+These controls assume the following components are not compromised.
+If any assumption is violated, the controls above may be insufficient:
+
+- **macOS kernel and SIP**: System Integrity Protection is enabled and
+  the kernel has not been modified. uchg flags and Keychain security
+  depend on kernel-level enforcement.
+- **macOS Keychain**: The Keychain is accessible only to authorized
+  processes. The HMAC signing key's security depends entirely on
+  Keychain access controls.
+- **Homebrew supply chain**: Packages installed via Homebrew (bash, jq,
+  shellcheck, fswatch, grype) are authentic. A compromised Homebrew
+  package could bypass all controls.
+- **Docker runtime**: The container runtime (Colima/Docker) correctly
+  enforces isolation. Container escape vulnerabilities undermine
+  container isolation controls.
+- **The operator**: The human operator is trusted. These controls
+  protect the system from the agent, from external attackers, and from
+  supply chain compromise — not from a malicious operator who holds
+  root access and the Keychain password.
+- **Physical access**: An attacker with physical access can boot into
+  Recovery Mode, disable SIP, remove uchg flags, and extract Keychain
+  data. Physical security is out of scope (see the project
+  constitution's threat model).
 
 ---
 
@@ -198,6 +229,14 @@ constitution). The following security domains are **not covered**:
   API calls. Limits are unpublished and must be determined empirically.
 - **Multi-tenant isolation**: This is a single-machine deployment. No
   controls for isolating multiple agents or users on the same system.
+
+- **Non-repudiation (NIST AU-10)**: HMAC-SHA256 provides integrity
+  verification and authentication but NOT non-repudiation. Non-repudiation
+  requires asymmetric cryptography (digital signatures) so that the signer
+  cannot deny having signed. HMAC uses a shared symmetric key — either
+  party holding the key could have produced the signature. If
+  non-repudiation is needed for audit log entries or manifest signing,
+  the project would need to adopt asymmetric key pairs (e.g., Ed25519).
 
 These gaps are acknowledged, not hidden. For some (LLM04, LLM08), the
 gap reflects the deployment model (inference-only, no RAG). For others
