@@ -32,9 +32,10 @@ These issues will stop you in your tracks if you don't know about them.
 ### uchg Flags Prevent Edits Silently
 
 Protected files (SOUL.md, AGENTS.md, TOOLS.md, skill files) have the
-macOS `uchg` (user immutable) flag set. Most editors will appear to save
-successfully but the changes will not persist. There is no error message
-in most GUI editors — the file just reverts.
+macOS `uchg` (user immutable) flag set. GUI editors (VS Code, Sublime)
+may appear to save successfully but the changes will not persist.
+Terminal editors (vim, nano) will show "Operation not permitted" errors.
+Either way, the file remains unchanged.
 ([Why?](SECURITY-VALUE.md#filesystem-immutability))
 
 **Fix**: Use the unlock/edit/lock workflow described below.
@@ -50,16 +51,18 @@ integrity operations fail and the agent cannot start.
 **Fix**: Run `make hmac-setup` to create a new key. Then run
 `make manifest-update` to re-sign all files with the new key.
 
-### NODE_OPTIONS and DYLD_* Block Agent Startup
+### Dangerous Environment Variables Block Agent Startup
 
 If any of these 15 environment variables are set, the audit will FAIL
 and agent startup may be blocked:
 
-`NODE_OPTIONS`, `NODE_PATH`, `NODE_EXTRA_CA_CERTS`,
-`DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`,
-`DYLD_FALLBACK_LIBRARY_PATH`, `DYLD_FALLBACK_FRAMEWORK_PATH`,
-`LD_PRELOAD`, `LD_LIBRARY_PATH`, `PYTHONPATH`, `PYTHONSTARTUP`,
-`PERL5LIB`, `RUBYLIB`, `CLASSPATH`
+`DYLD_INSERT_LIBRARIES`, `DYLD_FRAMEWORK_PATH`, `DYLD_LIBRARY_PATH`,
+`NODE_OPTIONS`, `LD_PRELOAD`, `BASH_ENV`, `ENV`, `PERL5OPT`,
+`PYTHONPATH`, `PYTHONSTARTUP`, `RUBYOPT`, `JAVA_TOOL_OPTIONS`,
+`_JAVA_OPTIONS`, `GIT_SSH`, `GIT_PROXY_COMMAND`
+
+The audit also checks `HOME`, `PATH`, and `TMPDIR` for unexpected
+values (18 total checks).
 
 **Fix**: Unset the offending variable: `unset NODE_OPTIONS` (or remove
 it from your shell profile).
