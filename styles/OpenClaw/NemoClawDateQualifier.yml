@@ -1,0 +1,12 @@
+# Flag NemoClaw documentation claims that lack a date qualifier.
+# Correct: "Not documented in NemoClaw as of 2026-04-06"
+# Wrong: "Not documented in NemoClaw"
+#
+# NemoClaw is actively developed. Claims about missing features must be
+# dated so readers know when the comparison was valid.
+extends: existence
+message: "'%s' should include a date qualifier (e.g., 'as of YYYY-MM-DD')."
+level: warning
+scope: sentence
+tokens:
+  - 'Not documented in NemoClaw(?! as of \d{4}-\d{2}-\d{2})'
