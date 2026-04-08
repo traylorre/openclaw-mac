@@ -1,0 +1,13 @@
+{
+  "retryOn429": true,
+  "retryCount": 3,
+  "fallbackRetryDelay": "2000",
+  "timeout": "10000",
+  "aliveStatusCodes": [200, 201, 301, 302, 403],
+  "ignorePatterns": [
+    { "pattern": "^http://localhost" },
+    { "pattern": "^http://127\\.0\\.0\\.1" },
+    { "pattern": "linkedin\\.com" },
+    { "pattern": "^#" }
+  ]
+}

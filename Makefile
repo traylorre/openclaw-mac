@@ -30,7 +30,8 @@ OPENCLAW_DIR := $(HOME)/.openclaw
 	container-security-config-update \
 	security-tools-setup security-update-hashes container-bench n8n-audit scan-image security \
 	integrity-rotate-key \
-	setup-gateway teardown-gateway shellrc shellrc-undo
+	setup-gateway teardown-gateway shellrc shellrc-undo \
+	vale spec-check link-check
 
 help: ## Show available targets
 	@grep -E '^[a-z0-9_-]+:.*##' $(MAKEFILE_LIST) | sort | \
@@ -483,3 +484,41 @@ setup-gateway: gateway-setup
 teardown-gateway: gateway-teardown
 shellrc: shellrc-setup
 shellrc-undo: shellrc-teardown
+
+# ===========================================================================
+# Documentation drift detection
+# ===========================================================================
+
+vale: ## Lint prose for terminology drift (NIST format, version pinning, TSP regression)
+	@if command -v vale >/dev/null 2>&1; then \
+		vale docs/*.md GETTING-STARTED.md README.md ROADMAP.md 2>&1 || true; \
+	else \
+		echo "vale not installed. Run: brew install vale"; \
+	fi
+
+spec-check: ## Verify CHK-* identifiers in docs exist in audit script
+	@echo "Checking CHK-* references in docs against hardening-audit.sh..."
+	@doc_chks=$$(grep -rohE 'CHK-[A-Z0-9_-]+[A-Z0-9]' docs/*.md GETTING-STARTED.md 2>/dev/null | sed 's/\.md$$//g' | grep -vE '^CHK-REGISTRY$$|CHK-.*\*' | sort -u); \
+	script_chks=$$(grep -ohE 'CHK-[A-Z0-9_-]+[A-Z0-9]' $(SCRIPTS)/hardening-audit.sh 2>/dev/null | sort -u); \
+	missing=$$(comm -23 <(echo "$$doc_chks") <(echo "$$script_chks")); \
+	if [ -n "$$missing" ]; then \
+		echo "FAIL: These CHK-* IDs are in docs but NOT in hardening-audit.sh:"; \
+		echo "$$missing"; \
+		exit 1; \
+	else \
+		doc_count=$$(echo "$$doc_chks" | grep -c . || true); \
+		script_count=$$(echo "$$script_chks" | grep -c . || true); \
+		unreferenced=$$(comm -13 <(echo "$$doc_chks") <(echo "$$script_chks") | grep -c . || true); \
+		echo "PASS: All $$doc_count doc references found in audit script."; \
+		echo "INFO: $$unreferenced of $$script_count audit checks not referenced in docs (see HARDENING.md for full coverage)."; \
+	fi
+
+link-check: ## Check external URLs in docs (WARN-only, no CI gate)
+	@echo "Checking external links in documentation (WARN-only)..."
+	@for f in docs/*.md GETTING-STARTED.md README.md; do \
+		if [ -f "$$f" ]; then \
+			echo "--- $$f ---"; \
+			npx -q markdown-link-check "$$f" --config .markdown-link-check.json 2>&1 || true; \
+		fi; \
+	done
+	@echo "Link check complete (warnings above are informational, not blocking)."

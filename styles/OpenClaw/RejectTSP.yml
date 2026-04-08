@@ -1,0 +1,12 @@
+# Flag bare "TSP" without AICPA/Trust Services context.
+# Prevents regression of finding C-001: "TSP" alone is ambiguous
+# (NIST defines it as "Telecommunications Service Priority").
+#
+# Correct: "AICPA TSC (formerly TSP)", "Trust Services Principles (TSP)"
+# Wrong: "TSP terminology", "TSP glossary", "Use TSP"
+extends: existence
+message: "Bare 'TSP' is ambiguous (NIST defines it as 'Telecommunications Service Priority'). Use 'AICPA TSC' or 'Trust Services Criteria/Principles (TSP)' for SOC 2 context."
+level: warning
+scope: sentence
+tokens:
+  - '\bTSP\b(?![\s)]*(?:Trust Services|AICPA|SOC 2|formerly))'

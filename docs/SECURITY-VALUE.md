@@ -169,7 +169,7 @@ technical controls.
 | Standard | Version | Date | URL |
 |----------|---------|------|-----|
 | NIST SP 800-53 | Rev 5, Update 1 | Dec 2020 (updated Sep 2025) | <https://csrc.nist.gov/pubs/sp/800/53/r5/upd1/final> |
-| AICPA Trust Services Criteria | 2017 (with 2022 points of focus) | 2017/2022 | <https://www.aicpa.org/resources/deferred-deep-link/aicpa-trust-services-criteria> |
+| AICPA Trust Services Criteria | 2017 (with 2022 points of focus) | 2017/2022 | <https://www.aicpa-cima.com/resources/download/2017-trust-services-criteria-with-revised-points-of-focus-2022> |
 | OWASP Top 10 for LLM Applications | 2025 | 2025 | <https://genai.owasp.org/resource/owasp-top-10-for-llm-applications-2025/> |
 | OWASP Top 10 for Agentic Applications | 2025/2026 | Dec 2025 | <https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/> |
 | MITRE ATLAS | v5.1.0 | Nov 2025 | <https://atlas.mitre.org/> |

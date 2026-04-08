@@ -1,0 +1,14 @@
+# Warn when standard names appear without version qualifiers in tables.
+# Correct: "NIST SP 800-53r5", "CIS Docker Benchmark v1.8.0"
+# Flagged: bare "NIST 800-53" or "CIS Benchmark" without version
+#
+# Only triggers in structured content (tables, lists) where precision
+# matters. Narrative mentions like "as recommended by NIST" are fine.
+extends: existence
+message: "Standard reference '%s' may need a version qualifier (e.g., 'r5', 'v1.8.0', '2025')."
+level: suggestion
+scope: sentence
+tokens:
+  - '\bNIST (?:SP )?800-53(?!r\d)'
+  - '\bCIS (?:Docker |Apple |macOS )?Benchmark(?! v\d)'
+  - '\bMITRE ATLAS(?! v\d)'
