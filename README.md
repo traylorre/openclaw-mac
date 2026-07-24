@@ -19,7 +19,10 @@ integrity verification for autonomous agent deployments.
 
 - **14,800+ lines** of bash across 39 scripts (8,200+ lines security-specific)
 - **84-check** hardening audit covering macOS, n8n, Docker, OpenClaw, and CVE tracking
-- **50 PASS / 0 FAIL** on macOS NIST 800-53r5 moderate baseline
+- **148 macOS-applicable controls** mapped from the NIST 800-53r5 moderate
+  baseline via mSCP, each with a recorded pass/fail rationale — the bulk of
+  the fails are federal MDM, smartcard, and policy-banner requirements a
+  standalone Mac cannot meet (see [ROADMAP.md](ROADMAP.md) for the counts)
 - **14 feature specs** with full specification artifacts
 - **146 commits** across 5 milestones
 
