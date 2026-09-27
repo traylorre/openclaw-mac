@@ -94,8 +94,8 @@ _integrity_protected_file_patterns() {
     find "${openclaw_dir}/agents" -path "*/skills/*/SKILL.md" -type f 2>/dev/null
 
     # Orchestration files
-    if [[ -f "${repo_root}/CLAUDE.md" ]]; then
-        echo "${repo_root}/CLAUDE.md"
+    if [[ -f "${repo_root}/AGENTS.md" ]]; then
+        echo "${repo_root}/AGENTS.md"
     fi
 
     # Workflow definitions
@@ -350,7 +350,7 @@ integrity_categorize_file() {
     case "$file" in
         */agents/*/skills/*/SKILL.md) echo "skill" ;;
         */agents/*.md)                echo "workspace" ;;
-        */CLAUDE.md)                  echo "orchestration" ;;
+        */AGENTS.md)                  echo "orchestration" ;;
         */workflows/*.json)           echo "workflow" ;;
         */scripts/*.sh)               echo "script" ;;
         */docker-compose.yml|*/n8n-entrypoint.sh) echo "config" ;;
