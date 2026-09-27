@@ -3,7 +3,7 @@
 # Constitution VI: set -euo pipefail, shellcheck clean, idempotent, colored output
 # FR-006: Verify git clean tree before deploy
 # FR-016: Sign manifest with Keychain HMAC key
-# FR-017: Include CLAUDE.md, workflows, scripts, config in manifest
+# FR-017: Include AGENTS.md, workflows, scripts, config in manifest
 # FR-020: Record platform runtime version
 # FR-028: Record skill content hashes in manifest
 set -euo pipefail
@@ -41,7 +41,7 @@ verify_git_clean() {
     fi
 
     # Check for uncommitted changes in protected directories
-    if ! git -C "$REPO_ROOT" diff --quiet -- openclaw/ openclaw-extractor/ workflows/ scripts/ CLAUDE.md 2>/dev/null; then
+    if ! git -C "$REPO_ROOT" diff --quiet -- openclaw/ openclaw-extractor/ workflows/ scripts/ AGENTS.md 2>/dev/null; then
         log_error "Git working tree has uncommitted changes in protected directories"
         log_error "Commit or stash changes before deploying: git status"
         return 1
